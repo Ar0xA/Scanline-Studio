@@ -776,6 +776,170 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.False(confirmRequested);
     }
 
+    // User-requested (2026-09-19): "when you save a template into the template library 'unsaved
+    // edits' should be removed and only added again if actual edits are made. Same for when it's
+    // loaded." Cancel's own confirm-gate moved from HasUnsavedEdits to IsDirtySinceLastCheckpoint --
+    // these three tests assert BOTH signals directly at each step, proving they genuinely diverge
+    // (HasUnsavedEdits stays permanently true after a load/save, IsDirtySinceLastCheckpoint doesn't),
+    // not just that the surface Cancel behavior happened to change for some other reason.
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_CleanEditor_FirstLoad_DoesNotConfirmOnCancelAfterward()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var templateId = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(templateId, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+
+        readyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.HasUnsavedEdits); // unchanged -- the load itself is a pushed undo entry
+        Assert.False(vm.IsDirtySinceLastCheckpoint); // but the checkpoint-relative signal is clean
+
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        await vm.CancelCommand.ExecuteAsync(null);
+
+        Assert.False(confirmRequested);
+        Assert.True(cancelled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplate_ClearsIsDirtySinceLastCheckpoint_SoCancelDoesNotConfirmAfterward()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.HasUnsavedEdits);
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+
+        vm.NewTemplateName = "Saved Template";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        Assert.True(vm.HasUnsavedEdits); // unchanged -- a save doesn't clear the undo stack itself
+        Assert.False(vm.IsDirtySinceLastCheckpoint); // but the save IS now a fresh checkpoint
+
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        await vm.CancelCommand.ExecuteAsync(null);
+
+        Assert.False(confirmRequested);
+        Assert.True(cancelled);
+    }
+
+    [AvaloniaFact]
+    public async Task SaveTemplate_ThenARealEditAfterward_ReArmsIsDirtySinceLastCheckpoint_SoCancelConfirmsAgain()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Saved Template";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+
+        vm.AddOverlayElementCommand.Execute(null); // a real edit made AFTER the checkpoint
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        await vm.CancelCommand.ExecuteAsync(null);
+
+        Assert.True(confirmRequested);
+        Assert.True(cancelled);
+    }
+
+    [AvaloniaFact]
+    public async Task ModeSwitchedEditor_CarriedOverDirtiness_ClearsAfterASave_SoCancelDoesNotConfirmAfterward()
+    {
+        // yoniq-auditor Blocker 1 (2026-09-19): _carriedOverUnsavedEdits is readonly and backs
+        // HasUnsavedEdits's own 3 unrelated production consumers -- IsDirtySinceLastCheckpoint must
+        // NOT OR that same field in, or a mode-switched editor's checkpoint would read permanently
+        // dirty for its whole lifetime regardless of any later save. Constructs an editor the way
+        // ReplaceEditorForModeSwitch does (carriedOverUnsavedEdits: true) directly, since no
+        // CreateEditor overload exposes that parameter.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = new TxImageEditorPaneViewModel(
+            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
+            new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(),
+            NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeFilePickerService(), new FakeImageFileLoader(),
+            new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(),
+            readyRack, carriedOverUnsavedEdits: true);
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+
+        vm.NewTemplateName = "Carried Over Template";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        await vm.CancelCommand.ExecuteAsync(null);
+
+        Assert.False(confirmRequested);
+        Assert.True(cancelled);
+    }
+
+    [AvaloniaFact]
+    public async Task UndoStackPinnedAtMaxDepth_CheckpointedThere_FurtherEditsStayDirty_SoCancelStillConfirms()
+    {
+        // yoniq-auditor Blocker 2 (2026-09-19): comparing _undoStack.Count against a saved baseline
+        // silently reads "clean" once the stack is pinned at MaxUndoDepth (50) and a checkpoint was
+        // taken at that same pinned count -- every push past that point nets back to Count=50 (add-
+        // then-evict), hiding real further edits and letting "New Template" discard them with no
+        // confirm dialog. Pushes 55 discrete edits (past the 50 cap) BEFORE saving, so the checkpoint
+        // is captured while the stack is already pinned, then makes one more edit afterward.
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+
+        for (var i = 0; i < 55; i++)
+        {
+            vm.AddOverlayElementCommand.Execute(null);
+        }
+
+        vm.NewTemplateName = "Pinned Template";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+
+        vm.AddOverlayElementCommand.Execute(null); // a real edit made AFTER the pinned checkpoint
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+
+        var confirmRequested = false;
+        vm.ConfirmRequested = _ => { confirmRequested = true; return Task.FromResult(true); };
+        var cancelled = false;
+        vm.Cancelled += () => cancelled = true;
+
+        await vm.CancelCommand.ExecuteAsync(null);
+
+        Assert.True(confirmRequested);
+        Assert.True(cancelled);
+    }
+
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
     // within SmallMode's 8x8 working-copy budget (so _workingCopy IS _originalSource, the common
     // small-image case) unless a test specifically needs the two to be distinct instances.

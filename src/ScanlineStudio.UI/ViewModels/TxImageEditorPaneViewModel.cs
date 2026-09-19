@@ -232,6 +232,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private readonly SstvModeDefinition _targetMode;
     /// <summary>See <see cref="HasUnsavedEdits"/>'s own doc comment.</summary>
     private readonly bool _carriedOverUnsavedEdits;
+    /// <summary>yoniq-auditor finding (2026-09-19, Blocker 1): a SEPARATE, mutable field from
+    /// <see cref="_carriedOverUnsavedEdits"/> -- seeded from the same constructor parameter, but
+    /// deliberately NOT the same field, because <see cref="_carriedOverUnsavedEdits"/> is
+    /// <see langword="readonly"/> and backs <see cref="HasUnsavedEdits"/>, which has its own 3
+    /// legitimate production consumers that must keep reading "this editor started from a mode switch
+    /// with real prior work" for its whole lifetime. <see cref="IsDirtySinceLastCheckpoint"/> needs the
+    /// opposite: a mode-switched editor's carried-over dirtiness must be clearable the moment a save or
+    /// load establishes a fresh checkpoint, or the chip/discard-confirm would read permanently dirty
+    /// for that editor's entire remaining lifetime, never mind what the operator does afterward.
+    /// Cleared at both checkpoint sites (<see cref="LoadTemplateIntoLiveEditor"/>'s own
+    /// load-success tail, <see cref="SaveTemplateAsync"/>'s save-success branch).</summary>
+    private bool _carriedOverDirtySinceCheckpoint;
     private readonly ITransmitImagePreparer _preparer;
     private readonly IMacroTextResolver _macroTextResolver;
     /// <summary>Reports the PARENT TxControlsPaneViewModel's own live !IsTransmitting &amp;&amp;
@@ -344,18 +356,43 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     private readonly List<EditorSnapshot> _undoStack = [];
 
-    /// <summary>Templates rack rework, yoniq-auditor finding -- <see cref="_undoStack"/>'s own count
-    /// snapshot taken right after the most recent successful template load (or 0, for an editor that
-    /// has never loaded one). <see cref="LoadTemplateIntoLiveEditor"/> pushes ITS OWN undo snapshot
-    /// (so the load itself is undoable, a deliberate existing design decision -- see that method's
-    /// own doc comment), which means <see cref="HasUnsavedEdits"/> goes permanently true the instant
-    /// ANY template is first loaded, with zero operator edits. Reusing that raw flag for the
-    /// Templates rack's own "Loaded • edited" badge and its discard-confirm gate made both wrong: the
-    /// badge read "edited" from the moment of load, and the modal fired on every SUBSEQUENT load in
-    /// the same session even with nothing actually typed since. <see cref="IsDirtySinceLastTemplateLoad"/>
-    /// below measures relative to THIS baseline instead -- true only once the stack grows (or
-    /// shrinks via Undo) past what it was right after that load.</summary>
-    private int _undoStackDepthAtLastTemplateLoad;
+    /// <summary>yoniq-auditor finding (2026-09-19, Blocker 2): a plain <see cref="_undoStack"/>`.Count`
+    /// comparison against a saved baseline silently reads "clean" once the stack is pinned at
+    /// <see cref="MaxUndoDepth"/> (50) and a checkpoint happened to be taken at that same pinned count
+    /// -- every push past that point nets to Count=50 again (add-then-evict), so further real edits
+    /// after such a checkpoint were invisible to <see cref="IsDirtySinceLastCheckpoint"/>, letting "New
+    /// Template" silently discard a genuinely edited canvas with no confirm dialog. This field is an
+    /// unbounded edit-sequence counter that mirrors <see cref="_undoStack"/>`.Count`'s own push/Undo-pop/
+    /// Redo-push transitions exactly (incremented in <see cref="PushUndoSnapshot"/>/
+    /// <see cref="PushUndoSnapshotCoalesced"/>/<see cref="Redo"/>, decremented in <see cref="Undo"/>)
+    /// but is NEVER decremented by <see cref="MaxUndoDepth"/>'s own <c>RemoveAt(0)</c> eviction --
+    /// that's a memory trim, not an operator undo action, so it must not affect dirtiness math.</summary>
+    private long _editVersion;
+
+    /// <summary>Templates rack rework, yoniq-auditor finding -- a snapshot of <see cref="_editVersion"/>
+    /// taken right after the most recent successful template load OR save (or 0, for an editor that has
+    /// done neither). <see cref="LoadTemplateIntoLiveEditor"/> pushes ITS OWN undo snapshot (so the load
+    /// itself is undoable, a deliberate existing design decision -- see that method's own doc comment),
+    /// which means <see cref="HasUnsavedEdits"/> goes permanently true the instant ANY template is first
+    /// loaded, with zero operator edits. Reusing that raw flag for the Templates rack's own
+    /// "Loaded • edited" badge and its discard-confirm gate made both wrong: the badge read "edited"
+    /// from the moment of load, and the modal fired on every SUBSEQUENT load in the same session even
+    /// with nothing actually typed since. <see cref="IsDirtySinceLastCheckpoint"/> below measures
+    /// relative to THIS baseline instead -- true only once <see cref="_editVersion"/> moves away from
+    /// what it was right after that checkpoint.
+    /// <para>User-requested (2026-09-19): "when you save a template into the template library
+    /// 'unsaved edits' should be removed and only added again if actual edits are made. Same for when
+    /// it's loaded." Renamed from <c>_undoStackDepthAtLastTemplateLoad</c> and extended to also reset
+    /// on a successful <see cref="SaveTemplateAsync"/> -- a checkpoint is now "the canvas matches what
+    /// the template library has," not just "what was most recently loaded." Also promoted from backing
+    /// only the Ready Rack badge to backing the header's own "UNSAVED EDITS" chip and the "New
+    /// Template" discard-confirm gate too -- see <see cref="IsDirtySinceLastCheckpoint"/>'s own doc
+    /// comment for why <see cref="HasUnsavedEdits"/> itself is deliberately left unchanged rather than
+    /// redefined.</para>
+    /// <para>Retyped from <c>int</c>/<see cref="_undoStack"/>`.Count`-based to <see langword="long"/>/
+    /// <see cref="_editVersion"/>-based (yoniq-auditor finding, Blocker 2) -- see that field's own doc
+    /// comment.</para></summary>
+    private long _editVersionAtLastCheckpoint;
     private readonly List<EditorSnapshot> _redoStack = [];
 
     // Dispatcher-idle coalescing for PushUndoSnapshotCoalesced (round-1 plan-review: sliders/
@@ -640,6 +677,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _sourceBaselineRotation = 0;
         _targetMode = targetMode;
         _carriedOverUnsavedEdits = carriedOverUnsavedEdits;
+        _carriedOverDirtySinceCheckpoint = carriedOverUnsavedEdits;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);
@@ -810,7 +848,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public ReadyRackViewModel ReadyRack { get; }
 
     /// <summary>Templates rack rework -- replaces the old arm/confirm status-bar warning with a real
-    /// confirm dialog (<see cref="ConfirmRequested"/>) when <see cref="IsDirtySinceLastTemplateLoad"/>,
+    /// confirm dialog (<see cref="ConfirmRequested"/>) when <see cref="IsDirtySinceLastCheckpoint"/>,
     /// applied uniformly to BOTH the rack's numbered-slot recall/double-click and the Template
     /// Library's own Load button (both funnel through <see cref="ReadyRackViewModel.TemplateSelected"/>
     /// into this one handler). Declining leaves the canvas untouched. Also the error-surface fix for
@@ -824,7 +862,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         if (_disposed) return;
         try
         {
-            if (IsDirtySinceLastTemplateLoad)
+            if (IsDirtySinceLastCheckpoint)
             {
                 var confirmed = await RequestConfirmAsync(
                     _localization.GetString("Panes.TxImageEditor.ConfirmDiscardTitle"),
@@ -845,14 +883,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 {
                     // Order matters here: LoadTemplateIntoLiveEditor's own PushUndoSnapshot (inside
                     // LoadTemplateAsync, above) already fired SetCanvasDirty(true) against the OLD
-                    // baseline, since the load itself grew the undo stack -- update the baseline and
-                    // re-push the NOW-correct (false) dirty state BEFORE SetLoadedTemplate, so its own
-                    // ApplyLoadedState computes IsLoadedAndEdited from the right value instead of the
-                    // stale "dirty" one Push left behind. Doing it in the opposite order (an earlier
-                    // draft's bug, caught by LoadTemplate_CleanEditor_FirstLoad_DoesNotAskAndBadgeIsPlainLoaded)
-                    // left a freshly-loaded, unedited slot showing "Loaded • edited".
-                    _undoStackDepthAtLastTemplateLoad = _undoStack.Count;
-                    ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+                    // baseline, since the load itself grew the undo stack. The checkpoint reset itself
+                    // now happens INSIDE LoadTemplateIntoLiveEditor, right after the new elements are in
+                    // place (yoniq-auditor risk finding: capturing it here instead, after this method's
+                    // own later ListAsync() await, left a real window where an edit made during that
+                    // await got silently absorbed into the "clean" checkpoint, and made the chip visibly
+                    // flash dirty-then-clean on every load) -- this call just re-notifies the ALREADY-
+                    // correct (false) dirty state BEFORE SetLoadedTemplate, so its own ApplyLoadedState
+                    // computes IsLoadedAndEdited from the right value instead of the stale "dirty" one
+                    // Push left behind. Doing it in the opposite order (an earlier draft's bug, caught by
+                    // LoadTemplate_CleanEditor_FirstLoad_DoesNotAskAndBadgeIsPlainLoaded) left a
+                    // freshly-loaded, unedited slot showing "Loaded • edited".
+                    OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+                    ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
                     ReadyRack.SetLoadedTemplate(templateId);
                 }
             }
@@ -971,11 +1014,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName.ToUpperInvariant(),
         TxControlsPaneViewModel.GetFrameSeconds(_targetMode));
 
-    /// <summary>EditWindow redesign, design-fidelity Phase B -- backs the context bar's "UNSAVED
-    /// EDITS" chip. A free proxy over the EXISTING undo stack (no new dirty-tracking mechanism):
-    /// true the instant any edit has been pushed, false once undone back to the editor's opened (or
-    /// last-Applied) state. Raised at the same 4 call sites <see cref="UndoCommand"/>'s own
-    /// <c>NotifyCanExecuteChanged</c> already fires from.
+    /// <summary>EditWindow redesign, design-fidelity Phase B -- the raw "is there anything at all on
+    /// the undo stack" signal (plus <see cref="_carriedOverUnsavedEdits"/> for a mode-switched
+    /// editor, see below). True the instant any edit has been pushed, false once undone back to the
+    /// editor's opened (or last-Applied) state. Raised at the same 4 call sites <see cref="UndoCommand"/>'s
+    /// own <c>NotifyCanExecuteChanged</c> already fires from.
     /// <para>Mode-switch-mid-edit feature: <b>deliberate exception</b> to the "always in lockstep
     /// with <c>UndoCommand.CanExecute</c>" claim this comment used to make. A freshly constructed
     /// editor (<see cref="ReplaceEditorForModeSwitch"/>'s replacement instance) always has an empty
@@ -984,17 +1027,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// would silently skip, discarding a populated canvas with no warning. The flag is seeded from
     /// the OLD editor's own <see cref="HasUnsavedEdits"/> at construction and never pushed as a fake
     /// undo entry, so it can read <see langword="true"/> while <c>UndoCommand.CanExecute</c> reads
-    /// <see langword="false"/> (nothing to actually undo) -- do not "fix" that back.</para></summary>
+    /// <see langword="false"/> (nothing to actually undo) -- do not "fix" that back.</para>
+    /// <para>Deliberately NOT what the header chip/"New Template" confirm-gate use anymore (2026-09-19
+    /// user request) -- see <see cref="IsDirtySinceLastCheckpoint"/> below for that. This property is
+    /// kept, unchanged in definition, because it still answers a genuinely different, still-useful
+    /// question ("is the undo stack non-empty at all") that some future feature may want -- it is not
+    /// dead code, just no longer wired to those two specific user-facing surfaces.</para></summary>
     public bool HasUnsavedEdits => _undoStack.Count > 0 || _carriedOverUnsavedEdits;
 
-    /// <summary>Templates rack rework -- see <see cref="_undoStackDepthAtLastTemplateLoad"/>'s own
-    /// doc comment for why this is a SEPARATE signal from <see cref="HasUnsavedEdits"/>, not a
-    /// reuse. Used ONLY by the Templates rack (the discard-confirm gate in
+    /// <summary>Templates rack rework -- see <see cref="_editVersionAtLastCheckpoint"/>'s own doc
+    /// comment for why this is a SEPARATE signal from <see cref="HasUnsavedEdits"/>, not a reuse.
+    /// <para>User-requested (2026-09-19): "when you save a template into the template library
+    /// 'unsaved edits' should be removed and only added again if actual edits are made. Same for when
+    /// it's loaded." Previously used ONLY by the Templates rack (the discard-confirm gate in
     /// <see cref="OnReadyRackTemplateSelected"/> and the "Loaded • edited" badge via
-    /// <see cref="ReadyRackViewModel.SetCanvasDirty"/>) -- Cancel/Revert/the "UNSAVED EDITS" chip
-    /// keep using <see cref="HasUnsavedEdits"/> unchanged, since THEIR question really is "is there
-    /// anything at all to lose," not "since the last template load specifically."</summary>
-    private bool IsDirtySinceLastTemplateLoad => _undoStack.Count != _undoStackDepthAtLastTemplateLoad;
+    /// <see cref="ReadyRackViewModel.SetCanvasDirty"/>) while Cancel/Revert/the "UNSAVED EDITS" chip
+    /// kept using <see cref="HasUnsavedEdits"/> -- promoted to <see langword="public"/> and now backs
+    /// ALL THREE surfaces uniformly, by direct user request superseding that original design choice:
+    /// the chip and the confirm-gate exist to answer the exact same question the Ready Rack badge
+    /// already did ("would leaving/discarding now lose something real"), and a checkpoint-relative
+    /// answer is the more useful one for all three, not just the one the badge happened to get first.
+    /// ORs in <see cref="_carriedOverDirtySinceCheckpoint"/> (a separate, clearable field from
+    /// <see cref="_carriedOverUnsavedEdits"/> -- see its own doc comment, yoniq-auditor Blocker 1) for
+    /// the same mode-switch-preservation reason <see cref="HasUnsavedEdits"/> itself does -- a
+    /// mode-switched editor has no checkpoint baseline of its own yet, so the edit-version comparison
+    /// alone can't see work carried over from before the switch. Compares <see cref="_editVersion"/>,
+    /// not <see cref="_undoStack"/>`.Count` (yoniq-auditor Blocker 2) -- see <see cref="_editVersion"/>'s
+    /// own doc comment for why the raw stack count is unsafe to compare once <see cref="MaxUndoDepth"/>
+    /// pins it.</para></summary>
+    public bool IsDirtySinceLastCheckpoint => _editVersion != _editVersionAtLastCheckpoint || _carriedOverDirtySinceCheckpoint;
 
     /// <summary>Design-fidelity Phase C (mockups/Editwindow line 130) -- canvas footer, bottom-left:
     /// crop dims (always the target mode's own fixed render size, same numbers as
@@ -3447,7 +3508,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// file under the template's own <c>assets/</c> folder via <see cref="_imageSourceWriter"/>
     /// BEFORE calling <see cref="ITemplateStore.SaveAsync"/> -- that store's own <c>SaveAsync</c>
     /// only ever writes the manifest + thumbnail, never a per-element asset (see its own doc
-    /// comment), since only this VM holds the resolved pixels to write.</summary>
+    /// comment), since only this VM holds the resolved pixels to write. A successful save also
+    /// resets the checkpoint baseline (2026-09-19 user request) -- see
+    /// <see cref="_editVersionAtLastCheckpoint"/>'s own doc comment.</summary>
     [RelayCommand(CanExecute = nameof(CanSaveTemplate))]
     private async Task SaveTemplateAsync()
     {
@@ -3460,6 +3523,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         IsSavingTemplate = true;
         string? existingId = null;
         string? templateId = null;
+        // yoniq-auditor risk finding: captured BEFORE the first await below, not after SaveAsync
+        // completes -- an edit made by the operator DURING this method's own ListAsync/asset-write/
+        // SaveAsync awaits must not be silently absorbed into the "clean" checkpoint, since that edit
+        // is genuinely not part of what got written to the template file.
+        var editVersionAtSaveStart = _editVersion;
         try
         {
             // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an
@@ -3505,6 +3573,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             await _templateStore.SaveAsync(templateId, name, new PersistedTemplateDocument(elements));
             NewTemplateName = string.Empty;
             StatusMessage = null;
+            // User-requested (2026-09-19): "when you save a template into the template library
+            // 'unsaved edits' should be removed and only added again if actual edits are made." A
+            // successful save is now a checkpoint, same as a successful load -- the canvas the
+            // operator just saved is, by definition, no longer "unsaved" relative to the library.
+            // Resets to editVersionAtSaveStart (captured before the first await above), not the
+            // live _editVersion -- see that local's own comment.
+            _editVersionAtLastCheckpoint = editVersionAtSaveStart;
+            _carriedOverDirtySinceCheckpoint = false;
+            OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+            ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
             await ReadyRack.RefreshAsync();
         }
         catch (Exception ex)
@@ -3812,6 +3890,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         RecomputePreview();
+
+        // Checkpoint reset lives HERE, not in the caller (OnReadyRackTemplateSelected), so it lands
+        // right after the load's own PushUndoSnapshot + element swap complete, before any later
+        // awaits (yoniq-auditor risk finding -- see OnReadyRackTemplateSelected's own comment). The
+        // notify calls must live here too (yoniq-auditor follow-up finding), not just in the caller --
+        // OnReadyRackTemplateSelected's own re-notify runs AFTER a further await
+        // (LoadTemplateAsync's own name-prefill ListAsync call), so without notifying right here the
+        // chip/badge still visibly flash dirty-then-clean across that window, and on a stale-generation
+        // discard the caller's re-notify never runs at all, leaving them stuck showing dirty.
+        _editVersionAtLastCheckpoint = _editVersion;
+        _carriedOverDirtySinceCheckpoint = false;
+        OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
     private bool CanInsertField() => SelectedOverlayElement is OverlayElementViewModel;
@@ -5828,7 +5919,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// click on the SAME Cancel button) went stale the moment <see cref="ConfirmRequested"/>/
     /// <see cref="RequestConfirmAsync"/> were added for template recall -- migrated to the same real
     /// dialog rather than left as the one remaining "click twice" holdout in this class. A Cancel with
-    /// nothing unsaved still cancels immediately (no confirmation needed for a no-op discard).</summary>
+    /// nothing unsaved still cancels immediately (no confirmation needed for a no-op discard).
+    /// <para>User-requested (2026-09-19): gated on <see cref="IsDirtySinceLastCheckpoint"/>, not
+    /// <see cref="HasUnsavedEdits"/> -- discarding right after a template save/load must not confirm
+    /// (nothing new would actually be lost), only once a real edit has happened SINCE that
+    /// checkpoint. See that property's own doc comment.</para></summary>
     [RelayCommand]
     private async Task CancelAsync()
     {
@@ -5839,7 +5934,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // migrations this session shipped that didn't match the other two.
         try
         {
-            if (HasUnsavedEdits)
+            if (IsDirtySinceLastCheckpoint)
             {
                 var confirmed = await RequestConfirmAsync(
                     _localization.GetString("Panes.TxImageEditor.ConfirmCancelTitle"),
@@ -6718,12 +6813,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         var previous = _undoStack[^1];
         _undoStack.RemoveAt(_undoStack.Count - 1);
         _redoStack.Add(CaptureSnapshot());
+        _editVersion--;
         ApplyState(previous);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
-        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+        OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
     /// <summary>EditWindow redesign, design-fidelity Phase B -- the context bar's REVERT action.
@@ -6756,12 +6853,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         var next = _redoStack[^1];
         _redoStack.RemoveAt(_redoStack.Count - 1);
         _undoStack.Add(CaptureSnapshot());
+        _editVersion++;
         ApplyState(next);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
-        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+        OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
     /// <summary>Pushes the CURRENT state (before the caller's own change) as one undo step and
@@ -6785,6 +6884,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         _undoStack.Add(CaptureSnapshot());
+        _editVersion++;
         if (_undoStack.Count > MaxUndoDepth)
         {
             _undoStack.RemoveAt(0);
@@ -6796,7 +6896,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
-        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+        OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
     /// <summary>Same contract as <see cref="PushUndoSnapshot"/>, but coalesces a rapid BURST of
@@ -6828,6 +6929,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         _undoStack.Add(CaptureSnapshot());
+        _editVersion++;
         if (_undoStack.Count > MaxUndoDepth)
         {
             _undoStack.RemoveAt(0);
@@ -6848,7 +6950,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
-        ReadyRack.SetCanvasDirty(IsDirtySinceLastTemplateLoad);
+        OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
+        ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
     /// <summary>Restores the editor to a previously-captured <see cref="EditorSnapshot"/> -- shared

@@ -292,7 +292,7 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     /// delete elsewhere) can never silently change WHICH template the canvas actually holds.</summary>
     private string? _loadedTemplateId;
 
-    /// <summary>Mirrors <c>TxImageEditorPaneViewModel.HasUnsavedEdits</c>, pushed via
+    /// <summary>Mirrors <c>TxImageEditorPaneViewModel.IsDirtySinceLastCheckpoint</c>, pushed via
     /// <see cref="SetCanvasDirty"/> -- this VM has no reference to the editor VM (constructed
     /// before it, per <c>TxControlsPaneViewModel</c>'s own construction order), so it can't read
     /// that property directly.</summary>
@@ -336,12 +336,12 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     }
 
     /// <summary>Templates rack rework -- <paramref name="isDirty"/> is
-    /// <c>TxImageEditorPaneViewModel.IsDirtySinceLastTemplateLoad</c>, NOT its plain
+    /// <c>TxImageEditorPaneViewModel.IsDirtySinceLastCheckpoint</c>, NOT its plain
     /// <c>HasUnsavedEdits</c> (yoniq-auditor finding: reusing the raw undo-stack-non-empty flag made
     /// the badge read "edited" the instant ANY template loaded, since a load itself pushes its own
     /// undo snapshot -- see that property's own doc comment). Called at every point the caller
-    /// already raises <c>OnPropertyChanged(nameof(HasUnsavedEdits))</c>, so the "Loaded • edited"
-    /// badge never lags the real dirty-since-load state.</summary>
+    /// already raises <c>OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint))</c>, so the
+    /// "Loaded • edited" badge never lags the real dirty-since-checkpoint state.</summary>
     public void SetCanvasDirty(bool isDirty)
     {
         _isCanvasDirty = isDirty;

@@ -3673,20 +3673,20 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void TxControlsPaneViewModel_LivePowerAndAlcSet_MeterFillPercentsReflectThem()
+    public void TxControlsPaneViewModel_LiveAlcLevelSet_LiveAlcPercentDisplayConvertsFractionToPercent()
     {
+        // 2026-09-19 user request ("power and alc meter in Output card should show numbers, not
+        // bars"): PowerMeterFillPercent/AlcMeterFillPercent (the fill-bar meters' own [0,100] clamp)
+        // are removed along with the bars themselves -- LivePowerPercent is now shown directly, and
+        // LiveAlcPercentDisplay's own fraction-to-percent conversion is the only remaining behavior
+        // worth a dedicated test here.
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
 
-        Assert.Equal(0, vm.PowerMeterFillPercent);
-        Assert.Equal(0, vm.AlcMeterFillPercent);
         Assert.Null(vm.LiveAlcPercentDisplay);
 
-        vm.LivePowerPercent = 42f;
         vm.LiveAlcLevel = 0.75f; // RadioState.AlcLevel is a 0.0-1.0 fraction, not 0-100 -- plan-review finding
 
-        Assert.Equal(42, vm.PowerMeterFillPercent);
-        Assert.Equal(75, vm.AlcMeterFillPercent, precision: 5);
         Assert.Equal(75f, vm.LiveAlcPercentDisplay);
     }
 
