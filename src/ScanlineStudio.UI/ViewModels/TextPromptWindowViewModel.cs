@@ -1,7 +1,5 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
-using ScanlineStudio.Abstractions.Localization;
-using ScanlineStudio.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
@@ -9,29 +7,31 @@ namespace ScanlineStudio.UI.ViewModels;
 /// prompt (Title/Message/one TextBox/OK-Cancel), the FIRST dialog in this codebase that returns a
 /// typed result to its caller rather than being a pure acknowledgement or a self-contained editor.
 /// Constructed with per-invocation parameters (title/message/prefill), so it is always `new`'d
-/// directly by its opener (<c>MainWindow.axaml.cs</c>'s Configurations-menu code), never DI-registered --
-/// same reasoning as <c>HamlibLibraryReloadFailedDialogViewModel</c>'s own per-attempt-payload
-/// constructor.
+/// directly by its opener (<c>MainWindow.axaml.cs</c>'s Configurations-menu code, or
+/// <c>RxHistoryPaneViewModel</c>'s Gallery "Add note" flow), never DI-registered -- same reasoning
+/// as <c>HamlibLibraryReloadFailedDialogViewModel</c>'s own per-attempt-payload constructor.
 ///
-/// Validates via <see cref="IConfigurationPresetStore.TryValidatePresetName"/> -- the SAME rule the
-/// store itself enforces, not a hand-copied second blocklist -- on every <see cref="Text"/> edit, so
-/// <see cref="OkCommand"/> only ever closes with an already-valid name. Manual-verification finding:
-/// the store's own <paramref name="errorMessage"/> out-value says "Preset name..." (its own internal
-/// vocabulary) -- shown verbatim, that would violate this feature's own "never say 'Preset' in a
-/// user-facing string, always 'Configuration'" rule (plan point 1). Only VALIDITY is taken from the
-/// store; the shown text is this dialog's own locale string. A COLLISION against an existing preset
-/// name is deliberately NOT checked here (this VM has no store-state visibility of its own beyond the
-/// validation call) -- that surfaces on the caller's own dialog after this one closes, per this
+/// Generalized 2026-09-19 (Gallery "Add note" context-menu request) -- was hard-wired to
+/// <c>IConfigurationPresetStore.TryValidatePresetName</c> directly, which made it unusable for a
+/// free-text note with no preset-naming rules at all. Now takes an optional
+/// <paramref name="validate"/> delegate instead, defaulting to "always valid, no error" -- the
+/// Configurations caller passes one wrapping its own store call (same validation source as before,
+/// same "SAME rule the store itself enforces, not a hand-copied second blocklist" property), the
+/// Gallery note caller omits it entirely since any text is a valid note. Manual-verification finding
+/// this preserved: the store's own error text says "Preset name..." (its own internal vocabulary) --
+/// shown verbatim, that would violate that feature's own "never say 'Preset' in a user-facing string,
+/// always 'Configuration'" rule (plan point 1), so the CALLER's delegate is responsible for its own
+/// user-facing error text, not this class. A COLLISION against an existing preset name is
+/// deliberately NOT checked here (this VM has no store-state visibility of its own beyond the
+/// validation call) -- that surfaces on the caller's own dialog after this one closes, per that
 /// feature's own plan doc.</summary>
 public sealed partial class TextPromptWindowViewModel : ObservableObject
 {
-    private readonly IConfigurationPresetStore _presetStore;
-    private readonly ILocalizationService _localization;
+    private readonly Func<string, (bool IsValid, string? ErrorMessage)> _validate;
 
-    public TextPromptWindowViewModel(IConfigurationPresetStore presetStore, ILocalizationService localization, string title, string message, string prefillText = "")
+    public TextPromptWindowViewModel(string title, string message, string prefillText = "", Func<string, (bool IsValid, string? ErrorMessage)>? validate = null)
     {
-        _presetStore = presetStore;
-        _localization = localization;
+        _validate = validate ?? (static _ => (true, null));
         Title = title;
         Message = message;
         _text = prefillText;
@@ -59,7 +59,7 @@ public sealed partial class TextPromptWindowViewModel : ObservableObject
     /// independent: <see cref="ErrorMessage"/> is purely a DISPLAY concern (see
     /// <see cref="ValidateText"/>'s own doc comment for why it stays <see langword="null"/> on empty
     /// text even though empty is still invalid).</summary>
-    public bool IsValid => _presetStore.TryValidatePresetName(Text, out _);
+    public bool IsValid => _validate(Text).IsValid;
 
     /// <summary>Fires with the typed, already-validated text on OK; <see langword="null"/> on
     /// Cancel/close -- the caller (<c>MainWindow.axaml.cs</c>'s Configurations-menu code) awaits
@@ -79,6 +79,6 @@ public sealed partial class TextPromptWindowViewModel : ObservableObject
     /// button is self-explanatory on its own.</summary>
     private void ValidateText()
     {
-        ErrorMessage = Text.Length == 0 || IsValid ? null : _localization.GetString("TextPrompt.InvalidNameError");
+        ErrorMessage = Text.Length == 0 || IsValid ? null : _validate(Text).ErrorMessage;
     }
 }

@@ -1287,8 +1287,36 @@
                                                  RxHistoryPaneViewModel.OpenImageViewerCommand's own doc
                                                  comment). Single-click still selects (SelectedItem binding
                                                  above), unaffected by this. -->
+                                            <!-- User-requested (2026-09-19): "right click on photo,
+                                                 same options as when you have a selected frame."
+                                                 ContextRequested (fires before the popup opens, not a
+                                                 Click) selects THIS entry first — Open in
+                                                 log/Export/Send to TX/Delete/Flag/Add note all
+                                                 operate on SelectedEntry (the Selected-frame panel's
+                                                 own existing commands), same as every other per-entry
+                                                 action in RxHistoryPaneViewModel, so right-clicking a
+                                                 DIFFERENT photo than the one currently selected must
+                                                 select it first or those commands would silently act
+                                                 on the wrong one. -->
                                             <Border Classes="IndustryThumbnail" Margin="0,0,7,7"
-                                                    DoubleTapped="OnGalleryThumbnailDoubleTapped">
+                                                    DoubleTapped="OnGalleryThumbnailDoubleTapped"
+                                                    ContextRequested="OnGalleryThumbnailContextRequested">
+                                                <Border.ContextMenu>
+                                                    <ContextMenu Classes="Industry">
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.OpenInLog}" Click="OnGalleryContextMenuOpenInLogClick" />
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.ExportFrame}" Click="OnGalleryContextMenuExportClick" />
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.SendToTx}" Click="OnGalleryContextMenuSendToTxClick" />
+                                                        <Separator />
+                                                        <!-- ToggleType="CheckBox" purely for the visual checkmark, matching this
+                                                             project's own established pattern elsewhere (TxImageEditorPaneView.axaml's
+                                                             Lock/SnapToGrid items) — IsChecked is explicitly OneWay (Entry.IsFlagged
+                                                             has no setter to write back to), the actual toggle happens via Click. -->
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.FlagLabel}" ToggleType="CheckBox" IsChecked="{Binding Entry.IsFlagged, Mode=OneWay}" Click="OnGalleryContextMenuToggleFlagClick" />
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.AddNoteMenuItem}" Click="OnGalleryContextMenuAddNoteClick" />
+                                                        <Separator />
+                                                        <MenuItem Header="{loc:Translate Panes.RxHistory.DeleteFrame}" Click="OnGalleryContextMenuDeleteClick" />
+                                                    </ContextMenu>
+                                                </Border.ContextMenu>
                                                 <Panel>
                                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform" RenderOptions.BitmapInterpolationMode="HighQuality" />
                                                     <Border Classes="Industry IndustryMini" Background="{DynamicResource IndustryBg}" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="4" IsHitTestVisible="False">

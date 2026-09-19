@@ -990,6 +990,101 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         return await ConfirmRequested(confirmVm).ConfigureAwait(true);
     }
 
+    /// <summary>Gallery right-click "Add note..." (2026-09-19 user request). Same "genuine
+    /// request/response the command awaits the typed answer" shape as <see cref="ConfirmRequested"/>
+    /// above -- set exactly once, by <c>MainWindow.axaml.cs</c>, to construct a
+    /// <c>TextPromptWindowView</c> and await <c>ShowDialog&lt;string?&gt;</c>. Returns
+    /// <see langword="null"/> (treated as Cancel) when unwired.</summary>
+    public Func<TextPromptWindowViewModel, Task<string?>>? TextPromptRequested { get; set; }
+
+    private async Task<string?> RequestTextPromptAsync(TextPromptWindowViewModel promptVm) =>
+        TextPromptRequested is null ? null : await TextPromptRequested(promptVm).ConfigureAwait(true);
+
+    private bool CanAddNoteToSelectedEntry() => SelectedEntry is not null;
+
+    /// <summary>Gallery right-click menu's "Add note..." (2026-09-19 user request) -- a standalone,
+    /// self-contained alternative to typing directly into the Selected-frame panel's own
+    /// <see cref="SelectedEntryNote"/>-bound TextBox below, for right-clicking a photo that ISN'T
+    /// already selected. No preset-style validation (<see cref="TextPromptWindowViewModel"/>'s
+    /// <c>validate</c> delegate omitted -- any text, including empty, is a valid note).
+    /// <para>Deliberately does NOT route the write through <see cref="SelectedEntryNote"/>'s own
+    /// setter -- the dialog await is a genuine, potentially long gap during which a background
+    /// <see cref="IReceiveHistoryStore.Recorded"/>-triggered <see cref="RefreshAsync"/> could
+    /// reassign <see cref="SelectedEntry"/> to a different entry (or null), same discipline
+    /// <see cref="DeleteSelectedEntryAsync"/>/<see cref="ExportFrameAsync"/>'s own doc comments
+    /// describe for their own awaits. Captures <paramref name="entry"/>'s id upfront, cancels any
+    /// pending <see cref="_noteDebounces"/> entry for it FIRST (code-review finding: a debounced
+    /// keystroke from the Selected-frame panel, still pending when this dialog's OK lands within its
+    /// own 600ms window, would otherwise chain onto <see cref="_noteWrites"/> AFTER this write and
+    /// silently clobber it with the older, stale text), then writes directly via
+    /// <see cref="PersistNoteNowAsync"/> (the same underlying chain <see cref="PersistNoteDebouncedAsync"/>
+    /// uses, extracted so both share one persistence path), so the note lands on the entry the user
+    /// actually right-clicked regardless of what <see cref="SelectedEntry"/> becomes in the meantime.
+    /// <para>Code-review finding: the "still selected" re-check below MUST compare
+    /// <see cref="ReceiveHistoryEntry.Id"/>, not object reference -- <see cref="RefreshAsync"/>
+    /// reselects by Id with a FRESHLY CONSTRUCTED <see cref="RxHistoryEntryViewModel"/> (see its own
+    /// doc comment), so a reference comparison would read false even when the SAME logical entry
+    /// (just rebuilt by a refresh) is still selected, leaving the visible TextBox showing the
+    /// pre-dialog note -- exactly the "next keystroke re-persists the OLD text over the good one"
+    /// trap <see cref="_loadedEditsEntryId"/>'s own doc comment warns about, except triggered by this
+    /// method's own stale display instead of a stale debounce.</para></summary>
+    [RelayCommand(CanExecute = nameof(CanAddNoteToSelectedEntry))]
+    private async Task AddNoteToSelectedEntryAsync()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        Log.AddNoteInvoked(_logger, entry.Entry.Id);
+        var promptVm = new TextPromptWindowViewModel(
+            _localization.GetString("Panes.RxHistory.NotePrompt.Title"),
+            _localization.GetString("Panes.RxHistory.NotePrompt.Message"),
+            prefillText: entry.Entry.Note ?? "");
+        var note = await RequestTextPromptAsync(promptVm);
+        if (note is null)
+        {
+            return;
+        }
+
+        if (_noteDebounces.TryGetValue(entry.Entry.Id, out var pendingDebounce))
+        {
+            pendingDebounce.Cancel();
+        }
+        await PersistNoteNowAsync(entry.Entry.Id, note);
+
+        if (SelectedEntry?.Entry.Id == entry.Entry.Id)
+        {
+            try
+            {
+                _suppressSelectedEntryEdits = true;
+                SelectedEntryNote = note;
+            }
+            finally
+            {
+                _suppressSelectedEntryEdits = false;
+            }
+        }
+    }
+
+    private bool CanToggleSelectedEntryFlag() => SelectedEntry is not null;
+
+    /// <summary>Gallery right-click menu's "Flag"/"Unflag" (2026-09-19 user request) -- a one-click
+    /// equivalent of the Selected-frame panel's own <c>CheckBox</c>, for right-clicking a photo that
+    /// isn't already selected. Reuses <see cref="SelectedEntryIsFlagged"/>'s own setter for the
+    /// actual write, same reasoning as <see cref="AddNoteToSelectedEntryAsync"/> above.</summary>
+    [RelayCommand(CanExecute = nameof(CanToggleSelectedEntryFlag))]
+    private void ToggleSelectedEntryFlag()
+    {
+        if (SelectedEntry is not { } entry)
+        {
+            return;
+        }
+
+        Log.ToggleFlagInvoked(_logger, entry.Entry.Id);
+        SelectedEntryIsFlagged = !SelectedEntryIsFlagged;
+    }
+
     private bool CanDeleteSelectedEntry() => SelectedEntry is not null;
 
     /// <summary>Per-item manual delete -- the retention-cap AUTO-delete stays removed
@@ -1443,6 +1538,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             debounce.Dispose();
         }
 
+        await PersistNoteNowAsync(entryId, note);
+    }
+
+    /// <summary>Extracted 2026-09-19 (Gallery "Add note..." context-menu request) from
+    /// <see cref="PersistNoteDebouncedAsync"/>'s own tail, so <see cref="AddNoteToSelectedEntryAsync"/>
+    /// can commit a note IMMEDIATELY (a one-shot dialog OK, not continuous typing) through the exact
+    /// same <see cref="_noteWrites"/> per-entry ordering chain, without waiting out
+    /// <see cref="NotePersistDebounce"/> first.</summary>
+    private async Task PersistNoteNowAsync(string entryId, string? note)
+    {
         var previous = _noteWrites.GetValueOrDefault(entryId, Task.CompletedTask);
         var write = PersistNoteAfterAsync(previous, entryId, note);
         _noteWrites[entryId] = write;
@@ -1738,6 +1843,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "SendSelectedEntryToTx: linked QSO lookup failed for {QsoId} -- sending with no contact seeded")]
         public static partial void SendSelectedEntryToTxQsoLookupFailed(ILogger logger, string qsoId, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "AddNote (Gallery context menu) invoked: entryId={EntryId}")]
+        public static partial void AddNoteInvoked(ILogger logger, string entryId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ToggleFlag (Gallery context menu) invoked: entryId={EntryId}")]
+        public static partial void ToggleFlagInvoked(ILogger logger, string entryId);
     }
 }
 
