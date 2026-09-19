@@ -198,14 +198,13 @@
           <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
           <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
           <li><strong>Pwr</strong> is the application's TX playback gain—not the operating system's device volume and not the radio's RF power setting.</li>
-          <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. Its label switches to <strong>RX Muted</strong> whenever capture is stopped, and blinks amber and reads <strong>Decoding</strong> while an image is actively being decoded (the blink can be turned off in <a href="#appearance-options">Appearance options</a>). The matching status-bar chip does the same, so the decoding state is visible from any tab, not only Receive.</li>
+          <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards, and its label reads <strong>Transmitting</strong> for that whole window (a real Transmit or a Tune tone), reverting to <strong>Receiving</strong> once it finishes. Otherwise its label switches to <strong>RX Muted</strong> whenever capture is stopped, and blinks amber and reads <strong>Decoding</strong> while an image is actively being decoded (the blink can be turned off in <a href="#appearance-options">Appearance options</a>). The matching status-bar chip does the same, so the transmitting/decoding state is visible from any tab, not only Receive.</li>
           <li><strong>Stop TX</strong>, next to <strong>Receiving</strong>, cancels an in-progress transmission immediately. It is always visible, regardless of which tab you're on, so it is reachable without switching to the Transmit tab first.</li>
         </ul>
 
         <h3>Status indicators</h3>
         <dl>
           <dt>CAT linked</dt><dd>The configured radio backend is connected.</dd>
-          <dt>TX KEYED</dt><dd>Live PTT state was read back from a connected rig that supports reporting it. Some VOX or DTR arrangements cannot provide this confirmation.</dd>
           <dt>TX ERROR</dt><dd>The last transmit attempt ended in an error or automatic SWR cutoff. It reports the last outcome; it does not permanently lock out the next attempt.</dd>
           <dt>Line, slant, buffer, frames today, log entries</dt><dd>Compact operating telemetry for the current session.</dd>
         </dl>

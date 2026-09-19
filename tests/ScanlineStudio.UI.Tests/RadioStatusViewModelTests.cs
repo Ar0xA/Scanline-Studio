@@ -1123,6 +1123,60 @@ public sealed class RadioStatusViewModelTests
         Assert.Equal("MainWindow.StatusBar.Rx", vm.RxStatusBarText);
     }
 
+    /// <summary>User-requested (2026-09-19): "top right transceiver label ... and bottom left
+    /// label should say 'transmitting'." "Transmitting" must win over even an in-progress decode --
+    /// capture is genuinely paused for the whole transmit/tune window, so there is nothing real left
+    /// decoding underneath it. Asserts the PropertyChanged notifications themselves (not just the
+    /// resulting values), same "a bound TextBlock never refreshes without them" lesson this codebase
+    /// applies elsewhere -- IsCapturePausedForTx's own [ObservableProperty] previously notified
+    /// nothing but itself.</summary>
+    [AvaloniaFact]
+    public void WhileTransmitting_ReceivingButtonLabelAndStatusBarText_SayTransmitting_EvenOverADecodeInProgress()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = true };
+        ((FakeReceivedImageBuffer)sstvSession.ReceivedImage).Progress = 0.3;
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("RadioStatus.Decoding", vm.ReceivingButtonLabel);
+
+        var changedProperties = new List<string>();
+        vm.PropertyChanged += (_, e) => changedProperties.Add(e.PropertyName!);
+
+        sstvSession.RaiseCapturePausedForTransmitChanged(true);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("RadioStatus.Transmitting", vm.ReceivingButtonLabel);
+        Assert.Equal("MainWindow.StatusBar.Transmitting", vm.RxStatusBarText);
+        Assert.Contains(nameof(RadioStatusViewModel.ReceivingButtonLabel), changedProperties);
+        Assert.Contains(nameof(RadioStatusViewModel.RxStatusBarText), changedProperties);
+
+        changedProperties.Clear();
+        sstvSession.RaiseCapturePausedForTransmitChanged(false);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("RadioStatus.Decoding", vm.ReceivingButtonLabel); // back to whatever was really happening underneath
+        Assert.Contains(nameof(RadioStatusViewModel.ReceivingButtonLabel), changedProperties);
+    }
+
+    /// <summary>Code-review finding (yoniq-auditor, 2026-09-19): IsCapturePausedForTx ALONE misses
+    /// this case entirely -- it only fires when a genuinely RUNNING capture got paused (see its own
+    /// event's doc comment), so starting a Transmit/Tune while RX is already Muted never raises it at
+    /// all, and the labels would silently stay stuck on "RX Muted" for the whole transmission -- the
+    /// exact case the removed TX KEYED chip used to still cover (on rigs with PTT readback).
+    /// IsSstvTransmitting (polled off ISstvSessionService.IsTransmitting, unconditional on prior RX
+    /// state) is what actually closes this gap.</summary>
+    [AvaloniaFact]
+    public void WhileRxIsHalted_StartingATransmit_StillSaysTransmitting()
+    {
+        var sstvSession = new FakeSstvSessionService { IsReceiving = false, IsTransmitting = true };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(vm.IsTransmittingDisplay);
+        Assert.Equal("RadioStatus.Transmitting", vm.ReceivingButtonLabel);
+        Assert.Equal("MainWindow.StatusBar.Transmitting", vm.RxStatusBarText);
+    }
+
     [AvaloniaFact]
     public void WhileIdle_NotDecoding_IsDecodingBlinkOnIsFalse()
     {
