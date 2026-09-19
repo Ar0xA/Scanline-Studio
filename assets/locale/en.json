@@ -64,6 +64,8 @@
   "RadioStatus.Error.InvalidPresetFrequency": "Preset \"{0}\" has an invalid frequency -- fix it before saving.",
   "RadioStatus.Error.InvalidPresetBandwidth": "Favourite \"{0}\" has an invalid filter bandwidth -- enter a value between 50 and 20000 Hz before saving.",
   "RadioStatus.Error.InvalidPresetMode": "Favourite \"{0}\" uses a mode this radio cannot be set to. Edit the Favourite and pick a mode from the list.",
+  "RadioStatus.Error.ModeNotSupported": "This radio has no equivalent for that mode.",
+  "RadioStatus.Error.ModeRejected": "The radio rejected that mode change: {0}",
   "RadioMode.Usb": "USB",
   "RadioMode.Lsb": "LSB",
   "RadioMode.Fm": "FM",

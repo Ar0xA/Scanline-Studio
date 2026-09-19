@@ -1174,8 +1174,20 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
     /// overwritten by the rig and the test would still pass on call counts alone.</summary>
     public List<string> CallOrder { get; } = [];
 
+    /// <summary>Lets a test simulate a SPECIFIC failure shape from a real backend (a genuine rig
+    /// rejection via <c>RadioProtocolException</c>, an unsupported mode via
+    /// <c>ArgumentOutOfRangeException</c>) instead of only the generic "no radio connected" shape
+    /// <see cref="ThrowOnSetFrequencyOrMode"/> already covers -- SetModeSafeAsync's own catch now
+    /// routes each of these to a different ErrorMessage.</summary>
+    public Exception? SetModeExceptionToThrow { get; set; }
+
     public Task SetModeAsync(RadioMode mode, CancellationToken ct = default)
     {
+        if (SetModeExceptionToThrow is { } ex)
+        {
+            throw ex;
+        }
+
         if (ThrowOnSetFrequencyOrMode)
         {
             throw new InvalidOperationException("No radio connected -- call ConnectAsync first.");
