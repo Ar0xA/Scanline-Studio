@@ -608,10 +608,20 @@
                          row) was rendering ~16px taller than the settings column beside it actually
                          needs (Bins/px through the Both/Spec/WF segmented row), leaving a visible
                          strip of empty IndustryPlot background under the waterfall with nothing on
-                         the right to match it. Height stays 834 total — the freed 16px is absorbed
-                         by row 1's own "*" (Incoming Frame grows slightly), not subtracted from the
-                         whole card. -->
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="166,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                         the right to match it. The freed 16px is absorbed by row 1's own "*"
+                         (Incoming Frame grows slightly), not subtracted from the whole card.
+                         Total trimmed 834 to 810 (user-reported, 2026-09-19: a real Windows 11
+                         FullHD screen forced a sliver of scroll in this column while maximized) —
+                         834 was tuned to exactly fill the viewport with ZERO margin at this app's
+                         own DECLARED default (non-maximized) window size, so any real machine
+                         whose actual taskbar/title-bar chrome eats slightly more height than that
+                         literal assumes (confirmed: maximized bounds are the OS work area, not this
+                         app's own default-size literal, so trimming the app's own Height="1032"
+                         default would not have helped) pushes this column into scroll-to-see-it-all
+                         territory. 24px is a deliberate safety margin above the reported overflow
+                         (~10-20px), not a bare-minimum trim, to absorb reasonable taskbar-height/DPI
+                         variance across different Windows 11 machines. -->
+                    <Grid Height="810" Margin="0,6,0,0" RowDefinitions="166,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <!-- Spectrum & waterfall (batch 8b): SpectrumTraceControl (new, real FFT
                              line trace + markers + peak-hold) fills what was the literal "Spectrum"
                              placeholder; WaterfallPaneView (ContentControl bound to Waterfall) is
@@ -902,13 +912,14 @@
                          backing command/feature) — building it is new scope, not a re-skin of an
                          existing old-design card, so it's not added here; would need a real
                          product decision on what F1-F6 actually invoke first. -->
-                    <!-- Same ScrollViewer + pinned-Height fix as the middle column above, and same
-                         834 figure — this column is a sibling in the same outer Grid row, so it
-                         gets exactly the same available height. Auditor code-review correction
-                         (2026-08-25): this comment used to describe a Row 2 ("*", Session Frames)
-                         that no longer exists — that card was removed and Decoder Trace now
-                         occupies the row instead, see this Grid's own RowDefinitions comment
-                         below. -->
+                    <!-- Same ScrollViewer + pinned-Height fix as the middle column above, and the
+                         same trimmed 810 figure (was 834; see that column's own comment for the
+                         2026-09-19 real-Windows-11-maximized-scroll fix this shares) — this column
+                         is a sibling in the same outer Grid row, so it gets exactly the same
+                         available height. Auditor code-review correction (2026-08-25): this comment
+                         used to describe a Row 2 ("*", Session Frames) that no longer exists — that
+                         card was removed and Decoder Trace now occupies the row instead, see this
+                         Grid's own RowDefinitions comment below. -->
                     <ScrollViewer Grid.Column="2">
                     <!-- Same top-headroom fix as the middle column above (and the pre-existing
                          left column) — ScrollViewer clips to its own viewport, so the first
@@ -920,7 +931,7 @@
                          card) is the row's only remaining occupant, so it gets a plain "*" row and
                          a plain Grid.Row="1", no RowSpan needed and no Auto/Star sizing mismatch
                          to reason about. -->
-                    <Grid Height="834" Margin="0,6,0,0" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
+                    <Grid Height="810" Margin="0,6,0,0" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}">
                         <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" DataContext="{Binding RxImage}" ClipToBounds="False">
                             <HeaderedContentControl.Header>
                                 <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.RxFrameMeta.CardHeader}" />
@@ -1176,15 +1187,23 @@
                     <!-- yoniq-auditor caught a real regression here (2026-09-16): raising this to
                          1050 to give TEMPLATE LIBRARY's item list real height pushed the editor's
                          own SEND bar (root Grid.Row="3", TxImageEditorPaneView.axaml) below the
-                         fold at this app's DEFAULT (non-maximized) window size — 834 is exactly
-                         "fills the viewport, no scroll" at that size, so ANY increase here moves
-                         TRANSMIT into scroll-to-reach territory, undoing the whole point of the
-                         obvious-TRANSMIT-button work. 834 stays; TEMPLATE LIBRARY's own visible-
-                         list-height fix instead lives entirely inside the rail column (see
-                         TxImageEditorPaneView.axaml's own rail-Grid comment) so it can't touch
-                         where SEND lands. -->
+                         fold at this app's DEFAULT (non-maximized) window size — 834 was exactly
+                         "fills the viewport, no scroll" at that size, with ZERO margin, so ANY
+                         increase moved TRANSMIT into scroll-to-reach territory. TEMPLATE LIBRARY's
+                         own visible-list-height fix instead lives entirely inside the rail column
+                         (see TxImageEditorPaneView.axaml's own rail-Grid comment) so it can't touch
+                         where SEND lands.
+                         Trimmed 834 to 810 (user-reported, 2026-09-19: a real Windows 11 FullHD
+                         screen forced a sliver of scroll here while maximized) — same root cause
+                         and same fix as the Receive tab's own two pinned-height columns (see the
+                         middle column's own comment there for the full reasoning); a maximized
+                         window's real bounds come from the OS work area, not this app's own
+                         default-size literal, so the zero-margin 834 could overflow by a few pixels
+                         on a real machine even though it fit exactly at the declared default. This
+                         LOWERS the SEND-bar risk from the 2026-09-16 finding above, it does not
+                         reopen it — trimming leaves MORE headroom before SEND, never less. -->
                     <ScrollViewer Grid.Column="1">
-                    <ContentControl Height="834" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
+                    <ContentControl Height="810" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
                     </ScrollViewer>
                 </Grid>
             </TabItem>
