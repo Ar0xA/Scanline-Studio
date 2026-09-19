@@ -245,6 +245,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowBackgroundPreview))]
     private string? _selectedFileName;
 
     /// <summary>TX history plan (2026-09-01, Fable operator-perspective punch list, "No TX
@@ -342,11 +343,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(LiveAlcPercentDisplay))]
-    [NotifyPropertyChangedFor(nameof(AlcMeterFillPercent))]
     private float? _liveAlcLevel;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(PowerMeterFillPercent))]
     private float? _livePowerPercent;
 
     /// <summary>Plan-review finding: <see cref="LiveAlcLevel"/> (<see cref="RadioState.AlcLevel"/>)
@@ -354,16 +353,6 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// (this row's pre-fix binding) rendered "0.42" instead of a percentage. <see langword="null"/>
     /// passes through unchanged, same convention as every other TX-only telemetry field.</summary>
     public float? LiveAlcPercentDisplay => LiveAlcLevel is { } alc ? alc * 100 : null;
-
-    /// <summary>Fill-bar percent for the POWER meter (<see cref="Atoms.axaml"/>'s <c>IndustryMeter</c>
-    /// atom) -- clamped to [0,100], 0 (empty bar) rather than null while idle/ungated, since a
-    /// <see langword="double"/>-typed grid-length converter has no meaningful "no value" rendering.</summary>
-    public double PowerMeterFillPercent => Math.Clamp(LivePowerPercent ?? 0, 0, 100);
-
-    /// <summary>Same as <see cref="PowerMeterFillPercent"/>, for ALC -- built off
-    /// <see cref="LiveAlcPercentDisplay"/> (already 0-100-scaled), not the raw 0.0-1.0
-    /// <see cref="LiveAlcLevel"/>.</summary>
-    public double AlcMeterFillPercent => Math.Clamp(LiveAlcPercentDisplay ?? 0, 0, 100);
 
     /// <summary>Bounded (<see cref="TelemetryHistoryCapacity"/>-sample, oldest-evicted-first) history
     /// of the same TX-only telemetry as <see cref="LiveSwrRatio"/>/<see cref="LiveAlcLevel"/>/
@@ -390,17 +379,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private bool _showSwrMeter;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowAnyMeter))]
     private bool _showAlcMeter;
 
     [ObservableProperty]
-    [NotifyPropertyChangedFor(nameof(ShowAnyMeter))]
     private bool _showPowerMeter;
-
-    /// <summary>Gates the POWER/ALC meter section's shared kicker caption -- true when at least one
-    /// of the two meter rows it captions is actually showing (a rig can report Power without ALC, or
-    /// vice versa).</summary>
-    public bool ShowAnyMeter => ShowPowerMeter || ShowAlcMeter;
 
     /// <summary>The TX playback device's display name -- what
     /// <see cref="ISstvSessionService.TransmitAsync"/> would actually resolve and use right now,
@@ -943,6 +925,21 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// (now <see cref="CanChangeMode"/>) or Copy-to-TX (still <see cref="CanChangeSourceOrMode"/>,
     /// unchanged).</summary>
     public bool CanLoadBackground => !IsEditorOpen || IsCurrentEditorBlankAndUntouched() || _currentEditor is { HasRealBackground: false };
+
+    /// <summary>User-requested (2026-09-19): "the background card 'blank'-text and preview image
+    /// should be removed." <see cref="SelectedFileName"/>/<see cref="PreviewImage"/> get set from
+    /// whatever was just Applied, including the internal "Blank" placeholder name
+    /// (<see cref="OpenBlankEditorAsync"/>'s own <c>Panes.TxControls.BlankImageName</c> literal) and
+    /// its gray-card preview once a blank-canvas edit (e.g. a template with no real photo) gets
+    /// Applied -- neither is a real background, so this card must not show either for that case.
+    /// ANDs in the live editor's own <see cref="TxImageEditorPaneViewModel.HasRealBackground"/> so
+    /// the card correctly hides again the moment <see cref="TxImageEditorPaneViewModel.RemoveBackground"/>
+    /// clears a previously-real background, even before the next Apply refreshes
+    /// <see cref="SelectedFileName"/> itself. Still gated on <see cref="SelectedFileName"/> too (not
+    /// <see cref="TxImageEditorPaneViewModel.HasRealBackground"/> alone) -- a freshly opened, not-yet-
+    /// Applied editor with a real unapplied photo has no pane-level name/preview to show yet either,
+    /// same pre-existing limitation this property doesn't change.</summary>
+    public bool ShowBackgroundPreview => SelectedFileName is not null && (_currentEditor?.HasRealBackground ?? false);
 
     /// <summary>Mode-switch-mid-edit feature: dropped the <c>IsCurrentEditorBlankAndUntouched()</c>
     /// carve-out -- a populated editor is now handled by <see cref="ReplaceEditorForModeSwitch"/>
@@ -1521,6 +1518,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // auto-reopened a fresh blank editor, even though the underlying state was correct.
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
+            // User-requested (2026-09-19): a NEW editor instance means _currentEditor.HasRealBackground
+            // may now differ from what it was for the PREVIOUS editor -- without this, the Background
+            // card would keep showing the old photo's stale name/preview after "New Template" opens a
+            // fresh blank editor, since SelectedFileName/PreviewImage themselves are never cleared
+            // (only ever overwritten at the NEXT Apply, see OnEditorApplied).
+            OnPropertyChanged(nameof(ShowBackgroundPreview));
             EditorOpened?.Invoke(editor);
             _ = editor.ReadyRack.RefreshAsync();
         }
@@ -1661,7 +1664,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// or <see cref="QuickSelectModeCommand"/> -- see that property's own doc comment for why mode
     /// selection stays on the narrower gate) the instant <see cref="TxImageEditorPaneViewModel.LoadBackground"/>
     /// installs a real photo, so Browse/Stock re-lock immediately rather than staying visibly
-    /// enabled-but-now-inert until some unrelated later notification happens to fire.</summary>
+    /// enabled-but-now-inert until some unrelated later notification happens to fire. Also re-raises
+    /// <see cref="ShowBackgroundPreview"/> here (2026-09-19) -- e.g. <see cref="TxImageEditorPaneViewModel.RemoveBackground"/>
+    /// clearing a real background must hide the card's own preview immediately, not wait for the
+    /// next Apply to refresh <see cref="SelectedFileName"/>.</summary>
     private void OnCurrentEditorPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasUnsavedEdits)
@@ -1674,6 +1680,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         else if (e.PropertyName == nameof(TxImageEditorPaneViewModel.HasRealBackground))
         {
             OnPropertyChanged(nameof(CanLoadBackground));
+            OnPropertyChanged(nameof(ShowBackgroundPreview));
         }
     }
 
@@ -1747,6 +1754,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
             OnPropertyChanged(nameof(CanChangeMode));
             OnPropertyChanged(nameof(CanLoadBackground));
+            OnPropertyChanged(nameof(ShowBackgroundPreview));
             EditorOpened?.Invoke(editor);
             _ = editor.ReadyRack.RefreshAsync();
         }

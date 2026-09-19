@@ -421,7 +421,6 @@
   "Panes.TxControls.Telemetry.ToneMapFormat": "{0:0}–{1:0} Hz",
   "Panes.TxControls.Telemetry.TxClock": "TX clock",
   "Panes.TxControls.Telemetry.TxClockIdle": "—",
-  "Panes.TxControls.Telemetry.MeterCaption": "POWER / ALC METER",
   "Panes.TxControls.DriveLabel": "Pwr",
   "Panes.TxControls.Telemetry.Power": "PWR",
   "Panes.TxControls.Telemetry.Alc": "ALC",
