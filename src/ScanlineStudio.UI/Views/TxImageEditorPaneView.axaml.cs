@@ -271,49 +271,22 @@ public partial class TxImageEditorPaneView : UserControl
         }
     }
 
-    /// <summary>Templates rack rework -- the context menu's own Rename item selects the slot (so the
-    /// action strip's inline-rename field appears) and focuses that field, same deferred-focus
-    /// precedent as <see cref="OnSaveTemplateContextMenuClick"/> above.</summary>
+    /// <summary>Templates rack rework -- the context menu's own Rename item puts the row into inline
+    /// edit mode (its name TextBlock swaps for a TextBox in place, see
+    /// <see cref="TemplateListRowViewModel.IsRenaming"/>) and focuses that box, same deferred-focus
+    /// precedent as <see cref="OnSaveTemplateContextMenuClick"/> above. Replaced a separate always-
+    /// visible rename field in the action strip below (user-reported, 2026-09-19: redundant with
+    /// right-click rename).</summary>
     private void OnRenameTemplateMenuClick(object? sender, RoutedEventArgs e)
     {
-        if (sender is not Control { DataContext: ReadyRackSlotViewModel { Template: not null } slot } || ViewModel is not { } vm)
+        if (sender is not Control { DataContext: ReadyRackSlotViewModel { Template: { } template } slot } || ViewModel is not { } vm)
         {
             return;
         }
 
         vm.ReadyRack.SelectedSlot = slot;
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                TemplateRenameTextBox.Focus();
-                TemplateRenameTextBox.SelectAll();
-            },
-            DispatcherPriority.Loaded);
-    }
-
-    /// <summary>Templates rack rework -- Enter commits the action strip's inline rename (empty input
-    /// reverts inside <see cref="ReadyRackViewModel.RenameAsync"/> itself, not here), Esc reverts
-    /// without ever calling the store. Reads <c>ReadyRack.SelectedSlot</c> directly rather than the
-    /// TextBox's own <c>DataContext</c> -- this TextBox binds an ABSOLUTE path
-    /// (<c>ReadyRack.SelectedSlot.Template.EditingName</c>) from the parent VM, so its DataContext is
-    /// still the editor VM, not the row.</summary>
-    private void OnTemplateRenameKeyDown(object? sender, KeyEventArgs e)
-    {
-        if (ViewModel?.ReadyRack.SelectedSlot?.Template is not { } row)
-        {
-            return;
-        }
-
-        if (e.Key == Key.Enter)
-        {
-            ViewModel.ReadyRack.RenameCommand.Execute(row);
-            e.Handled = true;
-        }
-        else if (e.Key == Key.Escape)
-        {
-            row.EditingName = row.Name;
-            e.Handled = true;
-        }
+        template.IsRenaming = true;
+        FocusInlineRenameBox(RackListBox, vm.ReadyRack.Slots.IndexOf(slot));
     }
 
     /// <summary>Expanded template selector -- double-click on a Library row/tile loads it, same
@@ -329,8 +302,8 @@ public partial class TxImageEditorPaneView : UserControl
     }
 
     /// <summary>Expanded template selector -- same shape as <see cref="OnRenameTemplateMenuClick"/>
-    /// above, but for a Library row/tile: selects it (so the shared action strip's inline-rename
-    /// field appears) and focuses that field.</summary>
+    /// above, but for a Library row/tile: whichever of the two ListBoxes (list/grid) is currently
+    /// visible owns the realized container, since both share <c>FilteredTemplates</c>.</summary>
     private void OnRenameLibraryItemMenuClick(object? sender, RoutedEventArgs e)
     {
         if (sender is not Control { DataContext: TemplateListRowViewModel row } || ViewModel is not { } vm)
@@ -339,36 +312,79 @@ public partial class TxImageEditorPaneView : UserControl
         }
 
         vm.ReadyRack.SelectedLibraryItem = row;
+        row.IsRenaming = true;
+        var listBox = vm.ReadyRack.IsGridView ? LibraryGridBox : LibraryListBox;
+        FocusInlineRenameBox(listBox, vm.ReadyRack.FilteredTemplates.IndexOf(row));
+    }
+
+    /// <summary>Shared by every inline-rename TextBox (rack row, Library list row, Library grid
+    /// tile) -- focuses and selects the box realized for <paramref name="index"/> in
+    /// <paramref name="itemsControl"/>, once layout has actually made it visible
+    /// (<see cref="DispatcherPriority.Loaded"/>, same deferred-focus precedent this file already
+    /// uses elsewhere). Finds the box by its <c>InlineRename</c> class rather than an <c>x:Name</c>
+    /// -- a name inside a <c>DataTemplate</c> is scoped per-instance, not exposed as a field on this
+    /// view, unlike the single top-level TextBox each of these replaced.</summary>
+    private static void FocusInlineRenameBox(ItemsControl itemsControl, int index)
+    {
+        if (index < 0)
+        {
+            return;
+        }
+
         Dispatcher.UIThread.Post(
             () =>
             {
-                LibraryRenameTextBox.Focus();
-                LibraryRenameTextBox.SelectAll();
+                if (itemsControl.ContainerFromIndex(index) is Control container
+                    && container.GetVisualDescendants().OfType<TextBox>().FirstOrDefault(tb => tb.Classes.Contains("InlineRename")) is { } textBox)
+                {
+                    textBox.Focus();
+                    textBox.SelectAll();
+                }
             },
             DispatcherPriority.Loaded);
     }
 
-    /// <summary>Expanded template selector -- same shape as <see cref="OnTemplateRenameKeyDown"/>
-    /// above, but reads <c>ReadyRack.SelectedLibraryItem</c> instead of
-    /// <c>ReadyRack.SelectedSlot.Template</c> (this TextBox binds the same kind of ABSOLUTE path, so
-    /// its own DataContext is still the editor VM, not the row).</summary>
-    private void OnLibraryRenameKeyDown(object? sender, KeyEventArgs e)
+    /// <summary>Shared Enter/Esc handler for every inline-rename TextBox. Enter commits (empty input
+    /// reverts inside <see cref="ReadyRackViewModel.RenameAsync"/> itself, not here); Esc reverts
+    /// without ever calling the store. Each box's own <c>DataContext</c> is the row itself (the
+    /// rack's box reassigns it via an explicit <c>DataContext="{Binding Template}"</c>; the Library
+    /// list/grid boxes inherit it directly from their row DataTemplate), so this reads it straight
+    /// off <paramref name="sender"/> rather than through <c>ReadyRack.SelectedSlot</c>/
+    /// <c>SelectedLibraryItem</c> the way the two separate handlers this replaced did.</summary>
+    private void OnInlineRenameKeyDown(object? sender, KeyEventArgs e)
     {
-        if (ViewModel?.ReadyRack.SelectedLibraryItem is not { } row)
+        if (sender is not Control { DataContext: TemplateListRowViewModel row } || ViewModel is not { } vm)
         {
             return;
         }
 
         if (e.Key == Key.Enter)
         {
-            ViewModel.ReadyRack.RenameCommand.Execute(row);
+            vm.ReadyRack.RenameCommand.Execute(row);
+            row.IsRenaming = false;
             e.Handled = true;
         }
         else if (e.Key == Key.Escape)
         {
             row.EditingName = row.Name;
+            row.IsRenaming = false;
             e.Handled = true;
         }
+    }
+
+    /// <summary>Clicking away from an open inline-rename box without pressing Enter/Esc commits it
+    /// (same as Enter) rather than leaving it stuck open -- guarded on <c>IsRenaming</c> so the
+    /// LostFocus this box's own Enter/Esc branch causes (collapsing <c>IsVisible</c> moves focus
+    /// off it) doesn't double-commit.</summary>
+    private void OnInlineRenameLostFocus(object? sender, RoutedEventArgs e)
+    {
+        if (sender is not Control { DataContext: TemplateListRowViewModel row } || ViewModel is not { } vm || !row.IsRenaming)
+        {
+            return;
+        }
+
+        vm.ReadyRack.RenameCommand.Execute(row);
+        row.IsRenaming = false;
     }
 
     /// <summary>Macros help plan session, real-UI-smoke-test finding (2026-09-01): the ORIGINAL

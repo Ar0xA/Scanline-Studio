@@ -47,6 +47,15 @@ public sealed partial class TemplateListRowViewModel : ObservableObject
     [ObservableProperty]
     private bool _isPinned;
 
+    /// <summary>True while this row's name is being edited inline -- the rack row and the Template
+    /// Library list/grid row each swap their own name <c>TextBlock</c> for a <c>TextBox</c> bound to
+    /// <see cref="EditingName"/> while this is set, rather than a separate always-visible rename
+    /// field. Both cards share this one flag since a pinned rack slot and its Library row are the
+    /// same instance. Set by a row's context-menu Rename item; cleared on commit (Enter/blur) or
+    /// revert (Esc) in <c>TxImageEditorPaneView.axaml.cs</c>.</summary>
+    [ObservableProperty]
+    private bool _isRenaming;
+
     /// <summary>Backlog item (auditor usability review, 2026-08-17): "PIN silently no-ops on a full
     /// (9-slot) rack but the toggle visually latches 'pinned' anyway." Root cause: <c>ToggleButton</c>
     /// flips its own local <c>IsChecked</c> on click regardless of a <c>Mode=OneWay</c> binding, and

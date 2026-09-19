@@ -651,7 +651,6 @@
   "Panes.TxImageEditor.NoTemplatesYet": "No saved templates",
   "Panes.TxImageEditor.NoTemplatesMatchFilter": "No templates match",
   "Panes.TxImageEditor.TemplateNamePlaceholder": "Template name",
-  "Panes.TxImageEditor.RenameTemplatePlaceholder": "Template name",
   "Panes.TxImageEditor.SaveTemplate": "SAVE",
   "Panes.TxImageEditor.LoadTemplate": "LOAD",
   "Panes.TxImageEditor.PinTemplate": "PIN",
