@@ -243,6 +243,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// allowed" (see the constructor's own optional-parameter comment) for the many test call
     /// sites that construct this class directly and don't exercise Apply &amp; Transmit.</summary>
     private readonly Func<bool> _canTransmitNow;
+    /// <summary>Header transmit-progress bar (2026-09-19 user request: "TX should be more
+    /// obvious") -- same "no duplicated flag, parent pushes on every toggle" pattern as
+    /// <see cref="_canTransmitNow"/> above, extended to progress/percent/remaining-time display
+    /// rather than just the boolean CanExecute gate. One snapshot delegate, not three separate
+    /// ones, since all three values change together at the same points on the parent.</summary>
+    private readonly Func<(bool IsTransmitting, double? Progress, string ProgressText)> _transmitStatusNow;
     /// <summary>Macros help plan (2026-09-01), item B -- opens the same Macros reference window
     /// `Tools ▸ Macros` does, reached via <see cref="OpenMacrosReferenceCommand"/>. Set only from
     /// TxControlsPaneViewModel's real construction call sites; test call sites leave this null, which
@@ -621,7 +627,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // change" reasoning as canTransmitNow/macrosReferenceRequested above. Only
         // TxControlsPaneViewModel.ReplaceEditorForModeSwitch passes a real (non-default) value --
         // see HasUnsavedEdits's own doc comment for why this exists.
-        bool carriedOverUnsavedEdits = false)
+        bool carriedOverUnsavedEdits = false,
+        // Header transmit-progress bar (2026-09-19 user request: "TX should be more obvious") --
+        // same trailing-optional/closure/"no duplicated flag" shape as canTransmitNow above, only
+        // the 2 real production call sites pass a real delegate. One snapshot delegate rather than
+        // 3 separate ones since IsTransmitting/TransmitProgress/TransmitProgressText always change
+        // together, at the same toggle points, on the parent.
+        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null)
     {
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
@@ -631,6 +643,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);
+        _transmitStatusNow = transmitStatusNow ?? (static () => (false, null, string.Empty));
         _macrosReferenceRequested = macrosReferenceRequested;
         _currentContactProvider = currentContactProvider;
         _operatorSettings = operatorSettings;
@@ -5779,6 +5792,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// RunLoopbackSelfTestCommand -- CommunityToolkit does not auto-requery a CanExecute predicate
     /// that closes over another object's property.</summary>
     public void NotifyTransmitAvailabilityChanged() => ApplyAndTransmitCommand.NotifyCanExecuteChanged();
+
+    /// <summary>Header transmit-progress display (2026-09-19 user request: "TX should be more
+    /// obvious, [add it] as a bigger bar on the same line" as the context bar's own frame readout)
+    /// -- bound directly by the context bar's AXAML in <c>TxImageEditorPaneView.axaml</c>.</summary>
+    public bool IsTransmitting => _transmitStatusNow().IsTransmitting;
+
+    /// <inheritdoc cref="IsTransmitting"/>
+    public double? TransmitProgress => _transmitStatusNow().Progress;
+
+    /// <inheritdoc cref="IsTransmitting"/>
+    public string TransmitProgressText => _transmitStatusNow().ProgressText;
+
+    /// <summary>Called by the parent at every one of its own IsTransmitting/TransmitProgress toggle
+    /// points (<c>TransmitCoreAsync</c>'s start/finally, <c>OnTransmitProgressChanged</c>'s own
+    /// per-tick update) -- same reasoning as <see cref="NotifyTransmitAvailabilityChanged"/>, but
+    /// raising PropertyChanged for AXAML bindings instead of re-evaluating a command's CanExecute.</summary>
+    public void NotifyTransmitProgressChanged()
+    {
+        OnPropertyChanged(nameof(IsTransmitting));
+        OnPropertyChanged(nameof(TransmitProgress));
+        OnPropertyChanged(nameof(TransmitProgressText));
+    }
 
     private IImageSource BuildFinalOutput()
     {

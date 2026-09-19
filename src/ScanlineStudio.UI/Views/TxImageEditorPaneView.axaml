@@ -85,6 +85,18 @@
                         <TextBlock Text="{loc:Translate Panes.TxImageEditor.UnsavedEditsChip}" Foreground="{DynamicResource IndustrySelectTintText}" />
                     </StackPanel>
                 </Border>
+                <!-- User-requested (2026-09-19): "TX should be more obvious" — the sidebar's own
+                     tiny stacked bar+text (TxControlsPaneView.axaml) is REMOVED, this context bar
+                     row is now the single, canonical send-progress display, reusing the existing *
+                     spacer column (previously empty) since this row already spans the editor's
+                     full width, unlike the narrow sidebar column that forced the old stacked layout. -->
+                <Grid Grid.Column="4" ColumnDefinitions="Auto,*,Auto" Margin="16,0" VerticalAlignment="Center"
+                      IsVisible="{Binding IsTransmitting}">
+                    <TextBlock Grid.Column="0" Classes="IndustryKicker" Margin="0,0,8,0" Text="{loc:Translate Panes.TxImageEditor.SendingChip}" />
+                    <ProgressBar Grid.Column="1" Classes="Industry" Minimum="0" Maximum="1" VerticalAlignment="Center" MinWidth="80"
+                                 Value="{Binding TransmitProgress, TargetNullValue=0}" />
+                    <TextBlock Grid.Column="2" Classes="IndustryKicker" Margin="8,0,0,0" Text="{Binding TransmitProgressText}" />
+                </Grid>
                 <StackPanel Grid.Column="5" Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding UndoCommand}" Content="{loc:Translate Panes.TxImageEditor.Undo}" />
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
