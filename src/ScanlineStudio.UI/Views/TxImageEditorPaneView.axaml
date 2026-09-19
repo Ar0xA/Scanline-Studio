@@ -1695,6 +1695,20 @@
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
+                                                        <!-- User-reported gap (2026-09-19): the canvas's own empty-area
+                                                             ContextMenu (Canvas.ContextMenu above) already has this item, but
+                                                             becomes unreachable the instant a background/backdrop image exists
+                                                             — that Border stays unconditionally hit-testable (see its own
+                                                             comment on why), so a right-click always resolves to the image
+                                                             element's menu, never the canvas's, once one is loaded. Same
+                                                             Click handler (OnSaveTemplateContextMenuClick, code-behind) as the
+                                                             canvas's own item — no new save logic, just a second reachable
+                                                             entry point. Always enabled here (unlike SaveTemplateMenuItem's
+                                                             own OnCanvasContextMenuOpened-computed IsEnabled): reaching this
+                                                             menu at all means you right-clicked an existing element, so
+                                                             OverlayElements.Count is already >= 1. -->
+                                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Click="OnSaveTemplateContextMenuClick" />
+                                                        <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
