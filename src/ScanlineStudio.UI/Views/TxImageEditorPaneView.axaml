@@ -323,7 +323,7 @@
                             <!-- IsEnabled-only busy state (no Opacity dim) — matches this file's own
                                  existing IsExporting/"IsEnabled binding, no visual dim" idiom, not a
                                  new spinner/dim control this codebase has no other precedent for. -->
-                            <ListBox ItemsSource="{Binding ReadyRack.Slots}" SelectedItem="{Binding ReadyRack.SelectedSlot}"
+                            <ListBox x:Name="RackListBox" ItemsSource="{Binding ReadyRack.Slots}" SelectedItem="{Binding ReadyRack.SelectedSlot}"
                                      ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
                                      Background="Transparent" BorderThickness="0" Padding="0"
                                      IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
@@ -387,7 +387,21 @@
                                                  what a list-row name actually needs. -->
                                             <StackPanel Grid.Column="2" VerticalAlignment="Center">
                                                 <TextBlock Classes="IndustryRowLabel" HorizontalAlignment="Left" TextTrimming="CharacterEllipsis"
-                                                           Text="{Binding Template.Name}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNotNull}}" />
+                                                           Text="{Binding Template.Name}">
+                                                    <TextBlock.IsVisible>
+                                                        <MultiBinding Converter="{x:Static BoolConverters.And}">
+                                                            <Binding Path="Template" Converter="{x:Static ObjectConverters.IsNotNull}" />
+                                                            <Binding Path="Template.IsRenaming" Converter="{x:Static BoolConverters.Not}" FallbackValue="True" />
+                                                        </MultiBinding>
+                                                    </TextBlock.IsVisible>
+                                                </TextBlock>
+                                                <!-- Right-click Rename edits the name in place here instead of a
+                                                     separate field in the action strip below (user-reported,
+                                                     2026-09-19: that field was redundant with right-click rename
+                                                     and stayed visible even outside a rename). -->
+                                                <TextBox Classes="Industry IndustryInput InlineRename" DataContext="{Binding Template}" Text="{Binding EditingName}"
+                                                         IsVisible="{Binding IsRenaming, FallbackValue=False}"
+                                                         KeyDown="OnInlineRenameKeyDown" LostFocus="OnInlineRenameLostFocus" />
                                                 <TextBlock Classes="IndustryKicker" Text="{loc:Translate Panes.TxImageEditor.PinFromLibraryHint}" IsVisible="{Binding Template, Converter={x:Static ObjectConverters.IsNull}}" />
                                                 <!-- Templates rack rework: the "which slot is the canvas
                                                      currently loaded from" indicator called out as
@@ -440,9 +454,6 @@
                             <StackPanel x:Name="RackActionStrip" Spacing="{StaticResource IndustrySpacingTight}"
                                         IsVisible="{Binding ReadyRack.SelectedSlot.Template, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}"
                                         IsEnabled="{Binding !ReadyRack.IsLoadInFlight}">
-                                <TextBox x:Name="TemplateRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedSlot.Template.EditingName}"
-                                         Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
-                                         KeyDown="OnTemplateRenameKeyDown" />
                                 <WrapPanel>
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
                                             Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedSlot.Template}" />
@@ -557,7 +568,7 @@
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesYet}" IsVisible="{Binding ReadyRack.HasNoTemplates}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.NoTemplatesMatchFilter}" IsVisible="{Binding ReadyRack.HasNoFilteredTemplates}" />
 
-                                <ListBox ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
+                                <ListBox x:Name="LibraryListBox" ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
                                          ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
                                          Background="Transparent" BorderThickness="0" Padding="0"
                                          IsVisible="{Binding !ReadyRack.IsGridView}">
@@ -578,7 +589,9 @@
                                                 <Grid ColumnDefinitions="32,*" ColumnSpacing="7">
                                                     <Image Source="{Binding Thumbnail}" Stretch="Uniform" Width="32" Height="24" />
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" />
+                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" IsVisible="{Binding !IsRenaming}" />
+                                                        <TextBox Classes="Industry IndustryInput InlineRename" Text="{Binding EditingName}" IsVisible="{Binding IsRenaming}"
+                                                                 KeyDown="OnInlineRenameKeyDown" LostFocus="OnInlineRenameLostFocus" />
                                                         <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}" Text="{loc:Translate Panes.TxImageEditor.PinnedBadge}" IsVisible="{Binding IsPinned}" />
                                                     </StackPanel>
                                                 </Grid>
@@ -590,7 +603,7 @@
                                 <!-- No outer ScrollViewer needed — a ListBox already scrolls
                                      internally (same as the plain list ListBox above and the rack's
                                      own), the WrapPanel just changes how items lay out inside it. -->
-                                <ListBox ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
+                                <ListBox x:Name="LibraryGridBox" ItemsSource="{Binding ReadyRack.FilteredTemplates}" SelectedItem="{Binding ReadyRack.SelectedLibraryItem}"
                                          ItemContainerTheme="{StaticResource IndustryListBoxItemTheme}"
                                          Background="Transparent" BorderThickness="0" Padding="0"
                                          IsVisible="{Binding ReadyRack.IsGridView}">
@@ -617,7 +630,9 @@
                                                     </Border.ContextMenu>
                                                     <StackPanel>
                                                         <Image Source="{Binding Thumbnail}" Stretch="Uniform" Width="88" Height="66" />
-                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" HorizontalAlignment="Center" />
+                                                        <TextBlock Classes="IndustryRowLabel" TextTrimming="CharacterEllipsis" Text="{Binding Name}" HorizontalAlignment="Center" IsVisible="{Binding !IsRenaming}" />
+                                                        <TextBox Classes="Industry IndustryInput InlineRename" Text="{Binding EditingName}" HorizontalAlignment="Center" IsVisible="{Binding IsRenaming}"
+                                                                 KeyDown="OnInlineRenameKeyDown" LostFocus="OnInlineRenameLostFocus" />
                                                         <TextBlock Classes="IndustryKicker" Foreground="{DynamicResource IndustryAccent}" Text="{loc:Translate Panes.TxImageEditor.PinnedBadge}"
                                                                    HorizontalAlignment="Center" IsVisible="{Binding IsPinned}" />
                                                     </StackPanel>
@@ -643,9 +658,6 @@
                                  matching the rack row's own shape. -->
                             <StackPanel x:Name="LibraryActionStrip" Grid.Row="3" Spacing="{StaticResource IndustrySpacingTight}"
                                         IsVisible="{Binding ReadyRack.SelectedLibraryItem, Converter={x:Static ObjectConverters.IsNotNull}, FallbackValue=False}">
-                                <TextBox x:Name="LibraryRenameTextBox" Classes="Industry IndustryInput" Text="{Binding ReadyRack.SelectedLibraryItem.EditingName}"
-                                         Watermark="{loc:Translate Panes.TxImageEditor.RenameTemplatePlaceholder}"
-                                         KeyDown="OnLibraryRenameKeyDown" />
                                 <WrapPanel>
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="6,0" Margin="0,0,3,3"
                                             Content="{loc:Translate Panes.TxImageEditor.LoadTemplate}" Command="{Binding ReadyRack.LoadCommand}" CommandParameter="{Binding ReadyRack.SelectedLibraryItem}" />
