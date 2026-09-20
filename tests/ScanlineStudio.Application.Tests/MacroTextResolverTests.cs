@@ -14,12 +14,23 @@ public sealed class MacroTextResolverTests
         Assert.Equal("DE W1AW", _resolver.Resolve("DE %m", settings));
     }
 
+    // User-reported (2026-09-20): a blank Callsign used to resolve to an empty string -- now it
+    // resolves to OperatorSettings.CallsignFallback ("N0CALL"), same "unset means apply the
+    // documented default" convention as DefaultRst/DefaultRstFallback.
     [Fact]
-    public void MissingCallsign_ResolvesToEmptyString()
+    public void MissingCallsign_ResolvesToCallsignFallback()
     {
         var settings = new OperatorSettings();
 
-        Assert.Equal("DE ", _resolver.Resolve("DE %m", settings));
+        Assert.Equal($"DE {OperatorSettings.CallsignFallback}", _resolver.Resolve("DE %m", settings));
+    }
+
+    [Fact]
+    public void BlankCallsign_ResolvesToCallsignFallback()
+    {
+        var settings = new OperatorSettings { Callsign = "   " };
+
+        Assert.Equal($"DE {OperatorSettings.CallsignFallback}", _resolver.Resolve("DE %m", settings));
     }
 
     [Fact]
@@ -30,12 +41,30 @@ public sealed class MacroTextResolverTests
         Assert.Equal("Jane, EN52", _resolver.Resolve("{name}, {grid}", settings));
     }
 
+    // User-reported (2026-09-20): a blank Name now resolves to OperatorSettings.NameFallback
+    // ("NONAME"), same reasoning as Callsign/Grid above.
     [Fact]
-    public void MissingNameOrGrid_ResolvesToEmptyString()
+    public void MissingNameAndGrid_ResolveToTheirOwnFallbacks()
     {
         var settings = new OperatorSettings();
 
-        Assert.Equal(", ", _resolver.Resolve("{name}, {grid}", settings));
+        Assert.Equal($"{OperatorSettings.NameFallback}, {OperatorSettings.GridFallback}", _resolver.Resolve("{name}, {grid}", settings));
+    }
+
+    [Fact]
+    public void BlankName_ResolvesToNameFallback()
+    {
+        var settings = new OperatorSettings { Name = "  " };
+
+        Assert.Equal(OperatorSettings.NameFallback, _resolver.Resolve("{name}", settings));
+    }
+
+    [Fact]
+    public void BlankGrid_ResolvesToGridFallback()
+    {
+        var settings = new OperatorSettings { Grid = "  " };
+
+        Assert.Equal(OperatorSettings.GridFallback, _resolver.Resolve("{grid}", settings));
     }
 
     [Fact]

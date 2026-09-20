@@ -325,6 +325,34 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _defaultRst;
 
+    // User-reported (2026-09-20): grey watermark text in the empty Callsign/Name/Grid boxes,
+    // showing what will actually be used (MacroTextResolver/CallsignDisplay's own fallback) if the
+    // operator leaves the field blank -- reads the SAME canonical constants those consumers use
+    // (OperatorSettings.CallsignFallback's own doc comment already forbids a second hardcoded
+    // copy), not a duplicated literal. Instance properties, not static -- Avalonia's reflection
+    // binding resolves {Binding X} via Type.GetProperty(name)'s default (Public | Instance) flags,
+    // which doesn't see static members, so `static` (CA1822's own suggested fix) would silently
+    // break the binding instead of throwing.
+#pragma warning disable CA1822 // Mark members as static
+    public string CallsignWatermark => OperatorSettings.CallsignFallback;
+
+    public string OperatorNameWatermark => OperatorSettings.NameFallback;
+
+    public string OperatorGridWatermark => OperatorSettings.GridFallback;
+#pragma warning restore CA1822 // Mark members as static
+
+    /// <summary>Unlike Callsign/Name/Grid, <see cref="DefaultRst"/> is pre-filled with the real
+    /// "595" value at load time (OperatorSettings.DefaultRst's own doc comment: the fallback is
+    /// applied at OptionsSettingsService.LoadAsync, a documented "read site"), so its TextBox can't
+    /// use a native Watermark -- <see cref="DefaultRst"/> is never actually empty. This flags "still
+    /// showing the auto-applied default, not something you typed" so the view can render it in the
+    /// SAME muted style Watermark text gets -- purely visual, doesn't change what Save persists. An
+    /// operator whose own deliberate choice happens to also be "595" sees the same muted color;
+    /// harmless, since SSTV operators near-universally use "595" anyway (see that doc comment).</summary>
+    public bool IsDefaultRstAtFallback => string.Equals(DefaultRst, OperatorSettings.DefaultRstFallback, StringComparison.Ordinal);
+
+    partial void OnDefaultRstChanged(string? value) => OnPropertyChanged(nameof(IsDefaultRstAtFallback));
+
     [ObservableProperty]
     private bool _isConfirmingResetAll;
 
@@ -2750,6 +2778,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// window either way; it does not need to distinguish which.</summary>
     public event Action? RequestClose;
 
+    /// <summary>User-reported (2026-09-20): fired at the end of every successful
+    /// <see cref="SaveCoreUnguardedAsync"/> -- both <see cref="SaveAsync"/> and
+    /// <see cref="ApplyAsync"/> route through it. The header-row callsign chip
+    /// (<c>MainViewModel.CallsignDisplay</c>) and macro-consuming previews only refreshed on this
+    /// window's own Closed event (<c>MainWindow.axaml.cs</c>) before this -- fine for Save, which
+    /// closes the dialog, but <see cref="ApplyAsync"/> deliberately does NOT close it, so a
+    /// callsign/grid change made via Apply used to sit stale on screen until the operator also
+    /// closed the window. Same "genuinely live, applied unconditionally on every successful save"
+    /// convention this method already uses for SenseLevel/AutoSync/PLL tuning above -- this is a
+    /// UI-refresh signal rather than a live decoder push, so it's a plain event instead of an
+    /// <c>ISstvSessionService.Request*</c> call.</summary>
+    public event Action? OperatorSettingsSaved;
+
     /// <summary>Fired from <see cref="SaveAsync"/> only (not <see cref="RestartNowAsync"/>, which
     /// already has its own explicit Restart Now/Not Now confirm) when a Save leaves a
     /// database-directory relocation still pending -- genuinely restart-required (2026-08-27 audit,
@@ -3494,6 +3535,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         try
         {
             await _optionsSettingsService.SaveAsync(snapshot);
+
+            // User-reported (2026-09-20): fire immediately after the persist succeeds, not after
+            // this whole method returns -- everything below this point (storage rows, live decoder
+            // pushes) is unrelated to Callsign/OperatorName/OperatorGrid, so there's no reason to
+            // delay the header chip / macro-preview refresh behind it.
+            OperatorSettingsSaved?.Invoke();
 
             // Storage section (Images/Audio/Config/Database/Log directories, user-reported
             // 2026-09-01: "Auto save RX audio" only took effect via its OWN row Apply button, not

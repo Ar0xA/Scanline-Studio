@@ -263,6 +263,39 @@ public sealed class MainViewModelTests
         Assert.Equal(1, receiveHistoryStore.ReconcileCallCount);
     }
 
+    // User-reported (2026-09-20): the header-row callsign chip must show
+    // OperatorSettings.CallsignFallback ("N0CALL") until the operator sets a real callsign.
+    [AvaloniaFact]
+    public void CallsignDisplay_NoCallsignSet_ShowsCallsignFallback()
+    {
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel();
+
+        Assert.Equal(OperatorSettings.CallsignFallback, viewModel.CallsignDisplay);
+    }
+
+    // User-reported (2026-09-20): "top right callsign doesn't directly change" -- OnCallsignChanged
+    // must forward PropertyChanged(CallsignDisplay) so the bound chip updates the moment Callsign is
+    // reassigned (the path LoadOperatorSettingsAsync takes after an Options Apply/Save), not just
+    // when the whole view model is reconstructed.
+    [AvaloniaFact]
+    public void CallsignDisplay_UpdatesLiveWhenCallsignChanges()
+    {
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel();
+        var raisedProperties = new List<string?>();
+        viewModel.PropertyChanged += (_, e) => raisedProperties.Add(e.PropertyName);
+
+        viewModel.Callsign = "W1AW";
+
+        Assert.Equal("W1AW", viewModel.CallsignDisplay);
+        Assert.Contains(nameof(MainViewModel.CallsignDisplay), raisedProperties);
+
+        raisedProperties.Clear();
+        viewModel.Callsign = "   ";
+
+        Assert.Equal(OperatorSettings.CallsignFallback, viewModel.CallsignDisplay);
+        Assert.Contains(nameof(MainViewModel.CallsignDisplay), raisedProperties);
+    }
+
     [AvaloniaFact]
     public void OpenWebsiteCommand_OpensTheAppWebsite()
     {

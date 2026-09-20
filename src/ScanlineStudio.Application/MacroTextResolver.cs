@@ -108,7 +108,11 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
 
             sb.Append(token switch
             {
-                'm' => operatorSettings.Callsign ?? string.Empty, // Main.cpp:10691-10693
+                // User-reported (2026-09-20): a blank Callsign must resolve to OperatorSettings.CallsignFallback
+                // ("N0CALL"), not an empty string -- legacy's own Main.cpp:10691-10693 has no such
+                // fallback (legacy always required a callsign to run at all), but leaving %m to
+                // vanish silently in a transmitted overlay is worse than a clearly-fake placeholder.
+                'm' => string.IsNullOrWhiteSpace(operatorSettings.Callsign) ? OperatorSettings.CallsignFallback : operatorSettings.Callsign,
                 'D' => FormatDate(now), // Main.cpp:10762-10766 (UTC)
                 'T' => $"{now.Hour:D2}:{now.Minute:D2}", // Main.cpp:10772-10776 (UTC)
                 _ => "%%", // Main.cpp:10817-10819 -- unrecognized AND literal %% both land here
@@ -145,8 +149,12 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
             var token = match.Groups[1].Value;
             return token switch
             {
-                "name" => operatorSettings.Name ?? string.Empty,
-                "grid" => operatorSettings.Grid ?? string.Empty,
+                // User-reported (2026-09-20): a blank Name must resolve to OperatorSettings.NameFallback
+                // ("NONAME"), same reasoning as the {m}/Callsign fallback above.
+                "name" => string.IsNullOrWhiteSpace(operatorSettings.Name) ? OperatorSettings.NameFallback : operatorSettings.Name,
+                // User-reported (2026-09-20): a blank Grid must resolve to OperatorSettings.GridFallback
+                // ("XX00"), same reasoning as the {m}/Callsign fallback above.
+                "grid" => string.IsNullOrWhiteSpace(operatorSettings.Grid) ? OperatorSettings.GridFallback : operatorSettings.Grid,
                 "freq" => radioState is { } state ? FormatFrequency(state.FrequencyHz) : string.Empty,
                 // .ToUpperInvariant() (code-review nit, fixed here): bare ToString() renders "Usb",
                 // not the ham-conventional "USB" -- RadioStatusViewModel already applies the same

@@ -276,7 +276,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <c>LoadTemplateAsync</c>'s own now-unread <c>bool</c> return from the same removal) rather than
     /// widening this change into the constructor-signature edit removing it fully would require.</summary>
     private readonly Func<IReadOnlyDictionary<string, string>?>? _currentContactProvider;
-    private readonly OperatorSettings _operatorSettings;
+    // User-reported (2026-09-20): was `readonly`, assigned once at construction -- an
+    // already-open editor kept resolving %m/{name}/{grid}/{dist}/{bearing} against whatever
+    // OperatorSettings snapshot was current when it opened, so a Callsign/Grid change made via
+    // Options while this editor stayed open never showed up. Mutated only by
+    // RefreshOperatorSettings, called from MainWindow.axaml.cs's OptionsWindowViewModel.OperatorSettingsSaved
+    // subscription for whichever editor is ActiveEditor.
+    private OperatorSettings _operatorSettings;
     private readonly IRadioSessionService _radioSessionService;
     private readonly ILocalizationService _localization;
     private readonly ILogger<TxImageEditorPaneViewModel> _logger;
@@ -965,13 +971,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// conversion, so a real bool property is the correct fix here, not a shortcut.</summary>
     public bool HasNoTemplateVariableRows => TemplateVariableRows.Count == 0;
 
-    /// <summary>Design-fidelity Phase F (#9, mockups/Editwindow line 239) -- QSO FILL header's
-    /// compact token-count note. Same re-raise-alongside-<see cref="HasNoTemplateVariableRows"/>
-    /// discipline (both derive from <see cref="TemplateVariableRows"/>.Count, which has no
-    /// property-changed notification of its own).</summary>
-    public string TemplateVariableCountText => _localization.GetString(
-        "Panes.TxImageEditor.TemplateVariableCountFormat", TemplateVariableRows.Count);
-
     /// <summary>Design-fidelity Phase F (#9, mockups/Editwindow line 239) -- SEND side's compact
     /// mode/duration meta line. The mock's own version also shows SWR, which this VM has no access
     /// to (a TX-hardware meter reading that lives on <c>TxControlsPaneViewModel</c>, cross-VM data
@@ -1025,9 +1024,31 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// fully synchronous on purpose -- a reload would reopen the exact re-entrancy window
     /// (two fast mode changes racing to construct two editors) that this editor's other
     /// re-open-with-seeded-state paths don't have to worry about, since those all run from an
-    /// `async Task` already. <see cref="_operatorSettings"/> is read-only and assigned once at
-    /// construction, so reusing it here is exactly as fresh as the editor session already was.</summary>
+    /// `async Task` already. <see cref="_operatorSettings"/> is kept fresh by
+    /// <see cref="RefreshOperatorSettings"/> now, so reusing it here is at least as fresh as the
+    /// editor session already was, and possibly fresher.</summary>
     public OperatorSettings OperatorSettings => _operatorSettings;
+
+    /// <summary>User-reported (2026-09-20): pushes a newly-saved Callsign/Name/Grid into an
+    /// ALREADY-OPEN editor so its live preview stops resolving %m/{name}/{grid}/{dist}/{bearing}
+    /// against a stale snapshot (see <see cref="_operatorSettings"/>'s own doc comment). Same
+    /// "refresh every element, then canvas styles, then the real pipeline preview" shape as
+    /// <see cref="OnTemplateVariableValueChanged"/> -- unlike that handler, every element's
+    /// <see cref="OverlayElementViewModel.ResolvedText"/> could be affected here (any of them may
+    /// reference any operator-settings-sourced token), so there's no per-key filter to narrow the
+    /// loop.</summary>
+    public void RefreshOperatorSettings(OperatorSettings updated)
+    {
+        _operatorSettings = updated;
+
+        foreach (var element in OverlayElements.OfType<OverlayElementViewModel>())
+        {
+            element.NotifyResolvedTextChanged();
+        }
+
+        RefreshOverlayElementCanvasStyles();
+        RecomputePreview();
+    }
 
     /// <summary>EditWindow redesign, design-fidelity Phase B (mockups/Editwindow) -- the new context
     /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses
@@ -5513,6 +5534,45 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // de-reference), or empty for a genuinely untouched key -- the dictionary itself is
             // written to ONLY by an actual edit (OnTemplateVariableValueChanged) or Clear.
             _templateVariables.TryGetValue(key, out var value);
+
+            // User-reported (2026-09-20): "rsv" ({rsv}, the "HIS RSV" chip -- Panes.TxImageEditor.Chip9)
+            // is the one fill-bar variable with a genuinely sensible non-blank starting value: SSTV
+            // operators near-universally report "595" to the other station regardless of actual
+            // picture quality (OperatorSettings.DefaultRst's own doc comment), so it's a near-certain
+            // retype otherwise. Seeded with a REAL value (not the empty-string seed the comment above
+            // rules out), so it resolves immediately in the live preview instead of showing "{rsv}"
+            // verbatim -- still exactly as editable as every other row afterward
+            // (OnTemplateVariableValueChanged below overwrites this the moment the operator types a
+            // different value for THIS specific QSO). Every other key (his_call/his_grid/anything
+            // else) has no sensible non-blank default and keeps the plain "blank until typed"
+            // behavior this method's own doc comment already establishes -- only checked when `value`
+            // is still null (this key's first-ever discovery), so an operator who deliberately cleared
+            // it back to blank on an earlier pass is never silently re-seeded.
+            if (key == "rsv" && value is null)
+            {
+                value = string.IsNullOrWhiteSpace(_operatorSettings.DefaultRst) ? OperatorSettings.DefaultRstFallback : _operatorSettings.DefaultRst;
+                _templateVariables[key] = value;
+
+                // User-reported (2026-09-20): without this, the CANVAS stayed showing "{rsv}"
+                // verbatim even though the baked preview (which re-resolves fresh from
+                // _templateVariables on every RecomputePreview call, further down this same method's
+                // caller) already showed the seeded value -- OverlayElementViewModel.ResolvedText is
+                // a plain computed getter, so the canvas TextBlock only re-reads it in response to an
+                // explicit PropertyChanged(ResolvedText) raise. The element's own OnTextChanged
+                // already fired that raise once, synchronously, the instant Text was set to include
+                // "{rsv}" -- but that happened BEFORE this method (called from the same Text-changed
+                // chain, via RecomputePreview) had written the seed into _templateVariables, so it
+                // captured the old, unseeded resolution. Same "explicitly re-raise after the
+                // resolution CONTEXT changes" shape as OnTemplateVariableValueChanged below.
+                foreach (var seededElement in OverlayElements.OfType<OverlayElementViewModel>())
+                {
+                    if (seededElement.Text.Contains("{rsv}", StringComparison.Ordinal))
+                    {
+                        seededElement.NotifyResolvedTextChanged();
+                    }
+                }
+            }
+
             TemplateVariableRows.Add(new TemplateVariableRowViewModel(key, value ?? string.Empty)
             {
                 ValueChangedCallback = OnTemplateVariableValueChanged,
@@ -5520,7 +5580,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         OnPropertyChanged(nameof(HasNoTemplateVariableRows));
-        OnPropertyChanged(nameof(TemplateVariableCountText));
     }
 
     /// <summary>Fired by a <see cref="TemplateVariableRowViewModel"/>'s own

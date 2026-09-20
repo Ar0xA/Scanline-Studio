@@ -563,6 +563,15 @@ public partial class MainWindow : Window
                         // the same value in that case, same as re-running it costs nothing extra.
                         // Same bug, same fix, for the Transmit tab's Output-device and Identification
                         // fields (TxControlsPaneViewModel.LoadOutputDeviceNameAsync/LoadIdentificationSummaryAsync).
+                        //
+                        // User-reported (2026-09-20): Closed alone left the chip stale while Apply
+                        // was in use -- ApplyAsync deliberately never closes this window (see its own
+                        // doc comment), so nothing above ever ran until the operator ALSO closed the
+                        // dialog. OperatorSettingsSaved fires on every successful Save AND Apply, so
+                        // subscribe it too for an immediate refresh; the Closed handler stays as-is
+                        // (still needed for Cancel, and re-running this on Save's own Closed is a
+                        // harmless no-op repeat of what OperatorSettingsSaved just did).
+                        optionsViewModel.OperatorSettingsSaved += () => _ = vm.LoadOperatorSettingsAsync();
                         window.Closed += (_, _) =>
                         {
                             _ = vm.LoadOperatorSettingsAsync();
