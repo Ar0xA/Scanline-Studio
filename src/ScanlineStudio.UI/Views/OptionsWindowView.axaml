@@ -717,7 +717,7 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
                                     </StackPanel>
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding Callsign}" HorizontalAlignment="Stretch" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding Callsign}" Watermark="{Binding CallsignWatermark}" HorizontalAlignment="Stretch" />
                                 </StackPanel>
                             </ContentControl>
 
@@ -731,18 +731,27 @@
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorName}" />
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorName}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorName}" Watermark="{Binding OperatorNameWatermark}" />
                                     </Grid>
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorGrid}" />
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" Watermark="{Binding OperatorGridWatermark}" />
                                     </Grid>
                                     <Grid ColumnDefinitions="Auto,*">
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.DefaultRst}" />
                                             <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.DefaultRst.Help}" />
                                         </StackPanel>
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding DefaultRst}" />
+                                        <!-- IsDefaultRstAtFallback (VM doc comment): DefaultRst is pre-filled with the real "595"
+                                             value, not blank, so this can't use a native Watermark — the AtFallback class mimics
+                                             the same muted look while the field still shows the auto-applied default. -->
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Classes.AtFallback="{Binding IsDefaultRstAtFallback}" Text="{Binding DefaultRst}">
+                                            <TextBox.Styles>
+                                                <Style Selector="TextBox.AtFallback">
+                                                    <Setter Property="Foreground" Value="{DynamicResource IndustryMutedText}" />
+                                                </Style>
+                                            </TextBox.Styles>
+                                        </TextBox>
                                     </Grid>
                                 </StackPanel>
                             </ContentControl>

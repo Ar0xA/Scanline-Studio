@@ -2620,7 +2620,7 @@
                                      "INSERT FIELD → CARET" sits inside the text-style inspector, not
                                      the bottom QSO-fill bar; the bottom bar is FILL-IN VALUES only,
                                      this is macro/variable-TOKEN insertion). All 12 chips (including
-                                     DIST/BEAM, wired 2026-08-18 via MaidenheadLocator) are backed by
+                                     DIST/BEARING, wired 2026-08-18 via MaidenheadLocator) are backed by
                                      real data and have a Command — see this block's own original
                                      comment (moved from its old standalone panel, unchanged
                                      otherwise) for the full reasoning. -->
@@ -2959,15 +2959,15 @@
                      between QSO FILL and SEND. -->
                 <Grid ColumnDefinitions="*,Auto,220" ColumnSpacing="{StaticResource IndustrySpacingGutter}">
                     <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
-                        <Grid ColumnDefinitions="Auto,Auto,*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
+                        <!-- User-reported (2026-09-20): the "X FIELDS" count note (Phase F #9) removed
+                             outright, not just re-aligned — a fill-bar row count carries no actionable
+                             information for the operator. -->
+                        <Grid ColumnDefinitions="Auto,*,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.QsoFillHeader}" />
-                            <TextBlock Grid.Column="1" Classes="IndustryKicker" VerticalAlignment="Center"
-                                       Text="{Binding TemplateVariableCountText}" IsVisible="{Binding !HasNoTemplateVariableRows}" />
-                            <!-- Macros help plan (2026-09-01), item B: 5th column added, Clear
-                                 re-indexed 3→4 — reaches the same Macros reference window
-                                 `Tools ▸ Macros` does, so an operator mid-template-edit doesn't have to
-                                 remember that menu exists. -->
-                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                            <!-- Macros help plan (2026-09-01), item B — reaches the same Macros
+                                 reference window `Tools ▸ Macros` does, so an operator mid-template-edit
+                                 doesn't have to remember that menu exists. -->
+                            <Button Grid.Column="2" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                     Content="{loc:Translate Panes.TxImageEditor.MacrosButton}"
                                     Command="{Binding OpenMacrosReferenceCommand}" />
                             <!-- "Fill all" dropped outright (Phase 3 plan-review decision, not just left
@@ -2976,7 +2976,7 @@
                                  additive). "Clear" is the one real, spec-backed action (spec/15: "one
                                  'clear fields' action after the QSO") — moved here (Phase F) from its
                                  old bottom-left spot to match the mock's own header-row placement. -->
-                            <Button Grid.Column="4" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
+                            <Button Grid.Column="3" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0"
                                     Content="{loc:Translate Panes.TxImageEditor.ClearFields}"
                                     Command="{Binding ClearTemplateVariablesCommand}" />
                         </Grid>

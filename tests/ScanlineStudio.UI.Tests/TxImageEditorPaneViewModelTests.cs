@@ -338,6 +338,32 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Contains(preparer.TemplateDocuments, d => d.Elements.Any(e => e is TemplateTextElement text && text.Content == "DE W1AW"));
     }
 
+    // User-reported (2026-09-20): an ALREADY-OPEN editor kept resolving %m/{grid} against whatever
+    // OperatorSettings snapshot was current when it opened -- setting Grid in Options and adding a
+    // {grid} field to an editor that was already open still showed OperatorSettings.GridFallback
+    // ("XX00"). RefreshOperatorSettings (called from MainViewModel.LoadOperatorSettingsAsync, in
+    // turn called from OptionsWindowViewModel.OperatorSettingsSaved) fixes this.
+    [AvaloniaFact]
+    public void RefreshOperatorSettings_UpdatesResolvedTextOfExistingAndNewElements()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings());
+        vm.AddOverlayElementCommand.Execute(null);
+        var existingElement = (OverlayElementViewModel)vm.OverlayElements[0];
+        existingElement.Text = "DE %m {grid}";
+
+        Assert.Equal($"DE {OperatorSettings.CallsignFallback} {OperatorSettings.GridFallback}", existingElement.ResolvedText);
+
+        vm.RefreshOperatorSettings(new OperatorSettings { Callsign = "W1AW", Grid = "EN52" });
+
+        Assert.Equal("DE W1AW EN52", existingElement.ResolvedText);
+
+        vm.AddOverlayElementCommand.Execute(null);
+        var newElement = (OverlayElementViewModel)vm.OverlayElements[1];
+        newElement.Text = "{grid}";
+
+        Assert.Equal("EN52", newElement.ResolvedText);
+    }
+
     [AvaloniaFact]
     public void InsertField_AppendsTokenToSelectedElementsText()
     {
@@ -7843,6 +7869,95 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Equal("his_grid", row.Key);
     }
 
+    // User-reported (2026-09-20): inserting the "HIS RSV" chip ({rsv}) used to leave the fill-bar
+    // row (and the live preview) blank until the operator retyped the operator's own near-universal
+    // "595" convention every single time -- RescanTemplateVariables now seeds it from
+    // OperatorSettings.DefaultRst on first discovery, same value the Options dialog itself defaults
+    // to (OperatorSettings.DefaultRstFallback).
+    [AvaloniaFact]
+    public void RescanTemplateVariables_RsvReferenced_SeedsRowFromDefaultRst()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { DefaultRst = "579" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "HIS RSV {rsv}";
+
+        var row = Assert.Single(vm.TemplateVariableRows);
+        Assert.Equal("rsv", row.Key);
+        Assert.Equal("579", row.Value);
+        Assert.Equal("HIS RSV 579", element.ResolvedText);
+    }
+
+    // User-reported (2026-09-20), real regression: the test above reads ResolvedText directly,
+    // which always computes fresh and so can't tell "the canvas TextBlock was actually told to
+    // re-fetch it" apart from "the property would return the right value if you asked it" -- those
+    // came apart in practice. element.OnTextChanged already raises PropertyChanged(ResolvedText)
+    // ONCE, synchronously, the instant Text is set to "HIS RSV {rsv}" -- but that fires BEFORE
+    // RescanTemplateVariables (reached via the same Text-changed chain) has seeded
+    // _templateVariables, so a bound TextBlock that received only THAT one (early) notification
+    // would still be showing "HIS RSV {rsv}" verbatim, exactly what the user saw, even though a
+    // FRESH read of ResolvedText (as in the test above) already returned the seeded value. A plain
+    // Assert.Contains(nameof(ResolvedText), raisedPropertyNames) would NOT catch a missing second
+    // raise -- that first, early one already satisfies it regardless of this fix -- so this reads
+    // ResolvedText's value AT THE MOMENT of each raise, and asserts the ALREADY-SEEDED value shows
+    // up at one of them (impossible without the seeding step's own explicit second raise).
+    [AvaloniaFact]
+    public void RescanTemplateVariables_RsvReferenced_RaisesResolvedTextChanged_AfterSeeding()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { DefaultRst = "579" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        var resolvedTextAtEachRaise = new List<string>();
+        element.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(OverlayElementViewModel.ResolvedText))
+            {
+                resolvedTextAtEachRaise.Add(element.ResolvedText);
+            }
+        };
+
+        element.Text = "HIS RSV {rsv}";
+
+        Assert.Contains("HIS RSV 579", resolvedTextAtEachRaise);
+    }
+
+    [AvaloniaFact]
+    public void RescanTemplateVariables_RsvReferenced_UnsetDefaultRst_SeedsRowFromDefaultRstFallback()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings());
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+
+        element.Text = "{rsv}";
+
+        Assert.Equal(OperatorSettings.DefaultRstFallback, vm.TemplateVariableRows[0].Value);
+        Assert.Equal(OperatorSettings.DefaultRstFallback, element.ResolvedText);
+    }
+
+    [AvaloniaFact]
+    public void RsvSeed_IsFreelyOverridableAndStaysOverriddenAfterAnotherRescan()
+    {
+        // "obviously allow manual changing" (user's own words): the seed is a REAL, ordinary
+        // fill-bar value, not a sticky default -- editing it must behave exactly like editing
+        // his_call/any other row, and a later Rescan (e.g. adding a second element) must not
+        // clobber the operator's own per-QSO override back to the seed.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new OperatorSettings { DefaultRst = "595" });
+        vm.AddOverlayElementCommand.Execute(null);
+        var element = (OverlayElementViewModel)vm.OverlayElements[0];
+        element.Text = "HIS RSV {rsv}";
+        Assert.Equal("595", vm.TemplateVariableRows[0].Value);
+
+        vm.TemplateVariableRows[0].Value = "429";
+
+        Assert.Equal("HIS RSV 429", element.ResolvedText);
+
+        vm.AddOverlayElementCommand.Execute(null);
+        ((OverlayElementViewModel)vm.OverlayElements[1]).Text = "another element, no rsv reference";
+
+        Assert.Equal("429", vm.TemplateVariableRows[0].Value);
+    }
+
     [AvaloniaFact]
     public void OnTemplateVariableValueChanged_HisGridEdited_RefreshesDistAndBearingElementsToo()
     {
@@ -7868,28 +7983,6 @@ public sealed class TxImageEditorPaneViewModelTests
         row.Value = "JO65";
 
         Assert.True(raised);
-    }
-
-    [AvaloniaFact]
-    public void TemplateVariableCountText_TracksTemplateVariableRowsCount()
-    {
-        // design-fidelity Phase F (#9): TemplateVariableCountText is a plain computed property with
-        // no property-changed notification of its own -- RescanTemplateVariables (the one place
-        // TemplateVariableRows changes) is the one place it needs raising, same discipline already
-        // established for HasNoTemplateVariableRows.
-        var localization = new FakeLocalizationService();
-        var vm = new TxImageEditorPaneViewModel(
-            CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
-            new FakeRadioSessionService(), localization, NullLogger<TxImageEditorPaneViewModel>.Instance,
-            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(),
-            new FakeTemplateStore(), new FakeImageSourceWriter(), CreateReadyRack());
-        vm.AddOverlayElementCommand.Execute(null);
-        ((OverlayElementViewModel)vm.OverlayElements[0]).Text = "{his_call}";
-
-        _ = vm.TemplateVariableCountText;
-
-        Assert.Equal("Panes.TxImageEditor.TemplateVariableCountFormat", localization.LastKey);
-        Assert.Equal(new object[] { 1 }, localization.LastArgs);
     }
 
     [AvaloniaFact]

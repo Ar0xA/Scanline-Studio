@@ -1275,6 +1275,42 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("W1AW", persisted.Callsign);
     }
 
+    /// <summary>User-reported (2026-09-20): the header-row callsign chip only refreshed on this
+    /// window's own Closed event (MainWindow.axaml.cs) -- fine for Save, but ApplyCommand
+    /// deliberately never closes the dialog, so nothing ever told MainViewModel a callsign/grid
+    /// change had happened. OperatorSettingsSaved fixes that -- fires on Apply too, not just Save.</summary>
+    [AvaloniaFact]
+    public async Task ApplyCommand_RaisesOperatorSettingsSaved()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var savedRaised = false;
+        vm.OperatorSettingsSaved += () => savedRaised = true;
+        vm.Callsign = "W1AW";
+
+        await vm.ApplyCommand.ExecuteAsync(null);
+
+        Assert.True(savedRaised);
+    }
+
+    /// <summary>Same event, via SaveCommand -- confirms both entry points route through it, not
+    /// just ApplyCommand's own path.</summary>
+    [AvaloniaFact]
+    public async Task SaveCommand_RaisesOperatorSettingsSaved()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+        var savedRaised = false;
+        vm.OperatorSettingsSaved += () => savedRaised = true;
+        vm.Callsign = "W1AW";
+
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.True(savedRaised);
+    }
+
     /// <summary>RST default plan (2026-09-01): mirrors <see cref="Constructor_LoadsEveryFieldFromPersistedSettings"/>'s
     /// own Callsign coverage, for the new field.</summary>
     [AvaloniaFact]
@@ -1311,6 +1347,30 @@ public sealed class OptionsWindowViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("595", vm.DefaultRst);
+    }
+
+    /// <summary>User-reported (2026-09-20): grey watermark/muted-text coverage for the four
+    /// Callsign/Name/Grid/RST fields -- Callsign/Name/Grid expose their fallback constant directly
+    /// (native Watermark only shows while the bound Text is empty), while DefaultRst is pre-filled
+    /// with the real "595" (see the previous test), so its OWN VM-computed
+    /// <see cref="OptionsWindowViewModel.IsDefaultRstAtFallback"/> flag drives the muted styling
+    /// instead.</summary>
+    [AvaloniaFact]
+    public void WatermarkAndFallbackFlag_ReflectTheCanonicalDefaultConstants()
+    {
+        var settingsStore = new FakeSettingsStore();
+        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(OperatorSettings.CallsignFallback, vm.CallsignWatermark);
+        Assert.Equal(OperatorSettings.NameFallback, vm.OperatorNameWatermark);
+        Assert.Equal(OperatorSettings.GridFallback, vm.OperatorGridWatermark);
+        Assert.Equal(OperatorSettings.DefaultRstFallback, vm.DefaultRst);
+        Assert.True(vm.IsDefaultRstAtFallback);
+
+        vm.DefaultRst = "579";
+
+        Assert.False(vm.IsDefaultRstAtFallback);
     }
 
     /// <summary>RST default plan (2026-09-01): mirrors <see cref="ApplyCommand_PersistsFieldsWithoutClosing"/>'s
