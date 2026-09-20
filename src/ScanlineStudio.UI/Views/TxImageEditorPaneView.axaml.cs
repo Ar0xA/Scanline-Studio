@@ -151,6 +151,16 @@ public partial class TxImageEditorPaneView : UserControl
     /// value is simply never read for that element type.</summary>
     private Border? _lastContextMenuAnchor;
 
+    /// <summary>User-reported (2026-09-20): the canvas's own empty-area ContextMenu (Canvas.ContextMenu,
+    /// TxImageEditorPaneView.axaml) needs the right-click POINT itself, in canvas display pixels, so
+    /// its Add Text/Box/Line items can place the new element with its top-left corner there instead
+    /// of the crop-centered default -- captured in <see cref="OnArmedPlacementPressed"/>, same
+    /// "press always precedes the menu it opens" property <see cref="_lastContextMenuAnchor"/>'s own
+    /// doc comment already established for the per-element counterpart. Null until the first
+    /// right-click of the session, or when the menu was reached without a captured press (e.g. the
+    /// keyboard Menu key) -- callers fall back to the existing crop-centered command in that case.</summary>
+    private Point? _lastCanvasContextMenuPoint;
+
     // Undo/redo sub-piece: a gesture pushes ONE undo step, on the first real move, not on press
     // (a bare click that never moves shouldn't push a no-op step) -- reset in StartDrag, consumed
     // in OnCanvasPointerMoved.
@@ -243,6 +253,91 @@ public partial class TxImageEditorPaneView : UserControl
         var hasRealBackground = ViewModel?.HasRealBackground == true;
         PromoteBackgroundMenuItem.IsEnabled = hasRealBackground;
         RemoveBackgroundMenuItem.IsEnabled = hasRealBackground;
+    }
+
+    /// <summary>Converts <see cref="_lastCanvasContextMenuPoint"/> into the SAME normalized [0,1]
+    /// canvas space <see cref="ITemplateElementViewModel.X"/>/<c>Y</c>/<see cref="TxImageEditorPaneViewModel.CropRect"/>
+    /// already use -- same per-axis division <see cref="ComputeRectFromDrag"/> uses. Null when no
+    /// point was captured (context menu reached without a real pointer press), so callers fall back
+    /// to the existing crop-centered command instead of guessing a point.</summary>
+    private Point? ConvertLastContextMenuPointToNormalized(TxImageEditorPaneViewModel vm) =>
+        _lastCanvasContextMenuPoint is { } point
+            ? new Point(point.X / vm.CanvasDisplayWidth, point.Y / vm.CanvasDisplayHeight)
+            : null;
+
+    /// <summary>Pure top-left-to-center math for AddOverlayElementAt/AddBoxElementAt's own
+    /// CENTER-anchored parameters (<see cref="ITemplateElementViewModel.X"/>/<c>Y</c>'s own
+    /// convention) -- unit-testable without a real click/window, same reasoning/precedent as
+    /// <see cref="ComputeRectFromDrag"/>/<see cref="ComputeLineFromDrag"/> right above. User's own
+    /// explicit correction (2026-09-20): the right-click point becomes the new element's TOP-LEFT
+    /// corner, not its center -- an earlier version of this feature centered on the click point
+    /// instead, exactly the mistake this method's own name now makes impossible to repeat silently.</summary>
+    public static (double CenterX, double CenterY) ComputeCenterFromTopLeft(Point topLeft, double width, double height) =>
+        (topLeft.X + (width / 2), topLeft.Y + (height / 2));
+
+    /// <summary>User-reported (2026-09-20), with the user's own explicit correction: the canvas
+    /// context menu's Add Text/Box/Line items place the new element with its TOP-LEFT corner at the
+    /// right-click point, not centered on it -- unlike the toolbar buttons' plain click (crop-centered,
+    /// still the fallback here) or their draw-to-place drag (drag-defined rect, a different gesture
+    /// entirely). "Add Image" is NOT included -- its 3 sources (AddImageFromFileAsync/
+    /// AddImageFromClipboardAsync/AddLastRxImage) size the element from the loaded image's own aspect
+    /// ratio and have no "At" position-parameterized overload the way AddOverlayElementAt/
+    /// AddBoxElementAt/AddLineElementAt do; wiring click-point placement through those 3 async,
+    /// image-driven methods is a real follow-up, not this one.</summary>
+    private void OnAddTextHereClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        if (ConvertLastContextMenuPointToNormalized(vm) is not { } topLeft)
+        {
+            vm.AddOverlayElementCommand.Execute(null);
+            return;
+        }
+
+        var (centerX, centerY) = ComputeCenterFromTopLeft(topLeft, TxImageEditorPaneViewModel.DefaultElementWidth, TxImageEditorPaneViewModel.DefaultTextElementHeight);
+        vm.AddOverlayElementAt(centerX, centerY, TxImageEditorPaneViewModel.DefaultElementWidth, TxImageEditorPaneViewModel.DefaultTextElementHeight);
+    }
+
+    /// <summary>Same reasoning as <see cref="OnAddTextHereClick"/> right above, for "Add Box".</summary>
+    private void OnAddBoxHereClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        if (ConvertLastContextMenuPointToNormalized(vm) is not { } topLeft)
+        {
+            vm.AddBoxElementCommand.Execute(null);
+            return;
+        }
+
+        var (centerX, centerY) = ComputeCenterFromTopLeft(topLeft, TxImageEditorPaneViewModel.DefaultElementWidth, TxImageEditorPaneViewModel.DefaultBoxElementHeight);
+        vm.AddBoxElementAt(centerX, centerY, TxImageEditorPaneViewModel.DefaultElementWidth, TxImageEditorPaneViewModel.DefaultBoxElementHeight);
+    }
+
+    /// <summary>Same reasoning as <see cref="OnAddTextHereClick"/> above, for "Add Line" -- a line has
+    /// no center-anchored rect (<see cref="TxImageEditorPaneViewModel.AddLineElementAt"/> takes two
+    /// endpoints directly), so "top-left" means the click point becomes the LEFT endpoint of a
+    /// horizontal line extending right, matching <see cref="TxImageEditorPaneViewModel.AddLineElement"/>'s
+    /// own default orientation.</summary>
+    private void OnAddLineHereClick(object? sender, RoutedEventArgs e)
+    {
+        if (ViewModel is not { } vm)
+        {
+            return;
+        }
+
+        if (ConvertLastContextMenuPointToNormalized(vm) is not { } topLeft)
+        {
+            vm.AddLineElementCommand.Execute(null);
+            return;
+        }
+
+        vm.AddLineElementAt(topLeft.X, topLeft.Y, topLeft.X + TxImageEditorPaneViewModel.DefaultElementWidth, topLeft.Y);
     }
 
     /// <summary>User-reported gap (2026-09-15): used to just focus the empty name field instead of
@@ -486,12 +581,21 @@ public partial class TxImageEditorPaneView : UserControl
     /// per-element/canvas <c>ContextMenu</c>s must still see the press and open normally.</summary>
     private void OnArmedPlacementPressed(object? sender, PointerPressedEventArgs e)
     {
+        var point = e.GetCurrentPoint(EditorCanvas);
+        // User-reported (2026-09-20): captured here, unconditionally, regardless of armed state --
+        // this Tunnel handler already runs on EVERY canvas press either way (this method's own doc
+        // comment above), so it's the natural place for the canvas ContextMenu's own click-point
+        // capture too. See _lastCanvasContextMenuPoint's own doc comment for the full reasoning.
+        if (point.Properties.IsRightButtonPressed)
+        {
+            _lastCanvasContextMenuPoint = point.Position;
+        }
+
         if (_pendingPlacementKind is null)
         {
             return;
         }
 
-        var point = e.GetCurrentPoint(EditorCanvas);
         if (point.Properties.IsRightButtonPressed)
         {
             DisarmPlacement();
