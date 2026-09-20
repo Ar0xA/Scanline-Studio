@@ -1,0 +1,781 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Scanline Studio — SSTV for amateur radio</title>
+<meta name="description" content="Scanline Studio is a free, cross-platform SSTV application for amateur radio. Receive, transmit, and log Slow-Scan Television pictures on Windows, Linux, and macOS.">
+<style>
+  :root {
+    --paper: #f5f4ef;
+    --card: #ffffff;
+    --ink: #201f1a;
+    --muted: #66655c;
+    --line: #ddddd1;
+    --accent: #2c6e63;
+    --accent-ink: #1f4f47;
+    --radius: 6px;
+    --shadow: 0 1px 2px rgba(20, 20, 10, .05), 0 10px 24px -16px rgba(20, 20, 10, .25);
+    --max: 880px;
+  }
+
+  * { box-sizing: border-box; }
+
+  html { scroll-behavior: smooth; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  h1, h2, h3 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: normal;
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  p { margin: 0; }
+
+  a { color: var(--accent-ink); }
+  a:hover { color: var(--ink); }
+
+  .wrap {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  /* Header */
+
+  header {
+    border-bottom: 1px solid var(--line);
+  }
+
+  header .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    gap: 10px 24px;
+    flex-wrap: wrap;
+  }
+
+  .site-name {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 1.15rem;
+    font-weight: bold;
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  header nav {
+    display: flex;
+    gap: 22px;
+    font-size: 0.92rem;
+  }
+
+  header nav a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  header nav a:hover { color: var(--ink); }
+
+  /* Hero */
+
+  .hero { padding: 56px 0 44px; }
+
+  .eyebrow {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.75rem;
+    letter-spacing: .14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    margin-bottom: 14px;
+  }
+
+  .hero h1 {
+    font-size: clamp(1.9rem, 4vw, 2.5rem);
+    letter-spacing: -0.01em;
+    margin-bottom: 16px;
+    max-width: 20ch;
+  }
+
+  .hero .lede {
+    max-width: 58ch;
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin-bottom: 26px;
+  }
+
+  /* waterfall strip: a nod to the SSTV waterfall, kept quiet */
+  .waterfall {
+    height: 34px;
+    margin-bottom: 26px;
+    border: 1px solid var(--line);
+    border-radius: 4px;
+    background: repeating-linear-gradient(
+      90deg,
+      #e4e2d6 0px, #e4e2d6 3px,
+      #d7d4c2 3px, #d7d4c2 6px,
+      #c7d6cf 6px, #c7d6cf 9px,
+      #a9c4b8 9px, #a9c4b8 12px,
+      #d7d4c2 12px, #d7d4c2 15px,
+      #e4e2d6 15px, #e4e2d6 22px
+    );
+    background-size: 220px 100%;
+    opacity: 0.8;
+  }
+
+  .buttons {
+    display: flex;
+    gap: 12px;
+    flex-wrap: wrap;
+    margin-bottom: 22px;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 10px 18px;
+    border-radius: var(--radius);
+    font-size: 0.95rem;
+    font-weight: 600;
+    text-decoration: none;
+    border: 1px solid var(--accent);
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  .btn-primary:hover { background: var(--accent-ink); border-color: var(--accent-ink); color: #fff; }
+
+  .btn-secondary {
+    background: transparent;
+    color: var(--ink);
+    border-color: var(--line);
+  }
+
+  .btn-secondary:hover { border-color: var(--ink); color: var(--ink); }
+
+  .platforms {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  /* Info strips (why-switch, migration) */
+
+  .strip {
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    padding: 14px 0;
+  }
+
+  .strip p {
+    color: var(--muted);
+    font-size: 0.88rem;
+    line-height: 1.7;
+  }
+
+  /* Sections */
+
+  section { padding: 44px 0; border-top: 1px solid var(--line); }
+
+  .section-head { max-width: 62ch; margin-bottom: 26px; }
+
+  .section-head h2 { font-size: 1.4rem; margin-bottom: 6px; }
+
+  .section-head p { color: var(--muted); }
+
+  /* Mode chips */
+
+  .modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+  }
+
+  .mode-chip {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    font-size: 0.82rem;
+    color: var(--muted);
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 12px;
+  }
+
+  .mode-count {
+    margin-top: 14px;
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  /* Feature spotlight (CAT, TX editor, Gallery) */
+
+  .spotlight {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    align-items: start;
+  }
+
+  @media (max-width: 720px) {
+    .spotlight { grid-template-columns: 1fr; }
+  }
+
+  .spotlight-reverse .shot { order: 2; }
+  .spotlight-reverse .copy { order: 1; }
+
+  .shot {
+    aspect-ratio: 16 / 10;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.85rem;
+    padding: 16px;
+  }
+
+  .copy h3 {
+    font-size: 1.15rem;
+    margin-bottom: 8px;
+  }
+
+  .copy > p {
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  .copy ul {
+    margin: 0;
+    padding-left: 20px;
+    color: var(--muted);
+    font-size: 0.92rem;
+  }
+
+  .copy li { margin-bottom: 6px; }
+  .copy li strong { color: var(--ink); }
+
+  /* Compact feature grid */
+
+  .features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: 16px;
+  }
+
+  @media (max-width: 480px) {
+    .features { grid-template-columns: 1fr; }
+  }
+
+  .feature {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px;
+  }
+
+  .feature h3 {
+    font-size: 1rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-weight: 600;
+    margin-bottom: 6px;
+  }
+
+  .feature p {
+    color: var(--muted);
+    font-size: 0.9rem;
+  }
+
+  /* Download */
+
+  .download-card {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 24px;
+  }
+
+  .download-card .row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+    margin-bottom: 18px;
+  }
+
+  .download-card .row p {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin-top: 4px;
+  }
+
+  .link-row {
+    display: flex;
+    gap: 22px;
+    flex-wrap: wrap;
+    font-size: 0.9rem;
+    border-top: 1px solid var(--line);
+    padding-top: 16px;
+  }
+
+  /* About */
+
+  .about-block { max-width: 66ch; margin-bottom: 26px; }
+  .about-block:last-child { margin-bottom: 0; }
+
+  .about-block h3 {
+    font-size: 1.05rem;
+    margin-bottom: 8px;
+  }
+
+  .about-block p { color: var(--muted); }
+  .about-block p + p { margin-top: 12px; }
+
+  .callout {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    margin-top: 14px;
+  }
+
+  .callout p { max-width: none; }
+
+  /* Footer */
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 24px 0 44px;
+  }
+
+  footer .wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--ink); }
+
+  footer .foot-links { display: flex; gap: 16px; }
+
+  /* User guide overlay */
+
+  .guide-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--paper);
+    display: flex;
+    flex-direction: column;
+  }
+
+  .guide-overlay[hidden] { display: none; }
+
+  .guide-bar {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .guide-bar button {
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: var(--ink);
+    background: transparent;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 6px 12px;
+    cursor: pointer;
+  }
+
+  .guide-bar button:hover { border-color: var(--accent); color: var(--accent-ink); }
+
+  .guide-bar span {
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  .guide-overlay iframe {
+    flex: 1;
+    border: 0;
+    width: 100%;
+  }
+</style>
+</head>
+<body>
+
+  <header>
+    <div class="wrap">
+      <a class="site-name" href="#top">Scanline Studio</a>
+      <nav>
+        <a href="#modes">Modes</a>
+        <a href="#cat">Radio control</a>
+        <a href="#tx-editor">TX Editor</a>
+        <a href="#gallery">Gallery</a>
+        <a href="#download">Download</a>
+        <a href="#about">About</a>
+        <a href="help/index.html" data-guide-link>User guide</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+
+    <div class="hero" id="top">
+      <div class="wrap">
+        <p class="eyebrow">Amateur radio · SSTV</p>
+        <h1>Slow-scan television, for the modern shack</h1>
+        <p class="lede">
+          A ground-up, cross-platform rewrite of YONIQ (a fork of MMSSTV). Every one of the 43
+          modes is ported exactly, so it's identical on the air — and everything around them is
+          rebuilt: a real QSL-style layout editor, a searchable receive history, and rig control
+          through Hamlib instead of a hard-coded list of six radios.
+        </p>
+        <div class="waterfall" role="presentation" aria-hidden="true"></div>
+        <div class="buttons">
+          <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
+          <a class="btn btn-secondary" href="https://github.com/Ar0xA/Scanline-Studio">View on GitHub</a>
+        </div>
+        <p class="platforms">Windows · Linux · macOS</p>
+      </div>
+    </div>
+
+    <div class="strip">
+      <div class="wrap">
+        <p>
+          Same 43 modes, verified against the source · Real template editor, not paste-on
+          captions · Searchable SQLite gallery, not a binary blob · Any rig Hamlib knows, not six
+        </p>
+      </div>
+    </div>
+
+    <section id="modes">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Every mode from the original</h2>
+          <p>
+            All 43 SSTV modes from YONIQ are ported — checked mode by mode against YONIQ's own
+            encoder and decoder, not just against each other, so a picture sent from Scanline Studio
+            reads correctly on any other MMSSTV-family station, and vice versa.
+          </p>
+        </div>
+        <div class="modes">
+          <span class="mode-chip">Martin M1 / M2</span>
+          <span class="mode-chip">Scottie S1 / S2 / DX</span>
+          <span class="mode-chip">Robot 36 / 72</span>
+          <span class="mode-chip">PD 50–290</span>
+          <span class="mode-chip">Pasokon P3 / P5 / P7</span>
+          <span class="mode-chip">MP / MR / ML</span>
+          <span class="mode-chip">MN / MC (narrow)</span>
+          <span class="mode-chip">and more</span>
+        </div>
+        <p class="mode-count">43 of 43 YONIQ modes — full parity, not a subset.</p>
+      </div>
+    </section>
+
+    <section id="cat">
+      <div class="wrap">
+        <div class="spotlight">
+          <div class="shot" aria-hidden="true">[ screenshot: radio control settings ]</div>
+          <div class="copy">
+            <h3>Talks to any rig Hamlib does, not just six</h3>
+            <p>
+              YONIQ hand-coded control for a fixed list of six rig families — Yaesu, Icom CI-V,
+              Kenwood, Ten-Tec, and JRC — and could never talk to anything outside that list.
+              Scanline Studio never bundles a copy of Hamlib: it links against whatever Hamlib your
+              own system already has installed, or talks to an already-running Hamlib daemon over
+              rigctld — either way, you get Hamlib's full rig list without carrying a private fork
+              of it that can fall out of date.
+            </p>
+            <ul>
+              <li><strong>Linked Hamlib</strong> — in-process, against your own installed
+                <code>libhamlib</code> — the widest rig list available, with no per-radio code to
+                maintain.</li>
+              <li><strong>rigctld</strong> — talks to an already-running Hamlib daemon, local or
+                over the network, so more than one program can share the same rig, and it works on
+                platforms without a linked build.</li>
+              <li><strong>flrig</strong> and <strong>OmniRig</strong> (Windows) for stations already
+                running them.</li>
+              <li>Frequency and PTT, fully async, so radio polling never blocks the decoder.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="tx-editor">
+      <div class="wrap">
+        <div class="spotlight spotlight-reverse">
+          <div class="shot" aria-hidden="true">[ screenshot: TX Template Editor ]</div>
+          <div class="copy">
+            <h3>A real template editor, not a picture-plus-caption box</h3>
+            <p>
+              MMSSTV let you paste a callsign onto a picture. Scanline Studio's TX Template
+              Editor builds full QSL-style layouts and reuses them instantly, mid-contact.
+            </p>
+            <ul>
+              <li><strong>Text, box, image, and line elements</strong>, each independently styled,
+                stacked, and positioned on the canvas.</li>
+              <li><strong>Macros</strong> insert live QSO fields — callsign, RST, grid, and more —
+                straight into a text element.</li>
+              <li><strong>Ready Rack</strong>, a 9-slot pinned strip for instant recall, backed by a
+                full searchable <strong>Template Library</strong> in grid or list view.</li>
+              <li><strong>Imports your existing YONIQ <code>.mtm</code> templates</strong>, so past
+                template work carries over.</li>
+              <li>Perspective transform and grow-to-fill text, for layouts MMSSTV's flat paste-on
+                couldn't do.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gallery">
+      <div class="wrap">
+        <div class="spotlight">
+          <div class="shot" aria-hidden="true">[ screenshot: Gallery tab ]</div>
+          <div class="copy">
+            <h3>Every picture you've received, searchable</h3>
+            <p>
+              YONIQ kept a proprietary binary history file. The Gallery tab is a real, searchable
+              record of every received image, tied directly to your log.
+            </p>
+            <ul>
+              <li>Full receive history, browsable and searchable, stored in a standard SQLite
+                database.</li>
+              <li><strong>Send to TX</strong> takes a received image straight into the Template
+                Editor, and resolves the QSO it was linked to.</li>
+              <li>A <strong>Logged</strong> indicator shows at a glance whether a picture already has
+                a log entry.</li>
+              <li><strong>Re-decode this frame</strong> re-runs decoding on a saved recording, and
+                <strong>Open audio file location</strong> gets you to the raw capture.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <div class="strip">
+      <div class="wrap">
+        <p>
+          Already have YONIQ <code>.mtm</code> templates? They import directly. Already running
+          rigctld or flrig for another program? Point Scanline Studio at the same instance.
+        </p>
+      </div>
+    </div>
+
+    <section id="features">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Also included</h2>
+        </div>
+        <div class="features">
+          <div class="feature">
+            <h3>Receive</h3>
+            <p>Decode live from your audio device, with a waterfall and spectrum display.</p>
+          </div>
+          <div class="feature">
+            <h3>Logbook</h3>
+            <p>ADIF export, and UDP forwarding to GridTracker2, N1MM, and Log4OM.</p>
+          </div>
+          <div class="feature">
+            <h3>Callsign lookup</h3>
+            <p>QRZ integration fills in station details for logged contacts.</p>
+          </div>
+          <div class="feature">
+            <h3>Multilingual</h3>
+            <p>English and German today, switchable at runtime — more languages to come.</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="download">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Download</h2>
+          <p>Releases are hosted on GitHub. The user guide is built into this page.</p>
+        </div>
+        <div class="download-card">
+          <div class="row">
+            <div>
+              <h3 style="font-family: inherit; font-size: 1.05rem; font-weight: 600;">Latest release</h3>
+              <p>Windows, Linux, and macOS builds.</p>
+            </div>
+            <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
+          </div>
+          <div class="link-row">
+            <a href="https://github.com/Ar0xA/Scanline-Studio/releases">Older releases</a>
+            <a href="help/index.html" data-guide-link>User guide</a>
+            <a href="https://github.com/Ar0xA/Scanline-Studio">Source code</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="about">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>About Scanline Studio</h2>
+          <p>
+            What another station transmits or expects over the air is never up for
+            reinterpretation. Everything else was an engineering choice, and choices can be
+            improved. Here's why this exists, what it's trying to be, and how it's actually built.
+          </p>
+        </div>
+
+        <div class="about-block">
+          <h3>Vision</h3>
+          <p>
+            SSTV has been carried for decades by one lineage of software: MMSSTV, and later YONIQ.
+            That lineage encodes a great deal of hard-won knowledge about how real signals behave on
+            real bands. Scanline Studio's aim is to carry that knowledge forward onto every platform
+            a ham actually uses today, without changing what goes over the air.
+          </p>
+          <p>
+            Linux hams have had QSSTV; Windows hams have had MMSSTV and YONIQ. Scanline Studio is
+            the MMSSTV lineage, on every platform.
+          </p>
+        </div>
+
+        <div class="about-block">
+          <h3>Goals</h3>
+          <p>
+            All 43 of YONIQ's modes, on the air exactly as before. MMSSTV and YONIQ are
+            Windows-only C++Builder programs; Scanline Studio runs natively on Windows, Linux, and
+            macOS, as equals, from one codebase. A template editor and receive history built for
+            how SSTV is actually operated today, rig control through Hamlib instead of a
+            hard-coded rig list, and a logbook that hands off to the tools you already run rather
+            than trying to replace them. Free and open source, LGPL-3.0-or-later — the same
+            license as upstream.
+          </p>
+        </div>
+
+        <div class="about-block">
+          <h3>How it's built</h3>
+          <p>
+            Scanline Studio is developed with heavy use of AI-assisted engineering (Claude Code).
+            Porting a couple of decades of C++ DSP and codec logic into a new C# codebase is exactly
+            the kind of large, exacting, easy-to-get-subtly-wrong work where that help matters — and
+            we'd rather say so plainly than pretend otherwise.
+          </p>
+          <p>
+            The tooling does not get to decide what the protocol is. Every ported mode is checked
+            against the YONIQ source, not inferred from similar-looking code. An early port of the
+            Scottie mode got the channel order wrong for exactly that reason — it inferred the
+            transmit structure from the receive code instead of reading the real transmit function,
+            and a round-trip test didn't catch it, because the encoder and decoder agreed with each
+            other while both were wrong about the actual protocol. Every mode now gets checked
+            against YONIQ's own encoder and decoder source specifically, not just cross-checked
+            against itself.
+          </p>
+          <div class="callout">
+            <p>
+              MMSSTV's lineage goes back to 2000 — over two decades of accumulated engineering
+              knowledge about how SSTV actually behaves on real bands, carried forward here rather
+              than started over.
+            </p>
+          </div>
+        </div>
+
+        <div class="about-block">
+          <h3>Found a mismatch?</h3>
+          <p>
+            If a mode decodes differently from MMSSTV or YONIQ, or transmits something another
+            station can't read, that's a bug by definition, not a matter of opinion — please
+            <a href="https://github.com/Ar0xA/Scanline-Studio/issues">open an issue</a>.
+          </p>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>
+        © 2026 Scanline Studio · LGPL-3.0-or-later · a rewrite of
+        <a href="https://github.com/w0eeemst/YONIQ">YONIQ</a>, a fork of MMSSTV
+      </span>
+      <div class="foot-links">
+        <a href="#about">About</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio">GitHub</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio/releases">Releases</a>
+        <a href="help/index.html" data-guide-link>User guide</a>
+      </div>
+    </div>
+  </footer>
+
+  <div class="guide-overlay" id="guide-overlay" hidden>
+    <div class="guide-bar">
+      <button type="button" id="guide-close">← Back to Scanline Studio</button>
+      <span>User guide</span>
+    </div>
+    <iframe id="guide-frame" title="Scanline Studio User Guide"></iframe>
+  </div>
+
+  <script>
+    (function () {
+      var overlay = document.getElementById('guide-overlay');
+      var frame = document.getElementById('guide-frame');
+      var closeBtn = document.getElementById('guide-close');
+      var loaded = false;
+
+      function openGuide() {
+        if (!loaded) {
+          frame.src = 'help/index.html';
+          loaded = true;
+        }
+        overlay.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeGuide() {
+        overlay.hidden = true;
+        document.body.style.overflow = '';
+      }
+
+      document.querySelectorAll('[data-guide-link]').forEach(function (link) {
+        link.addEventListener('click', function (event) {
+          event.preventDefault();
+          openGuide();
+        });
+      });
+
+      closeBtn.addEventListener('click', closeGuide);
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && !overlay.hidden) closeGuide();
+      });
+    })();
+  </script>
+
+</body>
+</html>
