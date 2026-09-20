@@ -519,6 +519,38 @@ public sealed class ApplyTemplateTests
         Assert.Equal(0.1, bounds.Height, precision: 10); // 0 + 2*0.05
     }
 
+    /// <summary>Element rotation (2026-09-20) -- round-1 plan-review blocker: a naive rotation of
+    /// the NORMALIZED (x1,y1,x2,y2) delta is aspect-wrong whenever <c>imageWidthPx != imageHeightPx</c>,
+    /// since X is width-relative and Y is height-relative (same per-axis convention
+    /// <see cref="ComputeInflatedBounds_NonSquareTarget_ConvertsThicknessPerAxisCorrectly"/> already
+    /// pins for the thickness conversion). A horizontal 0.4-normalized-wide line (80px on a
+    /// 200px-wide canvas) rotated 90deg clockwise about its own midpoint must come out 80px long
+    /// too (length-preserving) -- a naive normalized-space rotation would instead produce a line
+    /// only 0.4 normalized-HEIGHT long (40px on the 100px-tall canvas), 20% short.</summary>
+    [Fact]
+    public void RotateEndpoints_NonSquareTarget_PreservesLengthAndAngleInRealPixelSpace()
+    {
+        var (x1, y1, x2, y2) = TemplateLineGeometry.RotateEndpoints(
+            x1: 0.3, y1: 0.5, x2: 0.7, y2: 0.5, clockwiseDegrees: 90, imageWidthPx: 200, imageHeightPx: 100);
+
+        Assert.Equal(0.5, x1, precision: 10);
+        Assert.Equal(0.1, y1, precision: 10);
+        Assert.Equal(0.5, x2, precision: 10);
+        Assert.Equal(0.9, y2, precision: 10);
+    }
+
+    [Fact]
+    public void RotateEndpoints_180Degrees_IsPureEndpointSwap()
+    {
+        var (x1, y1, x2, y2) = TemplateLineGeometry.RotateEndpoints(
+            x1: 0.3, y1: 0.4, x2: 0.7, y2: 0.6, clockwiseDegrees: 180, imageWidthPx: 200, imageHeightPx: 100);
+
+        Assert.Equal(0.7, x1, precision: 10);
+        Assert.Equal(0.6, y1, precision: 10);
+        Assert.Equal(0.3, x2, precision: 10);
+        Assert.Equal(0.4, y2, precision: 10);
+    }
+
     [Fact]
     public async Task ApplyTemplate_Image_DrawsTheResizedSourceInsideItsOwnBounds()
     {
@@ -2001,6 +2033,122 @@ public sealed class ApplyTemplateTests
 
             // Outside the quad's own bounding box entirely (max corner X/Y is 105) -- must be
             // untouched background too, ruling out a bug that fills the WHOLE destination image.
+            AssertPixel(result, 115, 115, 255, 255, 255);
+        }
+        finally
+        {
+            File.Delete(basePath);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_RotatedBox_90Degrees_SwapsFootprintAspectAroundItsCenter()
+    {
+        // Element rotation (2026-09-20) -- a naive bug (rotation ignored, or a composite origin
+        // computed from the PRE-rotate size instead of the post-rotate one, round-1/round-2
+        // plan-review findings) would either leave the box at its original wide/short footprint or
+        // shift it off-center. A 100x40 box (non-square, catches an aspect mistake the same way the
+        // Line geometry test below does) rotated 90deg about its own center swaps to a 40x100
+        // footprint EXACTLY (a 90deg rotation of a rectangle has no shrink/pad -- k=1 always), so the
+        // two probe points below are unambiguous: one is inside the ORIGINAL footprint only, the
+        // other inside the ROTATED footprint only.
+        var basePath = await WriteFixturePngAsync(200, 200, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 200, 200);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            // Pixel space: centered at (100,100), width=100 height=40 -- original footprint
+            // x:50-150, y:80-120. Post-90deg-rotation footprint: x:80-120, y:50-150.
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(
+                    new NormalizedRect(0.25, 0.4, 0.5, 0.2), Z: 0, new Rgb24(0, 0, 255), BorderColor: null, BorderThickness: 0, Opacity: 1,
+                    CornerRadius: 0, Gradient: null, Perspective: null, FillEnabled: true, RotationDegrees: 90),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            // Inside the ROTATED footprint only (y=60 is above the original y:80-120 range, but
+            // inside the rotated y:50-150 range) -- proves the rotation actually happened.
+            AssertPixel(result, 100, 60, 0, 0, 255);
+            // Inside the ORIGINAL footprint only (x=60 is inside the original x:50-150 range, but
+            // outside the rotated x:80-120 range) -- proves the fill did NOT stay at the unrotated
+            // position.
+            AssertPixel(result, 60, 100, 255, 255, 255);
+            // Center, sanity check -- inside both.
+            AssertPixel(result, 100, 100, 0, 0, 255);
+        }
+        finally
+        {
+            File.Delete(basePath);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_RotatedImage_90Degrees_SwapsFootprintAspectAroundItsCenter()
+    {
+        // Element rotation (2026-09-20) -- same discriminating-probe-point shape as the box test
+        // above, for TryRotateElementContent. Also pins the round-1 finding that this path must
+        // resize via the element's own Fit BEFORE rotating (not mirror TryWarpElementContent's
+        // ignore-Fit shape) -- ImageFitMode.Stretch here means the solid-red source fills the WHOLE
+        // 100x40 box before rotation, so the same two probe points apply.
+        var basePath = await WriteFixturePngAsync(200, 200, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        var elementPath = await WriteFixturePngAsync(10, 10, (_, _) => new ImageSharpRgb24(255, 0, 0));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 200, 200);
+            var elementSource = await new ImageFileLoader().LoadAsync(elementPath, 10, 10);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            var document = new TemplateDocument(null, [
+                new TemplateImageElement(
+                    new NormalizedRect(0.25, 0.4, 0.5, 0.2), Z: 0, elementSource, ImageFitMode.Stretch, Perspective: null, RotationDegrees: 90),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 100, 60, 255, 0, 0);
+            AssertPixel(result, 60, 100, 255, 255, 255);
+            AssertPixel(result, 100, 100, 255, 0, 0);
+        }
+        finally
+        {
+            File.Delete(basePath);
+            File.Delete(elementPath);
+        }
+    }
+
+    [Fact]
+    public async Task ApplyTemplate_BoxWithBothPerspectiveAndRotation_RendersViaPerspectiveOnly()
+    {
+        // Element rotation (2026-09-20) -- precedence test for the Rotation-vs-Perspective mutual-
+        // exclusivity rule (TemplateBoxElement.RotationDegrees's own doc comment: Perspective wins
+        // when both are set, only reachable via a hand-edited/older template file). Identical quad
+        // and probe points to ApplyTemplate_BoxWithPerspective_FillsInsideTheQuadAndLeavesOutsideUntouched
+        // above, with a non-zero RotationDegrees added -- if precedence were NOT enforced (e.g. a
+        // future edit made DrawTemplateBox check RotationDegrees first), this would fail the exact
+        // same way that test's own mutation-tested negative control (100,100) would.
+        var basePath = await WriteFixturePngAsync(120, 120, (_, _) => new ImageSharpRgb24(255, 255, 255));
+        try
+        {
+            var source = await new ImageFileLoader().LoadAsync(basePath, 120, 120);
+            var preparer = new TransmitImagePreparer(FontPath);
+
+            var corners = new PerspectiveCorners(
+                5.0 / 120, 5.0 / 120,
+                105.0 / 120, 5.0 / 120,
+                85.0 / 120, 105.0 / 120,
+                5.0 / 120, 105.0 / 120);
+            var document = new TemplateDocument(null, [
+                new TemplateBoxElement(
+                    corners.ToBoundingBox(), Z: 0, new Rgb24(0, 0, 255), BorderColor: null, BorderThickness: 0, Opacity: 1,
+                    CornerRadius: 0, Gradient: null, corners, FillEnabled: true, RotationDegrees: 45),
+            ]);
+
+            var result = preparer.ApplyTemplate(source, document);
+
+            AssertPixel(result, 40, 40, 0, 0, 255);
+            AssertPixel(result, 100, 100, 255, 255, 255);
             AssertPixel(result, 115, 115, 255, 255, 255);
         }
         finally

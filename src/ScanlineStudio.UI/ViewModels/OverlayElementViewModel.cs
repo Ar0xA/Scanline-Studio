@@ -338,6 +338,16 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
 
     public IRelayCommand? PasteStyleCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.RotateClockwise90Command"/>
+    public IRelayCommand? RotateClockwise90Command { get; init; }
+
+    public IRelayCommand? RotateCounterclockwise90Command { get; init; }
+
+    public IRelayCommand? Rotate180Command { get; init; }
+
+    /// <inheritdoc cref="BoxElementViewModel.CanRotate"/>
+    public bool CanRotate => !Locked;
+
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
     /// <see cref="ImageElementViewModel.SetAsBackdropCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>
@@ -716,6 +726,8 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     // hook, same "parent-pushed cascade, not left to accidentally work" discipline this file already
     // established for LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels above.
     partial void OnRotationDegreesChanged(double value) => OnPropertyChanged(nameof(RotationTransform));
+
+    partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(CanRotate));
 
     partial void OnBoldChanged(bool value) => OnPropertyChanged(nameof(CanvasFontWeight));
 
