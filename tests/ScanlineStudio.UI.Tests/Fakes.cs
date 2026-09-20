@@ -1913,6 +1913,14 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
 
     public Exception? ThrowOnQuery { get; set; }
 
+    /// <summary>When set, the NEXT <see cref="QueryAsync"/> call returns this gate's own
+    /// <see cref="TaskCompletionSource{TResult}.Task"/> instead of resolving immediately -- same
+    /// "let a test hold an in-flight async call open" convention as <see cref="ThumbnailLoadGates"/>,
+    /// simpler since a test only ever needs to gate ONE query at a time (RxHistoryPaneViewModel's
+    /// own IsLoading coverage). Consumed (nulled) on read, so a second QueryAsync call during the
+    /// same test resolves immediately again unless the test re-arms it.</summary>
+    public TaskCompletionSource<IReadOnlyList<ReceiveHistoryEntry>>? QueryGate { get; set; }
+
     /// <summary>Actually applies the filter (unlike a bare stub) so a test can verify the
     /// Gallery tab's All/Today wiring, not just that some entries render.</summary>
     public Task<IReadOnlyList<ReceiveHistoryEntry>> QueryAsync(ReceiveHistoryFilter filter, CancellationToken ct = default)
@@ -1923,6 +1931,11 @@ internal sealed class FakeReceiveHistoryStore : IReceiveHistoryStore
         }
 
         QueryFilters.Add(filter);
+        if (QueryGate is { } gate)
+        {
+            QueryGate = null;
+            return gate.Task;
+        }
         IEnumerable<ReceiveHistoryEntry> results = EntriesToReturn;
         if (filter.ModeId is not null)
         {

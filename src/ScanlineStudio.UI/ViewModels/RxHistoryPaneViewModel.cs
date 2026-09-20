@@ -238,6 +238,18 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     [ObservableProperty]
     private string? _errorMessage;
 
+    /// <summary>User-reported (2026-09-20): switching between "Today" and "All" (or the initial
+    /// startup load, constructor's own fire-and-forget <see cref="RefreshAsync"/> call) can be
+    /// noticeably slow against a large SQLite history -- true while the MOST RECENT
+    /// <see cref="RefreshAsync"/> call is still in flight, so the Gallery can show a "loading" state
+    /// instead of looking frozen/empty with no explanation. Deliberately tracks only the CURRENT
+    /// (non-stale) call, mirroring <see cref="_refreshGeneration"/>'s own "last-completer-wins on a
+    /// stale result" discipline -- an older, superseded call finishing late must NOT clear this while
+    /// a newer one is still running; see <see cref="RefreshAsync"/>'s own generation-check sites for
+    /// exactly where each is (and isn't) touched.</summary>
+    [ObservableProperty]
+    private bool _isLoading;
+
     /// <summary>Export-frame-only success feedback (`ExportFrameAsync`) -- deliberately a SEPARATE
     /// property from <see cref="ErrorMessage"/>, not reused for the success case: that one renders
     /// in `IndustryDanger` red (`MainWindow.axaml`), and a re-encode's actual effect (did the chosen
@@ -488,6 +500,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             UpdateEntryCountText();
             SelectLatestCommand.NotifyCanExecuteChanged();
             UpdateFilteredEntries();
+            // ShowNoHistoryMessage depends on Entries.Count too (see its own doc comment) -- same
+            // "no automatic re-notify for a computed property, raise it explicitly" discipline every
+            // other Entries-derived member in this block already follows.
+            OnPropertyChanged(nameof(ShowNoHistoryMessage));
         };
         UpdateEntryCountText();
         _historyStore.Recorded += OnRecorded;
@@ -519,6 +535,16 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     }
 
     public ObservableCollection<RxHistoryEntryViewModel> Entries { get; } = [];
+
+    /// <summary>"No history yet" empty-state message -- must stay hidden WHILE <see cref="IsLoading"/>,
+    /// not just once <see cref="Entries"/> has settled. Without this, the moment <see cref="RefreshAsync"/>
+    /// clears <see cref="Entries"/> before repopulating it, this would flash "No history yet" for
+    /// every refresh (including the every-incoming-frame <see cref="OnRecorded"/> case), not just a
+    /// genuinely-empty history. Re-notified from both <see cref="OnIsLoadingChanged"/> below and the
+    /// constructor's own <see cref="Entries"/>.CollectionChanged handler.</summary>
+    public bool ShowNoHistoryMessage => !IsLoading && Entries.Count == 0;
+
+    partial void OnIsLoadingChanged(bool value) => OnPropertyChanged(nameof(ShowNoHistoryMessage));
 
     /// <summary>The Gallery grid's actual `ItemsSource` -- <see cref="Entries"/> narrowed by
     /// <see cref="SearchText"/>/<see cref="FilterUnloggedOnly"/>/<see cref="FilterFlaggedOnly"/>,
@@ -818,6 +844,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // batch would otherwise introduce.
         var selectedEntryId = SelectedEntry?.Entry.Id;
         var generation = ++_refreshGeneration;
+        // Unconditional -- harmless if already true (an overlapping second call), and correct
+        // either way: SOME refresh is now in flight regardless of which one set it. See IsLoading's
+        // own doc comment for why clearing it back to false is generation-gated below instead.
+        IsLoading = true;
 
         var filter = ShowTodayOnly
             ? new ReceiveHistoryFilter(From: new DateTimeOffset(DateTime.Today))
@@ -838,6 +868,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             // established for the identical sibling gap (chunk 4 of this sweep).
             Log.QueryFailed(_logger, ex);
             ErrorMessage = _localization.GetString("Panes.RxHistory.Error.RefreshFailed");
+            // Only if THIS call is still the current one -- a newer, still-in-flight call already
+            // owns clearing IsLoading itself; see the property's own doc comment.
+            if (generation == _refreshGeneration)
+            {
+                IsLoading = false;
+            }
+
             return;
         }
 
@@ -958,6 +995,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             }
         }
 
+        // Unconditional -- reaching this point already passed the staleness check above, so this
+        // call is guaranteed to still be the current generation (a newer one would have made THIS
+        // call return early instead).
+        IsLoading = false;
         Log.RefreshCompleted(_logger, Entries.Count);
     }
 

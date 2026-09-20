@@ -1265,9 +1265,18 @@
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,4,4" Content="{loc:Translate Panes.RxHistory.Latest}" Command="{Binding SelectLatestCommand}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,0,4" Content="{loc:Translate Panes.RxHistory.Refresh}" Command="{Binding RefreshCommand}" />
                             </WrapPanel>
+                            <!-- User-reported (2026-09-20): switching Today/All (or the initial
+                                 startup load) can be noticeably slow against a large SQLite history
+                                 — this shows in place of (never alongside, ShowNoHistoryMessage
+                                 itself stays false while IsLoading) the empty-state message below,
+                                 so the Gallery doesn't look frozen/broken while a query is in
+                                 flight. -->
+                            <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
+                                       Text="{loc:Translate Panes.RxHistory.Loading}"
+                                       IsVisible="{Binding IsLoading}" />
                             <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
                                        Text="{loc:Translate Panes.RxHistory.NoHistoryYet}"
-                                       IsVisible="{Binding !Entries.Count}" />
+                                       IsVisible="{Binding ShowNoHistoryMessage}" />
                             <!-- Margin top=3 (design-fidelity-agent-caught fix): mock2's own 7px
                                  gap between the filter row and the thumbnail grid, on top of the
                                  filter row's own 4px bottom margin above. -->
