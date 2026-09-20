@@ -1,3 +1,4 @@
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -108,6 +109,19 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     [ObservableProperty]
     private int _naturalPixelHeight;
 
+    /// <summary>Element rotation (2026-09-20) -- in-plane (2D) rotation, clockwise-positive, same
+    /// convention as <see cref="OverlayElementViewModel.RotationDegrees"/>. Mutually exclusive with
+    /// <see cref="PerspectiveEnabled"/> (see <see cref="Abstractions.Imaging.TemplateImageElement.RotationDegrees"/>'s
+    /// doc comment for the full Perspective-wins precedence rule) -- entering perspective mode resets
+    /// this to 0 (<c>TxImageEditorPaneViewModel.TogglePerspective</c>), and <see cref="CanRotate"/>
+    /// gates the Rotate context-menu items off while perspective is active. Undo hook is
+    /// <see cref="PushUndoSnapshotForGeometryChange"/>, not a style hook -- this VM has no
+    /// <c>PushUndoSnapshotForStyleChange</c> (unlike <see cref="BoxElementViewModel"/>/
+    /// <see cref="OverlayElementViewModel"/>), and adding one just for this field would be a new,
+    /// unnecessary threading site.</summary>
+    [ObservableProperty]
+    private double _rotationDegrees;
+
     [ObservableProperty]
     private double _imageWidth;
 
@@ -189,6 +203,13 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// from a preceding drag would otherwise be silently swallowed, making the toggle un-undoable).</summary>
     public IRelayCommand? TogglePerspectiveCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.RotateClockwise90Command"/>
+    public IRelayCommand? RotateClockwise90Command { get; init; }
+
+    public IRelayCommand? RotateCounterclockwise90Command { get; init; }
+
+    public IRelayCommand? Rotate180Command { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     /// <summary>Which of Phase 2's 3 sources this image was resolved from (Phase 5/persistence needs
@@ -228,12 +249,23 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
 
     public bool ShowPerspectiveCornerHandles => !Locked && PerspectiveEnabled;
 
+    /// <inheritdoc cref="OverlayElementViewModel.RotationTransform"/>
+    public Transform? RotationTransform => RotationDegrees != 0 ? new RotateTransform(RotationDegrees) : null;
+
+    /// <inheritdoc cref="BoxElementViewModel.CanRotate"/>
+    public bool CanRotate => !Locked && !PerspectiveEnabled;
+
     partial void OnLockedChanged(bool value)
     {
         OnPropertyChanged(nameof(BlocksHitTesting));
         OnPropertyChanged(nameof(ShowResizeHandles));
         OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
+        OnPropertyChanged(nameof(CanRotate));
     }
+
+    partial void OnRotationDegreesChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
+
+    partial void OnRotationDegreesChanged(double value) => OnPropertyChanged(nameof(RotationTransform));
 
     partial void OnIsBackgroundChanged(bool value)
     {
@@ -599,6 +631,7 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
         RaiseGeometryChanged();
         OnPropertyChanged(nameof(ShowResizeHandles));
         OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
+        OnPropertyChanged(nameof(CanRotate));
         if (!value)
         {
             var old = WarpedCanvasBitmap;

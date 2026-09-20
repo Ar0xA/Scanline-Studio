@@ -213,7 +213,12 @@ public sealed partial class AtomsFontScaleTests
         // 2026-09-19: +1 for the new TX header progress bar's MinWidth="80" (TxImageEditorPaneView.axaml)
         // -- a fixed space-reservation literal for the ProgressBar track, same class as this file's
         // own pre-existing StackPanel MinWidth="180"/"120" literals, not a font-size-coupled site.
-        ["TxImageEditorPaneView.axaml"] = 110,
+        // 2026-09-20 (element rotation): +6 -- Width="110" on the 4 new "Rotate by" NumericUpDown
+        // controls (text/box's flyouts, image's and line's new dedicated ones), plus MinWidth="200"
+        // on the 2 new dedicated flyouts' own StackPanel (image, line) -- same fixed-control-sizing
+        // class as the FontSizePx/BorderThicknessPx/CornerRadiusPx/StrokeThicknessPx TextBoxes'
+        // own pre-existing Width="70" literals in this same file, not font-size-coupled.
+        ["TxImageEditorPaneView.axaml"] = 116,
         ["Atoms.axaml"] = 30,
     };
 

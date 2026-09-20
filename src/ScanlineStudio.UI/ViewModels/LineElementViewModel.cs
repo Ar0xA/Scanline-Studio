@@ -62,6 +62,37 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
     [ObservableProperty]
     private double _imageHeight;
 
+    /// <summary>Element rotation (2026-09-20) -- transient (NOT persisted, NOT part of
+    /// <see cref="Abstractions.Imaging.TemplateLineElement"/>) "rotate by N degrees" input for the
+    /// arbitrary-angle flyout. Unlike Text/Box/Image's absolute <c>RotationDegrees</c>, a line has no
+    /// persisted angle (see <see cref="Abstractions.Imaging.TemplateLineElement"/>'s own doc comment
+    /// for why) -- typing/spinning a value here applies it as a ONE-SHOT delta to the endpoints via
+    /// <see cref="ApplyRotationDelta"/>, then resets to 0 immediately after
+    /// (<see cref="OnPendingRotationDeltaChanged"/>), so repeated increments compose naturally
+    /// instead of drifting toward a meaningless "current absolute angle."</summary>
+    [ObservableProperty]
+    private double _pendingRotationDelta;
+
+    /// <summary>Parent-pushed (mirrors <see cref="PushUndoSnapshotForGeometryChange"/>'s own "parent
+    /// pushes a delegate" convention), but NOT <c>init</c> -- like <c>ImageElementViewModel.RenderWarpedPreview</c>,
+    /// it must close over the constructed element itself (not in scope inside its own object
+    /// initializer), so it's assigned post-construction instead; see
+    /// <c>TxImageEditorPaneViewModel.CreateLineElement</c>. Applies a rotation delta to this
+    /// element's own endpoints and pushes its own single undo step; see
+    /// <c>TxImageEditorPaneViewModel.RotateLineEndpoints</c>.</summary>
+    public Action<double>? ApplyRotationDelta { get; set; }
+
+    partial void OnPendingRotationDeltaChanged(double value)
+    {
+        if (value == 0)
+        {
+            return;
+        }
+
+        ApplyRotationDelta?.Invoke(value);
+        PendingRotationDelta = 0;
+    }
+
     public IRelayCommand? RemoveCommand { get; init; }
 
     public IRelayCommand? MoveUpCommand { get; init; }
@@ -90,9 +121,23 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
 
     public IRelayCommand? PasteStyleCommand { get; init; }
 
+    /// <inheritdoc cref="ITemplateElementViewModel.RotateClockwise90Command"/>
+    public IRelayCommand? RotateClockwise90Command { get; init; }
+
+    public IRelayCommand? RotateCounterclockwise90Command { get; init; }
+
+    public IRelayCommand? Rotate180Command { get; init; }
+
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
     public Action? PushUndoSnapshotForStyleChange { get; init; }
+
+    /// <summary>Element rotation (2026-09-20) -- gates the Rotate context-menu items off while
+    /// <see cref="Locked"/>, same 3-gate convention as <see cref="BoxElementViewModel.CanRotate"/>.
+    /// No Perspective concept exists for a line, so unlike Box/Image this is Locked-only.</summary>
+    public bool CanRotate => !Locked;
+
+    partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(CanRotate));
 
     /// <summary>Get: endpoint midpoint. Set: translate BOTH endpoints by the delta -- required by
     /// every generic caller that moves an element via <see cref="ITemplateElementViewModel.X"/>

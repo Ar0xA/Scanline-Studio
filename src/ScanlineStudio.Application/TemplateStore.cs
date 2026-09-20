@@ -813,19 +813,27 @@ public sealed partial class TemplateStore : ITemplateStore
                 var boxPerspective = box.PerspectiveEnabled
                     ? new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y)
                     : (PerspectiveCorners?)null;
+                // Element rotation (2026-09-20): Rotation/Perspective are mutually exclusive
+                // (TemplateBoxElement.RotationDegrees's own doc comment) -- boxPerspective already
+                // decides which transform is "on" for THIS reconstruction, so passing
+                // box.RotationDegrees through unconditionally is safe even for a hand-edited file
+                // that somehow carries both: the live pipeline's own Perspective-wins check
+                // (DrawTemplateBox) is what actually enforces the precedence at render time, not a
+                // filter here.
                 return new TemplateBoxElement(
                     boxPerspective?.ToBoundingBox() ?? bounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                     box.GradientEnabled
                         ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor ?? box.FillColor), new GradientColorStop(1f, box.GradientEndColor ?? box.FillColor)])
                         : null,
-                    boxPerspective, box.FillEnabled);
+                    boxPerspective, box.FillEnabled, box.RotationDegrees);
             case PersistedImageElement image:
                 var assetPath = GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath, ct).ConfigureAwait(false);
                 var imagePerspective = image.PerspectiveEnabled
                     ? new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y)
                     : (PerspectiveCorners?)null;
-                return new TemplateImageElement(imagePerspective?.ToBoundingBox() ?? bounds, image.Z, source, image.Fit, imagePerspective);
+                // Same Perspective-wins-at-render-time reasoning as the box case above.
+                return new TemplateImageElement(imagePerspective?.ToBoundingBox() ?? bounds, image.Z, source, image.Fit, imagePerspective, image.RotationDegrees);
             case PersistedLineElement line:
                 // Deliberately NOT the shared `bounds` local above -- that's derived from the base
                 // X/Y/Width/Height fields, which for a line are write-time-only convenience values

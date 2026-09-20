@@ -72,6 +72,9 @@ public sealed class TxImageEditorRealUiSmokeTests
     [
         "Panes.TxImageEditor.QuickStyleMenu",
         "Panes.TxImageEditor.FillBorderMenu",
+        // Element rotation (2026-09-20) -- same Click="OnOpenElementQuickStyleFlyout" shape as
+        // QuickStyleMenu/FillBorderMenu above, legitimately no Command.
+        "Panes.TxImageEditor.RotateByMenu",
         "Panes.TxImageEditor.FitSafeArea",
         "Panes.TxImageEditor.FitWidth",
         "Panes.TxImageEditor.FitHeight",

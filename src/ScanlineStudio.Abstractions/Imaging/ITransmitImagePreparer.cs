@@ -61,6 +61,59 @@ public static class TemplateLineGeometry
         var maxY = Math.Max(y1, y2) + halfThicknessHeightRelative;
         return new NormalizedRect(minX, minY, maxX - minX, maxY - minY);
     }
+
+    /// <summary>Element rotation (2026-09-20) -- rotates a line's endpoints around their own midpoint
+    /// by <paramref name="clockwiseDegrees"/>, clockwise-positive (same convention as
+    /// <see cref="TemplateTextElement.RotationDegrees"/>). Unlike Box/Image (which rotate at RENDER
+    /// time in real destination-pixel space, see <see cref="TemplateImageElement.RotationDegrees"/>),
+    /// a line has no separate "content" from its own endpoints, so this is applied ONCE, directly to
+    /// X1/Y1/X2/Y2, at command time -- no persisted angle exists on <see cref="TemplateLineElement"/>
+    /// or <c>LineElementViewModel</c> (that type's own doc comment explains why: a persisted angle
+    /// would have no well-defined zero-reference once a user manually drags an endpoint).
+    /// <para>MUST rotate in real PIXEL space, not the normalized space <paramref name="x1"/>..
+    /// <paramref name="y2"/> arrive in -- X is width-relative and Y is height-relative (same
+    /// convention as <see cref="ComputeInflatedBounds"/>'s own thickness conversion above), so
+    /// rotating the normalized delta directly changes the line's real rendered length and angle on
+    /// any non-square target (a naive rotation of a 0.6-wide horizontal line on a 320x256 target
+    /// comes out 20% short). Convert to pixels using the CALLER's own <paramref name="imageWidthPx"/>/
+    /// <paramref name="imageHeightPx"/> (canvas/working-copy space at command time -- see
+    /// <c>TxImageEditorPaneViewModel</c>'s own rotate-command implementation for the caller-side
+    /// coordinate-space note), rotate there, then convert back.</para>
+    /// <para>Code-review finding (2026-09-20): this real-pixel-space conversion uses the CANVAS's
+    /// own working-copy aspect, not the final transmitted-image aspect Box/Image rotate against at
+    /// render time. The two coincide exactly whenever <c>PreserveAspect</c> is on (the default,
+    /// letterboxed case -- verified by direct algebra through <c>ProjectRectToCropRelative</c>/
+    /// <c>TryGetCropContentMetrics</c>) but can diverge when <c>PreserveAspect</c> is off AND the
+    /// crop is not the full frame, in which case a "90°" line rotation reads as slightly off-90° in
+    /// the transmitted output even though it matches the canvas preview exactly -- a stated,
+    /// accepted tradeoff for that combination, not a bug.</para></summary>
+    public static (double X1, double Y1, double X2, double Y2) RotateEndpoints(
+        double x1, double y1, double x2, double y2, double clockwiseDegrees, double imageWidthPx, double imageHeightPx)
+    {
+        if (imageWidthPx <= 0 || imageHeightPx <= 0)
+        {
+            return (x1, y1, x2, y2);
+        }
+
+        var midX = (x1 + x2) / 2;
+        var midY = (y1 + y2) / 2;
+        var theta = clockwiseDegrees * Math.PI / 180;
+        var cos = Math.Cos(theta);
+        var sin = Math.Sin(theta);
+
+        (double X, double Y) RotatePoint(double x, double y)
+        {
+            var dxPx = (x - midX) * imageWidthPx;
+            var dyPx = (y - midY) * imageHeightPx;
+            var dxPxRotated = (dxPx * cos) - (dyPx * sin);
+            var dyPxRotated = (dxPx * sin) + (dyPx * cos);
+            return (midX + (dxPxRotated / imageWidthPx), midY + (dyPxRotated / imageHeightPx));
+        }
+
+        var (rx1, ry1) = RotatePoint(x1, y1);
+        var (rx2, ry2) = RotatePoint(x2, y2);
+        return (rx1, ry1, rx2, ry2);
+    }
 }
 
 /// <summary>Anchor is the CENTER of the text (matches drag-to-position UX: the user grabs the
@@ -269,8 +322,18 @@ public sealed record TemplateTextElement(
 /// the VM/Application layer, before a <see cref="TemplateDocument"/> is built, so
 /// <see cref="ITransmitImagePreparer.ApplyTemplate"/> stays synchronous and I/O-free (matches
 /// <c>TxImageEditorPaneViewModel.RecomputePreview</c>'s existing synchronous-per-frame
-/// model).</summary>
-public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSource Source, ImageFitMode Fit, PerspectiveCorners? Perspective = null)
+/// model).
+/// <para>Element rotation (2026-09-20): <paramref name="RotationDegrees"/> is in-plane (2D)
+/// rotation, clockwise-positive, same convention as <see cref="TemplateTextElement.RotationDegrees"/>.
+/// PRECEDENCE INVARIANT, same null-means-none/one-stated-rule discipline as
+/// <see cref="TemplateTextElement.BitmapFill"/> vs <see cref="TemplateTextElement.Gradient"/>: when
+/// both <paramref name="Perspective"/> and a non-zero <paramref name="RotationDegrees"/> are set on
+/// the same element (only reachable via a hand-edited/older template file — the live editor never
+/// lets you set both), <paramref name="Perspective"/> wins. Enforced identically at every
+/// composing/rendering site (the live pipeline, <c>TemplateStore</c>'s thumbnail-reconstruction
+/// path, and the editor's own canvas preview), not just wherever a caller happens to check
+/// first.</para></summary>
+public sealed record TemplateImageElement(NormalizedRect Bounds, int Z, IImageSource Source, ImageFitMode Fit, PerspectiveCorners? Perspective = null, double RotationDegrees = 0)
     : TemplateElement(Bounds, Z);
 
 /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- 8 FLAT doubles,
@@ -387,7 +450,11 @@ public readonly record struct PerspectiveCorners(
 /// already takes wherever-it's-drawn bounds + a fallback color, with no text-specific assumption --
 /// confirmed by reading it before reusing it, not assumed from the type name alone. Null means a
 /// plain solid <see cref="FillColor"/> fill (today's existing behavior, unchanged) -- same
-/// null-means-none convention <see cref="TemplateTextElement.Gradient"/> already established.</summary>
+/// null-means-none convention <see cref="TemplateTextElement.Gradient"/> already established.
+/// <para>Element rotation (2026-09-20): <paramref name="RotationDegrees"/> is in-plane (2D)
+/// rotation, clockwise-positive, same convention as <see cref="TemplateTextElement.RotationDegrees"/>.
+/// Same Perspective-wins precedence invariant as <see cref="TemplateImageElement.RotationDegrees"/>'s
+/// own doc comment states -- see it for the full rule, stated once, not duplicated here.</para></summary>
 public sealed record TemplateBoxElement(
     NormalizedRect Bounds, int Z, Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity = 1.0,
     double CornerRadius = 0, TextGradient? Gradient = null, PerspectiveCorners? Perspective = null,
@@ -397,7 +464,7 @@ public sealed record TemplateBoxElement(
     // "always opaque fill" behavior byte-for-byte unchanged -- chosen over a nullable FillColor
     // (plan-review: cheaper, touches fewer call sites, no discriminator/fallback-color ambiguity for
     // a gradient-enabled box with no fill).
-    bool FillEnabled = true)
+    bool FillEnabled = true, double RotationDegrees = 0)
     : TemplateElement(Bounds, Z);
 
 /// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th element kind, a single

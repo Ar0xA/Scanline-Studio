@@ -202,7 +202,10 @@ public sealed class TemplateStoreTests : IDisposable
                 // scalars, round-tripped the identical way as every other trailing addition here.
                 PerspectiveEnabled: true,
                 Corner0X: 0.1, Corner0Y: 0.1, Corner1X: 0.9, Corner1Y: 0.15,
-                Corner2X: 0.85, Corner2Y: 0.9, Corner3X: 0.05, Corner3Y: 0.95),
+                Corner2X: 0.85, Corner2Y: 0.9, Corner3X: 0.05, Corner3Y: 0.95,
+                // Element rotation (2026-09-20) -- same trailing-scalar round-trip as every other
+                // additive field above; see PersistedBoxElement's own doc comment.
+                RotationDegrees: 33),
             new PersistedImageElement(
                 X: 0.7, Y: 0.7, Width: 0.2, Height: 0.2, Z: 1, Locked: true,
                 AssetFileName: "asset1.png", Fit: ImageFitMode.Cover,
@@ -210,7 +213,8 @@ public sealed class TemplateStoreTests : IDisposable
                 IsBackground: true,
                 PerspectiveEnabled: true,
                 Corner0X: 0.6, Corner0Y: 0.6, Corner1X: 0.8, Corner1Y: 0.6,
-                Corner2X: 0.8, Corner2Y: 0.8, Corner3X: 0.6, Corner3Y: 0.8),
+                Corner2X: 0.8, Corner2Y: 0.8, Corner3X: 0.6, Corner3Y: 0.8,
+                RotationDegrees: 271),
         ]);
 
         await store.SaveAsync(templateId, "Contest", document);
@@ -251,6 +255,7 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.Equal(0.9, box.Corner2Y);
         Assert.Equal(0.05, box.Corner3X);
         Assert.Equal(0.95, box.Corner3Y);
+        Assert.Equal(33, box.RotationDegrees);
 
         var image = Assert.IsType<PersistedImageElement>(loaded.Elements[2]);
         Assert.Equal("asset1.png", image.AssetFileName);
@@ -264,6 +269,7 @@ public sealed class TemplateStoreTests : IDisposable
         Assert.True(image.PerspectiveEnabled);
         Assert.Equal(0.6, image.Corner0X);
         Assert.Equal(0.8, image.Corner2X);
+        Assert.Equal(271, image.RotationDegrees);
     }
 
     [Fact]
