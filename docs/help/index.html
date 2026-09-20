@@ -409,7 +409,7 @@
 
         <h3>Build a layout</h3>
         <ul>
-          <li>Add <strong>Text</strong>, <strong>Box</strong>, <strong>Line</strong>, or <strong>Image</strong> elements. Image sources include a file, the clipboard, the last received image, and receive history.</li>
+          <li>Add <strong>Text</strong>, <strong>Box</strong>, <strong>Line</strong>, or <strong>Image</strong> elements from the toolbar, or right-click the empty canvas and select one from there. Text, Box, and Line placed from the right-click menu use the click point as the new element's top-left corner. Image sources include a file, the clipboard, the last received image, and receive history.</li>
           <li>Select an element in the Elements list or on the canvas, then use the Inspector's Geometry/Text/Image tabs for exact position, size, and appearance.</li>
           <li>Shift-click additional elements on the canvas to select and move several at once (see <a href="#image-editor">Edit the outgoing image</a> for the full selection and layering controls).</li>
         </ul>
@@ -762,10 +762,10 @@
         <p>The Station tab holds the identity values other features quietly rely on: template macros, identification, and the logbook all read from here rather than asking you to retype them.</p>
 
         <dl>
-          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, and every QSO you log. Leaving this blank breaks all four at once, so it's worth setting before anything else.</dd>
-          <dt>Your name</dt><dd>Available to template overlays as a "MY NAME" insert-field. Purely cosmetic. Nothing else in the application reads it.</dd>
-          <dt>Your grid square</dt><dd>Your <a class="term" href="#glossary-maidenhead-grid">Maidenhead grid</a> locator. The field is not validated, so any free-text location you prefer also works. Used for a "MY GRID" overlay field and, together with a contact's grid, to calculate distance and bearing for template fields.</dd>
-          <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
+          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, and every QSO you log. Leaving this blank breaks all four at once, so it's worth setting before anything else. An empty field shows <strong>N0CALL</strong> as grey placeholder text — a template's "MY CALL" field or CW-ID falls back to that placeholder too if you transmit without setting a real callsign, but FSK identification and your logged QSOs still record it as blank.</dd>
+          <dt>Your name</dt><dd>Available to template overlays as a "MY NAME" insert-field. Purely cosmetic. Nothing else in the application reads it. An empty field shows <strong>NONAME</strong> as grey placeholder text, and a template's "MY NAME" field falls back to it the same way.</dd>
+          <dt>Your grid square</dt><dd>Your <a class="term" href="#glossary-maidenhead-grid">Maidenhead grid</a> locator. The field is not validated, so any free-text location you prefer also works. Used for a "MY GRID" overlay field and, together with a contact's grid, to calculate distance and bearing for template fields. An empty field shows <strong>XX00</strong> as grey placeholder text, and a template's "MY GRID" field falls back to it — but <strong>XX00</strong> is not a real grid square, so distance/bearing calculation still needs a real one set here.</dd>
+          <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>, shown as grey placeholder text until you type your own. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
