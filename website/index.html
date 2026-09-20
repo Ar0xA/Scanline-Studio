@@ -249,6 +249,48 @@
     padding: 16px;
   }
 
+  .shot-photo {
+    padding: 0;
+    border: 1px solid var(--line);
+    overflow: hidden;
+    position: relative;
+    display: block;
+    width: 100%;
+    font: inherit;
+    background: var(--card);
+    cursor: zoom-in;
+  }
+
+  .shot-photo img {
+    width: 100%;
+    height: 100%;
+    display: block;
+    object-fit: cover;
+  }
+
+  .shot-photo .shot-hint {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    background: rgba(32, 31, 26, 0.75);
+    color: #fff;
+    font-size: 0.72rem;
+    padding: 3px 9px;
+    border-radius: 999px;
+    opacity: 0;
+    transition: opacity 0.15s;
+  }
+
+  .shot-photo:hover .shot-hint,
+  .shot-photo:focus-visible .shot-hint {
+    opacity: 1;
+  }
+
+  .shot-photo:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
   .copy h3 {
     font-size: 1.15rem;
     margin-bottom: 8px;
@@ -427,6 +469,46 @@
     border: 0;
     width: 100%;
   }
+
+  /* Lightbox */
+
+  .lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(20, 19, 15, 0.88);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    cursor: zoom-out;
+  }
+
+  .lightbox[hidden] { display: none; }
+
+  .lightbox img {
+    max-width: 100%;
+    max-height: 100%;
+    border-radius: 4px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+  }
+
+  .lightbox-close {
+    position: fixed;
+    top: 18px;
+    right: 22px;
+    font: inherit;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.12);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    border-radius: var(--radius);
+    padding: 7px 14px;
+    cursor: pointer;
+  }
+
+  .lightbox-close:hover { background: rgba(255, 255, 255, 0.22); }
 </style>
 </head>
 <body>
@@ -504,7 +586,11 @@
     <section id="cat">
       <div class="wrap">
         <div class="spotlight">
-          <div class="shot" aria-hidden="true">[ screenshot: radio control settings ]</div>
+          <button type="button" class="shot shot-photo" data-lightbox-trigger>
+            <img src="images/radiosettings.jpg" loading="lazy"
+                 alt="Scanline Studio radio control (CAT) settings — Hamlib, rigctld, flrig, and OmniRig options">
+            <span class="shot-hint">Click to enlarge</span>
+          </button>
           <div class="copy">
             <h3>Talks to any rig Hamlib does, not just six</h3>
             <p>
@@ -534,7 +620,11 @@
     <section id="tx-editor">
       <div class="wrap">
         <div class="spotlight spotlight-reverse">
-          <div class="shot" aria-hidden="true">[ screenshot: TX Template Editor ]</div>
+          <button type="button" class="shot shot-photo" data-lightbox-trigger>
+            <img src="images/txeditor.jpg" loading="lazy"
+                 alt="Scanline Studio TX Template Editor — text, box, image, and line elements on a QSL-style layout">
+            <span class="shot-hint">Click to enlarge</span>
+          </button>
           <div class="copy">
             <h3>A real template editor, not a picture-plus-caption box</h3>
             <p>
@@ -544,8 +634,8 @@
             <ul>
               <li><strong>Text, box, image, and line elements</strong>, each independently styled,
                 stacked, and positioned on the canvas.</li>
-              <li><strong>Macros</strong> insert live QSO fields — callsign, RST, grid, and more —
-                straight into a text element.</li>
+              <li><strong>Macros</strong> drop in your own callsign, grid, and live frequency/mode
+                automatically; the rest of the QSO fills in as you type it.</li>
               <li><strong>Ready Rack</strong>, a 9-slot pinned strip for instant recall, backed by a
                 full searchable <strong>Template Library</strong> in grid or list view.</li>
               <li><strong>Imports your existing YONIQ <code>.mtm</code> templates</strong>, so past
@@ -561,7 +651,11 @@
     <section id="gallery">
       <div class="wrap">
         <div class="spotlight">
-          <div class="shot" aria-hidden="true">[ screenshot: Gallery tab ]</div>
+          <button type="button" class="shot shot-photo" data-lightbox-trigger>
+            <img src="images/gallery.jpg" loading="lazy"
+                 alt="Scanline Studio Gallery tab — searchable receive history with Send to TX, Logged status, and re-decode">
+            <span class="shot-hint">Click to enlarge</span>
+          </button>
           <div class="copy">
             <h3>Every picture you've received, searchable</h3>
             <p>
@@ -741,6 +835,48 @@
     </div>
     <iframe id="guide-frame" title="Scanline Studio User Guide"></iframe>
   </div>
+
+  <div class="lightbox" id="lightbox" hidden>
+    <button type="button" class="lightbox-close" id="lightbox-close">✕ Close</button>
+    <img id="lightbox-img" src="" alt="">
+  </div>
+
+  <script>
+    (function () {
+      var lightbox = document.getElementById('lightbox');
+      var lightboxImg = document.getElementById('lightbox-img');
+      var lightboxClose = document.getElementById('lightbox-close');
+
+      function openLightbox(img) {
+        lightboxImg.src = img.src;
+        lightboxImg.alt = img.alt;
+        lightbox.hidden = false;
+        document.body.style.overflow = 'hidden';
+      }
+
+      function closeLightbox() {
+        lightbox.hidden = true;
+        lightboxImg.src = '';
+        document.body.style.overflow = '';
+      }
+
+      document.querySelectorAll('[data-lightbox-trigger]').forEach(function (trigger) {
+        trigger.addEventListener('click', function () {
+          var img = trigger.querySelector('img');
+          if (img) openLightbox(img);
+        });
+      });
+
+      lightbox.addEventListener('click', closeLightbox);
+      lightboxClose.addEventListener('click', function (event) {
+        event.stopPropagation();
+        closeLightbox();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape' && !lightbox.hidden) closeLightbox();
+      });
+    })();
+  </script>
 
   <script>
     (function () {
