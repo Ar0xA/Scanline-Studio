@@ -1,6 +1,8 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Globalization;
 using System.Text.RegularExpressions;
+using Avalonia.Media;
 using Avalonia.Media.Imaging;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -11,6 +13,7 @@ using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
+using ScanlineStudio.UI.Converters;
 using ScanlineStudio.UI.Imaging;
 using ScanlineStudio.UI.Services;
 
@@ -7665,7 +7668,98 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // version of this line multiplied by ZoomFactor AGAIN on top of that -- a real Z^2 bug, caught
         // by code-review, not by the one manual test that happened to run at exactly 1.0 zoom (where
         // Z^2 == Z == 1 hides the error completely).
-        return fittedFinalSizePx / scaleY;
+        var canvasFontSize = fittedFinalSizePx / scaleY;
+
+        // User-reported (2026-09-20): the SixLabors.Fonts-based search above is SHARED with the real
+        // transmitted-image pipeline (MeasureFittedFontSize/DrawTemplateText both measure AND draw
+        // via SixLabors, so it stays self-consistent there) -- but the CANVAS actually renders text
+        // through StrokedTextBlock, which uses Avalonia's OWN FormattedText/text-layout engine, a
+        // completely different font-metrics implementation. Horizontal advance-widths are
+        // standardized and agree across engines (confirmed empirically: width-driven canvas resize
+        // tracks correctly with no gap), but VERTICAL metrics (ascent/descent/line-height) are
+        // engine-specific -- SixLabors can report "fits" for a size that, once rendered through
+        // Avalonia's own text layout, is visibly taller than the box (confirmed: the user could
+        // shrink a box's HEIGHT well past where the font should have started shrinking before
+        // Avalonia's own overflow became visible, while the width-driven case never showed this
+        // gap). This does one more shrink pass, purely in CANVAS pixel space, using the EXACT
+        // FormattedText construction StrokedTextBlock.BuildFormattedText itself uses (same Typeface
+        // resolution via PipelineFontFamilyNameConverter, the same converter the AXAML binding
+        // applies), so CanvasFontSize never asks Avalonia to render something taller/wider than its
+        // own box. Deliberately does NOT touch MeasureFittedFontSize/ComputeFittedFontSizePx/
+        // DrawTemplateText -- the real transmitted image and the mode-exact PREVIEW panel (both fed
+        // by that SAME untouched pipeline) are unaffected by this fix, on purpose.
+        return ClampToAvaloniaRenderedSize(
+            element.ResolvedText, element.FontFamily, element.Bold, element.Italic, canvasFontSize, element.CanvasWidthPixels, element.CanvasHeightPixels);
+    }
+
+    /// <summary>See <see cref="ComputeCanvasFontSize"/>'s own call-site comment for why this exists.
+    /// A second, defensive shrink pass -- <paramref name="candidateSizePx"/> already reflects the
+    /// real pipeline's own SixLabors-based fit, so this only ever shrinks FURTHER, never grows past
+    /// it, and returns it UNCHANGED when Avalonia's own measurement already agrees (the common case
+    /// for anything that isn't right at the fit boundary). Deliberately checks against the RAW
+    /// <paramref name="boxWidthPx"/>/<paramref name="boxHeightPx"/> (CanvasWidthPixels/
+    /// CanvasHeightPixels), not a stroke/shadow/stack-shrunk box -- this is a safety-net refinement
+    /// for the Avalonia-vs-SixLabors vertical-metric gap specifically, not a full re-implementation
+    /// of ShrinkFitBoxForEffects's own allowance math on the canvas side.
+    /// <para>Code-review finding (2026-09-20): a real <see cref="FormattedText"/> measurement needs a
+    /// real, resolvable glyph typeface -- <c>ScanlineStudio.UI.Tests</c>' own fast headless font
+    /// manager stub (see <c>TxImageEditorQuickStyleFlyoutRealClickTests</c>' own doc comment for why
+    /// that split exists) throws <see cref="InvalidOperationException"/> ("Could not create
+    /// glyphTypeface") the instant any test creates a text element, which this method now runs on
+    /// every single time via <see cref="ComputeCanvasFontSize"/>. Caught and treated as "can't verify,
+    /// trust the SixLabors-based candidate as-is" -- the exact same fallback as every other
+    /// decorative/measurement-only path in this codebase, not a special case invented for tests; a
+    /// production environment with a genuinely broken font manager would hit the identical fallback,
+    /// same as it already silently falls back elsewhere (<see cref="ResolveFontFamily"/>'s own
+    /// unknown-family fallback, for one).</para></summary>
+    private static double ClampToAvaloniaRenderedSize(
+        string text, string fontFamilyName, bool bold, bool italic, double candidateSizePx, double boxWidthPx, double boxHeightPx)
+    {
+        if (string.IsNullOrEmpty(text) || candidateSizePx <= 0 || boxWidthPx <= 0 || boxHeightPx <= 0)
+        {
+            return candidateSizePx;
+        }
+
+        Typeface typeface;
+        bool FitsAt(double sizePx)
+        {
+            var formatted = new FormattedText(text, CultureInfo.CurrentCulture, FlowDirection.LeftToRight, typeface, sizePx, null);
+            return formatted.Width <= boxWidthPx && formatted.Height <= boxHeightPx;
+        }
+
+        try
+        {
+            typeface = new Typeface(
+                (FontFamily)PipelineFontFamilyNameConverter.Instance.Convert(fontFamilyName, typeof(FontFamily), null, CultureInfo.InvariantCulture)!,
+                italic ? FontStyle.Italic : FontStyle.Normal,
+                bold ? FontWeight.Bold : FontWeight.Normal);
+
+            if (FitsAt(candidateSizePx))
+            {
+                return candidateSizePx;
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            return candidateSizePx;
+        }
+
+        var low = 1.0;
+        var high = candidateSizePx;
+        for (var i = 0; i < 12 && high - low > 0.5; i++)
+        {
+            var mid = (low + high) / 2;
+            if (FitsAt(mid))
+            {
+                low = mid;
+            }
+            else
+            {
+                high = mid;
+            }
+        }
+
+        return low;
     }
 
     /// <summary>Save-time counterpart to <see cref="ComputeCanvasFontSize"/> above -- user-reported
