@@ -53,9 +53,9 @@ mockups/
 
 # Project documentation and architecture specs -- untracked and purged from remote history
 # 2026-09-20 by explicit user request (see backup-pre-mockups-purge-20260920 on origin for the
-# pre-purge state). Kept locally, just not version-controlled. Note: docs/help/ is still glob-
-# included into ScanlineStudio.Host.csproj's build output, and CLAUDE.md/spec/ still cite these
-# files by path -- both now assume a local checkout, not a fresh clone.
+# pre-purge state). Kept locally, just not version-controlled. The offline help guide was moved
+# to assets/help/ the same day specifically so it stays tracked and shippable -- see
+# ScanlineStudio.Host.csproj's help-guide ItemGroup.
 docs/
 spec/
 

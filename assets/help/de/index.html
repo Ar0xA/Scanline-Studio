@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Offline-Benutzerhandbuch für Scanline Studio, eine plattformübergreifende Anwendung zum Empfangen, Bearbeiten und Senden von SSTV-Bildern mit Galerie und Logbuch.">
+  <meta name="help-version" content="2026.09">
+  <title>Scanline Studio Benutzerhandbuch</title>
+  <link rel="stylesheet" href="../styles.css">
+  <script>
+    window.ScanlineHelpStrings = {
+      noResultsTemplate: "Keine Hilfethemen zu „{query}“ gefunden. Weniger oder andere Suchbegriffe ausprobieren.",
+      unversioned: "ohne Version"
+    };
+  </script>
+  <script src="../help-search.js" defer></script>
+  <script src="../help.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Zum Hilfeinhalt springen</a>
+
+  <header class="app-header">
+    <div class="brand" aria-label="Scanline Studio Benutzerhandbuch">
+      <span class="brand-mark" aria-hidden="true">S▥</span>
+      <span>
+        <span class="brand-name">Scanline Studio</span>
+        <span class="brand-subtitle">Offline-Benutzerhandbuch</span>
+      </span>
+    </div>
+
+    <div class="search-shell" role="search">
+      <label class="search-label" for="help-search">Dieses Handbuch durchsuchen</label>
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="help-search"
+               type="search"
+               placeholder="Empfang, CAT, Vorlagen, Fehler durchsuchen…"
+               autocomplete="off"
+               spellcheck="false"
+               role="combobox"
+               aria-haspopup="listbox"
+               aria-controls="search-results"
+               aria-expanded="false"
+               aria-autocomplete="list">
+        <kbd class="search-shortcut" aria-hidden="true">Strg K</kbd>
+      </div>
+      <div id="search-results" class="search-results" role="listbox" aria-label="Suchergebnisse der Hilfe" hidden></div>
+    </div>
+
+    <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="help-sidebar" aria-expanded="false">
+      Inhalt
+    </button>
+  </header>
+
+  <noscript>
+    <p class="noscript-note">Die Suche und das automatisch erzeugte Inhaltsverzeichnis benötigen JavaScript. Alle Hilfethemen bleiben auch ohne JavaScript weiter unten lesbar.</p>
+  </noscript>
+
+  <div class="layout">
+    <aside id="help-sidebar" class="sidebar" aria-label="Inhaltsverzeichnis der Hilfe">
+      <h2 class="toc-heading">Inhalt</h2>
+      <nav id="help-toc">
+        <p>Inhalt wird geladen…</p>
+      </nav>
+    </aside>
+
+    <main id="main-content" class="content">
+      <section class="hero" aria-labelledby="guide-title">
+        <p class="kicker">Handbuch für den SSTV-Betrieb</p>
+        <h1 id="guide-title">Scanline Studio Benutzerhandbuch</h1>
+        <p class="hero-lede">
+          Station einrichten, SSTV-Bilder empfangen und prüfen, modusgenaue Sendungen vorbereiten,
+          empfangene Bilder verwalten und ein durchsuchbares QSO-Logbuch führen – alles in einem Arbeitsbereich.
+        </p>
+        <div class="hero-meta">
+          <span>Stand des Handbuchs: <span data-help-version>aktuell</span></span>
+          <span>Funktioniert offline</span>
+          <span>Windows · Linux · macOS</span>
+        </div>
+      </section>
+
+      <nav class="quick-links" aria-label="Häufige Einstiegspunkte">
+        <a class="quick-link" href="#first-time-setup">
+          <span class="quick-link-label">Hier beginnen</span>
+          <span class="quick-link-title">Anwendung einrichten</span>
+          <span class="quick-link-copy">Audiogeräte wählen, Stationsdaten eingeben und optional ein Funkgerät anbinden.</span>
+        </a>
+        <a class="quick-link" href="#receive-first-picture">
+          <span class="quick-link-label">Im Funkbetrieb</span>
+          <span class="quick-link-title">Ein Bild empfangen</span>
+          <span class="quick-link-copy">Pegel prüfen, Empfang starten und die VIS-Moduserkennung den Rest erledigen lassen.</span>
+        </a>
+        <a class="quick-link" href="#troubleshooting">
+          <span class="quick-link-label">Stimmt etwas nicht?</span>
+          <span class="quick-link-title">Ein Problem beheben</span>
+          <span class="quick-link-copy">Von Symptomen ausgehen, z. B. keine Decodierung, schräge Bilder oder fehlgeschlagenes PTT.</span>
+        </a>
+      </nav>
+
+      <article id="welcome" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="willkommen über überblick einführung zweck sstv yoniq mmsstv plattformübergreifend cross platform benutzeroberfläche oberfläche registerkarten reiter tabs">
+        <p class="topic-category">Erste Schritte</p>
+        <h2>Willkommen bei Scanline Studio</h2>
+        <p>
+          Scanline Studio ist eine plattformübergreifende Amateurfunk-Anwendung zum Empfangen, Vorbereiten,
+          Senden, Verwalten und Loggen analoger SSTV-Bilder. Es ist eine von Grund auf neu geschriebene
+          Neuentwicklung von YONIQ, einem MMSSTV-Fork, mit einem modernen Audio-, CAT-, Bild- und Logbuch-Workflow.
+        </p>
+
+        <h3>Die vier Hauptregisterkarten</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Registerkarte</th><th>Verwendung</th></tr></thead>
+            <tbody>
+              <tr><td>Empfang</td><td>Audio überwachen, Bilder decodieren, Sync und Signalqualität prüfen und mit dem aktuellen Bild arbeiten.</td></tr>
+              <tr><td>Senden</td><td>SSTV-Modus und Bild wählen, das ausgehende Bild bearbeiten, die Kennung festlegen und senden.</td></tr>
+              <tr><td>Galerie</td><td>Automatisch gespeicherte Empfangsbilder durchblättern, suchen und markieren, Notizen hinzufügen, exportieren und mit QSOs verknüpfen.</td></tr>
+              <tr><td>Logbuch</td><td>QSO-Einträge anlegen und bearbeiten, das Log durchsuchen sowie ADIF importieren oder exportieren.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note"><strong>Bewusst offline ausgelegt.</strong> Die Kernfunktionen Empfang, Bearbeitung, Senden, Galerie und Logbuch sind nicht von einem Cloud-Dienst abhängig. Die Rufzeichenabfrage bei QRZ.com ist eine optionale Online-Funktion.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="requirements" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="voraussetzungen anforderungen hardware soundkarte interface schnittstelle funkgerät transceiver kabel audio betriebssystem hamlib rigctld flrig">
+        <p class="topic-category">Erste Schritte</p>
+        <h2>Voraussetzungen</h2>
+        <p>Die genaue Stationsausrüstung ist von Fall zu Fall verschieden, eine typische Station für den Funkbetrieb besteht aber aus diesen Teilen.</p>
+        <ul>
+          <li>Ein Computer mit Windows, Linux oder macOS, auf dem Scanline Studio installiert ist.</li>
+          <li>Ein Audioeingang, an dem das Empfangsaudio des Transceivers anliegt.</li>
+          <li>Ein Audioausgang, der mit dem Sende-Audioeingang des Transceivers verbunden ist.</li>
+          <li>Ein Amateurfunk-Transceiver, der für den geplanten SSTV-Betrieb geeignet ist.</li>
+          <li>Eine gültige Amateurfunkzulassung mit Betriebsrechten für die genutzte Frequenz, Betriebsart und den Standort.</li>
+          <li>Optional eine <a class="term" href="#glossary-cat">CAT</a>-/<a class="term" href="#glossary-ptt">PTT</a>-Steuerung über verbundenes Hamlib, <code>rigctld</code> oder <code>flrig</code>.</li>
+        </ul>
+        <div class="safety"><strong>HF-Sicherheit.</strong> Wenn möglich mit einer Dummy-Load testen. Mit geringer Sendeansteuerung beginnen, ALC und SWR (Stehwellenverhältnis) am Transceiver beobachten und die Hinweise der Transceiver- und Interface-Hersteller zu Erdung, galvanischer Trennung und Einschaltdauer (Duty Cycle) beachten.</div>
+        <p>CAT ist optional. Mit der Auswahl <strong>Keines</strong> können Sie weiterhin empfangen und TX-Audio erzeugen, müssen den Transceiver aber außerhalb von Scanline Studio abstimmen und tasten.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="first-time-setup" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="ersteinrichtung erste einrichtung anfang konfigurieren optionen einstellungen audio aufnahme wiedergabe rufzeichen locator sprache speicherort cat speichern">
+        <p class="topic-category">Erste Schritte</p>
+        <h2>Ersteinrichtung</h2>
+        <p>Zuerst die Schritte für Audio und Station abschließen. CAT-Steuerung nur hinzufügen, wenn Scanline Studio den Transceiver auslesen und steuern soll.</p>
+
+        <ol class="steps">
+          <li><strong>Optionen</strong> im Hauptmenü öffnen.</li>
+          <li>Unter <strong>Audio</strong> das Aufnahmegerät wählen, das mit dem RX-Audio verbunden ist, und das Wiedergabegerät, das mit dem TX-Audio verbunden ist.</li>
+          <li>Die Abtastrate auf dem Standardwert belassen, sofern keine besondere Anforderung an die DSP-Rate besteht. Eine gemessene Korrektur des Sende-Soundkartentakts gehört in <strong>TX-Taktversatz</strong>, nicht in die Abtastrate. Stellt das Interface zwei Kanäle bereit, die richtige Stereo-Aufnahmequelle wählen.</li>
+          <li>Unter <strong>Station</strong> Rufzeichen, Name und Maidenhead-Locator eingeben. Diese Werte fließen in Vorlagen und Logbucheinträge ein.</li>
+          <li>Unter <strong>Allgemein</strong> die Sprache wählen und die Speicherorte prüfen.</li>
+          <li>Bei Verwendung von CAT die Steuerung unter <strong>Transceiver / CAT</strong> konfigurieren und testen. Siehe <a href="#radio-cat">Transceiver und CAT einrichten</a>.</li>
+          <li><strong>Speichern</strong> wählen.</li>
+        </ol>
+
+        <div class="tip"><strong>Den ersten Test einfach halten.</strong> Zuerst Empfangsaudio und Decodierung prüfen, bevor automatische PTT, QRZ.com, Weiterleitung oder erweiterte DSP-Änderungen hinzukommen. So lassen sich Fehler deutlich leichter eingrenzen.</div>
+
+        <h3>Die Optionen-Registerkarten im Überblick</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Optionen-Registerkarte</th><th>Beschrieben in</th></tr></thead>
+            <tbody>
+              <tr><td>Allgemein</td><td><a href="#general-storage-options">Allgemeine Optionen und Speicherorte</a></td></tr>
+              <tr><td>Darstellung</td><td><a href="#appearance-options">Darstellungsoptionen</a></td></tr>
+              <tr><td>Audio</td><td><a href="#audio-options">Audioeinstellungen</a></td></tr>
+              <tr><td>Transceiver / CAT</td><td><a href="#radio-cat">Transceiver und CAT einrichten</a>, <a href="#radio-tune-safety">Abstimmen und TX-Sicherheit</a></td></tr>
+              <tr><td>Station</td><td><a href="#station-options">Stationsoptionen</a></td></tr>
+              <tr><td>Decodierung</td><td><a href="#decode-options">Decodieroptionen</a></td></tr>
+              <tr><td>Kennung</td><td><a href="#identification">Stationskennung</a></td></tr>
+              <tr><td>Erweitert</td><td><a href="#troubleshooting">Fehlerbehebung</a> verweist auf die Einstellungen, die hier am ehesten eine Rolle spielen.</td></tr>
+              <tr><td>QRZ.com</td><td><a href="#qrz-forwarding">QRZ.com-Abfrage und UDP-Weiterleitung</a></td></tr>
+              <tr><td>Weiterleitung</td><td><a href="#qrz-forwarding">QRZ.com-Abfrage und UDP-Weiterleitung</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="workspace" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="hauptfenster layout aufbau arbeitsbereich menü kopfzeile frequenz favoriten voreinstellungen rx pegel leistung pwr status registerkarten tabs empfang senden galerie logbuch datei konfigurationen kalibrierung werkzeuge optionen hilfe website github über anwendungsprotokoll log protokoll menüleiste">
+        <p class="topic-category">Erste Schritte</p>
+        <h2>Rundgang durch den Arbeitsbereich</h2>
+        <p>Das Hauptfenster mit fester Aufteilung zeigt oben den Stationsstatus und darunter die aufgabenbezogenen Werkzeuge in vier Registerkarten.</p>
+
+        <h3>Menüleiste</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Menü</th><th>Enthält</th></tr></thead>
+            <tbody>
+              <tr><td>Datei</td><td>Ein Quellbild zum Senden öffnen, das aktuell empfangene Bild exportieren und das Programm beenden.</td></tr>
+              <tr><td>Konfigurationen</td><td>Gespeicherte Einstellungsprofile wechseln, klonen, umbenennen oder löschen. Siehe <a href="#configurations">Konfigurationen</a>.</td></tr>
+              <tr><td>Kalibrierung</td><td>Der Loopback-Selbsttest und der Tongenerator. Siehe <a href="#calibration-tools">Menü Kalibrierung und Extras</a>.</td></tr>
+              <tr><td>Extras</td><td>Eine WAV-Datei decodieren, das Logbuch als ADIF exportieren und die Makro-Referenz. Siehe <a href="#calibration-tools">Menü Kalibrierung und Extras</a>.</td></tr>
+              <tr><td>Optionen</td><td>Öffnet direkt den Einstellungsdialog. Siehe die Themen unter „Referenz der Optionen“ weiter unten.</td></tr>
+              <tr><td>Hilfe</td><td>Dieses Benutzerhandbuch, die Projekt-Website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), die GitHub-Seite des Projekts, der Ordner mit dem Anwendungsprotokoll und „Über“ (Version und Lizenz).</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Kopfzeile und Transceiver-Bedienelemente</h3>
+        <ul>
+          <li><strong>Frequenz und Betriebsart</strong> zeigen den aktuellen Zustand des verbundenen Transceivers. Bei verbundener CAT-Steuerung können Sie eine Frequenz oder eine unterstützte Betriebsart anfordern.</li>
+          <li><strong>Favoriten</strong> rufen eine gespeicherte Kombination aus Frequenz, Betriebsart und Filterbandbreite in einem Schritt auf. Verwaltet werden sie über <strong>Aktuelle speichern</strong> oder <strong>Liste bearbeiten…</strong>. Wie sich der Bandbreitenanteil verhält, steht unter <a href="#radio-cat">Transceiver und CAT-Steuerung</a>.</li>
+          <li><strong>RX-Pegel</strong> zeigt den aktuellen Aufnahmepegel. Eine dauerhaft niedrige Anzeige ebenso vermeiden wie rotes Clipping (Übersteuerung).</li>
+          <li><strong>Pwr</strong> ist die TX-Wiedergabeverstärkung der Anwendung. Sie ist weder die Gerätelautstärke des Betriebssystems noch die HF-Leistungseinstellung des Transceivers.</li>
+          <li><strong>Empfang</strong> startet oder pausiert die SSTV-Suche. Während einer Aussendung durch Scanline Studio pausiert die Aufnahme automatisch und wird danach fortgesetzt. Für dieses gesamte Zeitfenster (eine echte Aussendung oder ein Abstimmton) zeigt die Beschriftung <strong>Senden</strong> und wechselt nach dem Ende zurück zu <strong>Empfang</strong>. Ansonsten wechselt die Beschriftung zu <strong>RX stumm</strong>, sobald die Aufnahme gestoppt ist. Während ein Bild decodiert wird, blinkt sie bernsteinfarben und zeigt <strong>Decodierung</strong>. Das Blinken lässt sich in den <a href="#appearance-options">Darstellungsoptionen</a> abschalten. Die zugehörige Anzeige in der Statusleiste verhält sich genauso, sodass Sende- und Decodierzustand von jeder Registerkarte aus sichtbar sind, nicht nur unter Empfang.</li>
+          <li><strong>TX stoppen</strong> neben <strong>Empfang</strong> bricht eine laufende Aussendung sofort ab. Die Schaltfläche ist unabhängig von der aktiven Registerkarte immer sichtbar und daher erreichbar, ohne zuerst zur Registerkarte Senden zu wechseln.</li>
+        </ul>
+
+        <h3>Statusanzeigen</h3>
+        <dl>
+          <dt>CAT verbunden</dt><dd>Das konfigurierte Transceiver-Backend ist verbunden.</dd>
+          <dt>TX-FEHLER</dt><dd>Der letzte Sendeversuch endete mit einem Fehler oder einer automatischen SWR-Abschaltung. Die Anzeige meldet das letzte Ergebnis. Sie sperrt den nächsten Versuch nicht dauerhaft.</dd>
+          <dt>Zeile, Schräglauf, Puffer, Bilder heute, Logeinträge</dt><dd>Kompakte Betriebsdaten der aktuellen Sitzung.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="receive-first-picture" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="empfangen empfang erstes bild decodieren vis lauschen hören automatische erkennung auto detect audiopegel bild speichern exportieren abbrechen kopieren zu tx log qso loggen">
+        <p class="topic-category">Empfangen</p>
+        <h2>Das erste Bild empfangen</h2>
+        <p>Scanline Studio erkennt den eingehenden Modus normalerweise anhand des <a class="term" href="#glossary-vis">VIS</a>-Codes und füllt das Bild von oben nach unten, während die Zeilen eintreffen. Die vollständige Liste der erkannten Modi steht unter <a href="#sstv-modes">Unterstützte SSTV-Modi</a>.</p>
+
+        <ol class="workflow">
+          <li>Den Transceiver auf die SSTV-Aktivität abstimmen und das richtige Seitenband und Filter wählen.</li>
+          <li>Prüfen, dass die RX-Pegelanzeige reagiert, ohne sich lange im roten Übersteuerungsbereich zu bewegen.</li>
+          <li>Prüfen, dass der Schalter <strong>Empfang</strong> in der Kopfzeile eingeschaltet ist (standardmäßig ist er es), und dann unter <strong>Empfang</strong> die <strong>Automatische Erkennung</strong> auf <strong>Empfangsbereit</strong> stellen. Beides ist nötig: <strong>Empfang</strong> steuert die Audioaufnahme, <strong>Automatische Erkennung</strong> steuert, ob der Decoder in diesem Audio sucht.</li>
+          <li>Auf einen gültigen VIS-Code warten. Der erkannte Modus, der Zeilenfortschritt und das eingehende Bild werden automatisch aktualisiert.</li>
+        </ol>
+
+        <p>Fehlt der VIS-Code des Senders oder ist er beschädigt, kann mit einer Schnellmodus-Schaltfläche in der Karte <strong>MODUS</strong> auf der Registerkarte Empfang die <em>nächste</em> Decodierung in diesen Modus gezwungen werden. Ein Rechtsklick auf einen Platz zeigt zwei weitere Optionen. <strong>Diesen Modus festhalten</strong> legt jeden folgenden Empfang auf diesen Modus fest und ignoriert den VIS-Code des Senders, bis <strong>Freigeben</strong> gewählt wird. <strong>Diesen Platz neu belegen</strong> weist dem Platz einen anderen Modus zu.</p>
+
+        <h3>Aktionen für das eingehende Bild</h3>
+        <ul>
+          <li><strong>Bild exportieren…</strong> exportiert das aktuelle Bild an einen frei wählbaren Speicherort.</li>
+          <li><strong>Abbrechen</strong> verwirft den laufenden Empfang und kehrt zur Suche zurück.</li>
+          <li><strong>WAV decodieren…</strong> wählt eine Audioaufnahme aus und lässt sie erneut durch den Decoder laufen.</li>
+          <li><strong>In TX kopieren</strong> übergibt das empfangene Bild an den Arbeitsbereich Senden.</li>
+          <li><strong>QSO loggen</strong> beginnt einen Logbucheintrag, der mit dem Empfang verknüpft ist.</li>
+          <li><strong>Aufnehmen</strong> speichert eingehendes Audio zur späteren Diagnose oder erneuten Decodierung.</li>
+        </ul>
+
+        <div class="note"><strong>Automatischer Verlauf.</strong> Vollständig empfangene Bilder werden als PNG-Dateien im konfigurierten Ordner für RX-Bilder gespeichert und in der Galerie indiziert. Die JPEG-Qualität beim manuellen Export ändert diese Verlaufs-PNG-Dateien nicht.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="sync synchronisation schräglauf ppm neu synchronisieren resync schräglauf korrigieren schräglaufkorrektur squelch rauschsperre bpf bandpass notch agc puffer clipping übersteuerung auto stop neustart sync-quelle eingangskette dsp afc automatische frequenznachführung signalqualität gehörte stationen bereits gearbeitet worked before fsk cw id neue station rufzeichen">
+        <p class="topic-category">Empfangen</p>
+        <h2>Empfangs-Bedienelemente und Telemetrie</h2>
+        <p>Die Registerkarte Empfang zeigt, was der Decoder gerade tut. Hier muss nur selten etwas verstellt werden.</p>
+
+        <h3>Gehörte Stationen und „Bereits gearbeitet“</h3>
+        <ul>
+          <li><strong>Gehörte Stationen</strong> ist eine laufende Liste der Kennungen, die die Anwendung automatisch aus den FSK- oder CW-Signalen rund um die Bilder anderer Stationen gelesen hat. Dafür ist nichts zu tun. Jede Zeile zeigt die decodierte Kennung (ein Rufzeichen oder einen vollständigen CW-Text wie „DE W1AW“), ob sie aus FSK oder CW stammt, die Uhrzeit in UTC und den SSTV-Modus – neueste zuerst, bis zu den letzten 20. FSK- oder CW-Decodierung lässt sich unter <a href="#identification">Stationskennung</a> ein- oder ausschalten.</li>
+          <li><strong>Bereits gearbeitet</strong> gleicht das Rufzeichen des aktuellen Empfangs mit dem Logbuch ab und zeigt entweder <strong>Neue Station</strong> oder Band und Datum des letzten früheren Kontakts mit ihr. Wurde das Rufzeichen mehr als einmal geloggt, steht davor ein Zähler. Es ist ein schneller Hinweis, ersetzt aber nicht den Blick ins Log, bevor eine Station als neu gewertet wird.</li>
+        </ul>
+
+        <h3>Bildmetadaten</h3>
+        <p>Die Karte <strong>BILDMETADATEN</strong> neben dem eingehenden Bild zeigt für den aktuellen Empfang Rufzeichen, NR/RST, CW-ID, Name/QTH/Locator von QRZ.com, Frequenz, Modus/VIS, Startzeit und Dateigröße sowie je Bild eine <strong>Notiz</strong> und eine <strong>Markierung</strong>.</p>
+        <p>Das Rufzeichen wird automatisch aus der decodierten FSK- oder CW-Kennung übernommen. Wurde es falsch oder gar nicht decodiert, unter <strong>Rufzeichen überschreiben</strong> eingeben und dann <strong>QRZ abfragen</strong> wählen, um Name, QTH und Locator abzurufen. Dafür muss <a href="#qrz-forwarding">QRZ.com</a> in den Optionen konfiguriert sein.</p>
+
+        <h3>Sync &amp; Schräglauf</h3>
+        <ul>
+          <li><strong>Quelle</strong> meldet, ob der Decoder sucht, eingerastet ist oder sich im <a class="term" href="#glossary-avt-training">AVT-Training</a> befindet.</li>
+          <li><strong>Schräglauf <a class="term" href="#glossary-ppm">ppm</a></strong> schätzt die Abweichung des Soundkartentakts, die das Bild kippen würde.</li>
+          <li><strong>Neu synchronisieren</strong> fordert den Decoder auf, das Zeilentiming neu zu erfassen.</li>
+          <li><strong>Schräglauf korrigieren</strong> zeichnet gepufferte Zeilen mit der aktuellen Korrektur neu, sofern die Pufferung aktiviert ist.</li>
+          <li><strong>Squelch-Schwelle</strong> (Rauschsperre) legt fest, wie stark ein Signal sein muss, bevor es als SSTV behandelt wird. Höhere Werte verringern Fehldecodierungen, können aber schwache Signale verpassen.</li>
+        </ul>
+
+        <h3>Eingangskette</h3>
+        <ul>
+          <li><strong><a class="term" href="#glossary-bpf">BPF</a></strong> steuert die Flankensteilheit des RX-Bandpassfilters. Breit ist der empfohlene Ausgangspunkt. Steilere Filter unterdrücken benachbarte Störungen, tolerieren aber weniger Drift. Trotz des Namens schaltet <strong>Normal</strong> das Filter vollständig ab. Dieselbe Einstellung findet sich unter Optionen → Decodierung (siehe <a href="#decode-options">Decodieroptionen</a>). Eine Änderung mitten im Bild wird erst nach Ende dieses Empfangs wirksam.</li>
+          <li><strong>Notch</strong> unterdrückt einen schmalen Störton. Die Frequenz durch Klicken in die Spektrumkurve wählen und dann einschalten. Das Notch-Filter ist standardmäßig aus und wird zwischen Sitzungen nicht gespeichert.</li>
+          <li>Das Notch-Filter nur einschalten, wenn im Spektrum tatsächlich ein Träger zu sehen ist. Es ist ein schmales Filter innerhalb des Signalbands und entfernt daher zusammen mit der Störung auch Bildanteile. Gegen einen echten Träger lohnt sich dieser Kompromiss, ohne Träger ist er ein reiner Verlust. Sobald die Störung verschwindet, wieder ausschalten.</li>
+          <li><strong><a class="term" href="#glossary-agc">AGC</a>-Verstärkung</strong>, <strong>Puffer</strong>, <strong><a class="term" href="#glossary-xrun">XRUN</a></strong> (Pufferunter-/-überlauf) und <strong>Übersteuerung</strong> helfen bei der Diagnose des Audiowegs.</li>
+        </ul>
+
+        <h3>DSP</h3>
+        <ul>
+          <li><strong><a class="term" href="#glossary-afc">AFC</a></strong> schaltet die automatische Frequenznachführung (AFC) ein oder aus. Sie ist standardmäßig eingeschaltet. AFC misst den Sync-Ton und verschiebt die Decodierung zurück in Richtung seiner Nennfrequenz, was eine leicht daneben abgestimmte Station korrigiert. Ausschalten, wenn der Verdacht besteht, dass AFC auf eine Störung statt auf das Signal einrastet.</li>
+          <li>Die Änderung wirkt während des laufenden Bildes. Ab der nächsten Zeile wird die Korrektur nicht mehr hinzugerechnet, und die Tondetektoren kehren zu ihren Nennfrequenzen zurück. Bereits decodierte Zeilen behalten die Korrektur, die sie erhalten haben.</li>
+          <li>Bei ausgeschalteter AFC zeigt die Zeile <strong>Sync-Ton</strong> in der Karte Signalqualität einen Strich, weil keine Korrektur gemessen wird.</li>
+          <li>Der AVT-Modus verwendet nie AFC, unabhängig von dieser Einstellung.</li>
+        </ul>
+
+        <div class="warning"><strong>Nicht nur nach Zahlen abstimmen.</strong> Wird ein Bild sauber decodiert, Squelch, BPF oder erweiterte Demodulator-Einstellungen nicht allein deshalb ändern, damit eine Anzeige anders aussieht.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="spectrum-waterfall" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="wasserfall spektrum fft signal anzeige wasserfallanzeige bins pro pixel start spanne bereich verstärkung nullpunkt peak hold spitzenwert halten beide spek wf notch klick träger">
+        <p class="topic-category">Empfangen</p>
+        <h2>Spektrum und Wasserfall</h2>
+        <p>Das Spektrum zeigt die aktuelle Verteilung der Audiofrequenzen. Der Wasserfall ergänzt den zeitlichen Verlauf. Mit diesen Anzeigen lassen sich ein SSTV-Signal, Störungen, Drift und Anzeichen von Übersteuerung erkennen.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Bedienelement</th><th>Wirkung</th></tr></thead>
+            <tbody>
+              <tr><td>Beide / Spek / WF</td><td>Beide Anzeigen, nur das Spektrum oder nur den Wasserfall anzeigen.</td></tr>
+              <tr><td>Bins / px</td><td>Ändert die horizontale Zusammenfassung der Spektralwerte und damit den sichtbaren Detailgrad.</td></tr>
+              <tr><td>Start / Spanne</td><td>Legt den dargestellten Audiofrequenzbereich fest.</td></tr>
+              <tr><td>Verstärkung / Nullpunkt</td><td>Verändern nur die Skalierung der Anzeige. Das aufgenommene Audiosignal bleibt unverändert.</td></tr>
+              <tr><td>Peak-Hold</td><td>Hält die letzten Spektralspitzen fest, damit unterbrochene Töne leichter zu erkennen sind.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Ein Klick in das Spektrum wählt die RX-Notch-Frequenz. Das Notch-Filter wirkt auf das Eingangssignal des Decoders. Spektrum und Wasserfall zeigen das gefilterte Ergebnis nicht an. Mit <strong>Peak-Hold</strong> lässt sich ein Träger von Bildinhalt unterscheiden: Ein Träger bleibt auf einer Frequenz, Bildinhalt nicht.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="record-redecode" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="aufnehmen aufnahme wav erneut decodieren decodieren wav-datei wiedergabe audiodatei diagnose fehlgeschlagener empfang fehlersuche extras werkzeuge">
+        <p class="topic-category">Empfangen</p>
+        <h2>Audio aufnehmen und erneut decodieren</h2>
+        <p>Audioaufnahmen ermöglichen es, einen grenzwertigen Empfang erneut zu versuchen und Belege für die Fehlersuche aufzubewahren.</p>
+        <ol class="steps">
+          <li>Auf der Registerkarte Empfang vor oder während des Signals, das aufbewahrt werden soll, <strong>Aufnehmen</strong> wählen.</li>
+          <li>Am Ende <strong>Aufnahme beenden</strong> wählen.</li>
+          <li><strong>Extras → WAV-Datei decodieren…</strong> oder die Aktion <strong>WAV decodieren…</strong> des Bildes wählen.</li>
+          <li>Die WAV-Datei auswählen und die Registerkarte Empfang beobachten, während der Decoder sie wiedergibt.</li>
+        </ol>
+        <p>Einen Modus über eine Schnellmodus-Schaltfläche nur dann erzwingen, wenn der gesendete Modus bekannt ist und die Wiedergabe ihn nicht automatisch erkennt. War das Signal in der ursprünglichen Aufnahme übersteuert oder fehlt es ganz, kann die erneute Decodierung das fehlende Audio nicht wiederherstellen.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Senden" data-keywords="tx senden erstes bild aussendung durchsuchen beispielbild stock modus auto manuell wechseln ändern größe anpassen umfließen dauer geometrie abmessungen vis ausgabegerät ptt abbrechen stoppen leistung alc swr">
+        <p class="topic-category">Senden</p>
+        <h2>Ein Bild senden</h2>
+        <p>Bild und Transceiver vor dem Tasten vorbereiten. Der Editor erzeugt genau die Pixelmaße, die der gewählte SSTV-Modus verlangt.</p>
+
+        <ol class="workflow">
+          <li>Unter <strong>Senden</strong> einen Modus wählen (die vollständige Liste steht unter <a href="#sstv-modes">Unterstützte SSTV-Modi</a>) oder die Modusfolge auf Auto belassen, um im zuletzt empfangenen Modus zu antworten.</li>
+          <li>Als Quelle <strong>Durchsuchen…</strong>, ein Beispielbild (Stock), ein empfangenes Bild oder den leeren Editor verwenden.</li>
+          <li>Zuschneiden, anpassen und Vorlagenelemente hinzufügen.</li>
+          <li>Ausgabegerät, Dauer, Kennung, Pwr-Pegel und Zustand des Transceivers prüfen. Dann die große Schaltfläche <strong>SENDEN</strong> wählen: Sie übernimmt die Bearbeitung und startet die Aussendung in einem Schritt. Ist das CAT-Backend auf <strong>Keines</strong> gesetzt, sendet Scanline Studio keinen Tastbefehl. Hinweise zum Tasten des Transceivers von Hand stehen unter <a href="#requirements">Voraussetzungen</a>.</li>
+        </ol>
+        <p>Während der Aussendung zeigt die Fortschrittsanzeige Prozentwert und Restzeit. Zum Abbrechen die Schaltfläche <strong>TX stoppen</strong> in der Kopfzeile neben <strong>Empfang</strong> wählen. Siehe <a href="#workspace">Rundgang durch den Arbeitsbereich</a>.</p>
+
+        <div class="note"><strong>Moduswechsel während der Bearbeitung.</strong> Der Modus kann gewechselt werden, während ein Bild noch bearbeitet wird: Zuschnitt, Vorlagenelemente und Hintergrundfoto passen sich automatisch an Abmessungen und Seitenverhältnis des neuen Modus an. Beim Zurückwechseln zum vorherigen Modus wird exakt das alte Layout wiederhergestellt; ein Moduswechsel ist auf diesem Weg also immer umkehrbar. Die Modusauswahl ist nur während einer laufenden Aussendung gesperrt.</div>
+
+        <div class="safety"><strong>Vor der ersten HF-Aussendung.</strong> Mit <a href="#radio-tune-safety">Abstimmen und TX-Sicherheit</a> einen sauberen Ansteuerpegel einstellen. Zu hoher Audiopegel kann ALC-Eingriffe, Splatter, schlechte SSTV-Qualität oder eine automatische SWR-Abschaltung verursachen.</div>
+        <div class="note"><strong>Automatische Modusfolge.</strong> Auto übernimmt für eine Antwort normalerweise den zuletzt empfangenen Modus. Ein unsicherer Wechsel während einer laufenden Aussendung findet nicht statt, und ein Wechsel kann abgelehnt werden, wenn die Breite des bereits geladenen Bildes nicht dazu passt.</div>
+
+        <h3>Während der Aussendung</h3>
+        <p>Die Anzeige Leistung/<a class="term" href="#glossary-alc">ALC</a> zeigt die aktuellen PWR-, ALC- und <a class="term" href="#glossary-swr">SWR</a>-Werte des angeschlossenen Transceivers, sofern er sie meldet. Dazu kommen ein Tonbereich, der den vom aktuellen Modus genutzten Audiofrequenzbereich abbildet, und eine TX-Takt-Anzeige. Zusammen bestätigen sie, dass die Aussendung tatsächlich fortschreitet und nicht nur die Zeit vergeht.</p>
+
+        <h3>Gesendete Bilder</h3>
+        <p>Die Liste „Gesendete Bilder“ auf der Registerkarte Senden führt eine kurze Historie der Aussendungen dieser Sitzung. Jeder Eintrag zeigt sein Ergebnis (Gesendet, Gestoppt oder Fehlgeschlagen). Ein Rechtsklick auf ein Bild bietet <strong>Erneut senden</strong> (dasselbe Bild noch einmal aussenden) oder <strong>Speichern…</strong> (eine Kopie exportieren). Diese Historie gilt nur für die laufende Sitzung. Anders als der Empfangsverlauf der Galerie bleibt sie über einen Neustart der Anwendung hinweg nicht erhalten.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="image-editor" class="help-topic" data-help-topic data-category="Senden" data-keywords="bildeditor bild editor zuschneiden zuschnitt verschieben skalieren drehen vorschau seitenverhältnis letterbox sicherer bereich raster ausrichten helligkeit kontrast sättigung gamma schärfen entrauschen neue vorlage abbrechen rückgängig wiederholen zoom mehrfachauswahl umschalt shift klick sperren duplizieren kopieren einfügen stil reduzieren einpassen strecken ausfüllen breite höhe hintergrundfoto hintergrund">
+        <p class="topic-category">Senden</p>
+        <h2>Das zu sendende Bild bearbeiten</h2>
+        <p>Der TX-Bildeditor ist der Hauptbereich der Registerkarte Senden. Ein separates Editorfenster gibt es nicht. Er vereint nicht-destruktives Festlegen des Bildausschnitts, Bildkorrekturen und Overlay-Komposition: Text, Boxen, Linien und zusätzliche Bilder über dem Basisfoto, das auch <strong>Hintergrundfoto</strong> genannt wird (siehe <a href="#background-vs-backdrop">Hintergrundfoto vs. Hintergrund</a>). Die modusgenaue Vorschau zeigt die für die Aussendung vorbereiteten Pixel.</p>
+
+        <h3>Bildausschnitt des Basisbildes festlegen</h3>
+        <ul>
+          <li>Auf der Zeichenfläche die Werkzeuge <strong>Verschieben</strong>, <strong>Zuschneiden</strong>, <strong>Skalieren</strong> und <strong>Drehen</strong> verwenden.</li>
+          <li><strong>Seitenverhältnis beibehalten (Letterbox)</strong> erhält die Proportionen und füllt ungenutzten Bildraum auf, statt das Bild zu strecken.</li>
+          <li><strong>Zuschnitt an Modus binden</strong> beschränkt das Zuschnittsrechteck auf das Seitenverhältnis des gewählten Modus.</li>
+          <li><strong>Sicherer Bereich</strong> blendet eine Kompositionshilfe ein. Das gesendete Bild wird dadurch nicht beschnitten.</li>
+          <li><strong>Am Raster ausrichten</strong> lässt ein Element nach dem Ziehen oder Skalieren auf einem 5-%-Raster einrasten.</li>
+          <li><strong>Einpassen</strong>, <strong>100%</strong> und die Zoom-Steuerelemente ändern nur die Ansicht des Editors.</li>
+        </ul>
+
+        <h3>Elemente hinzufügen und anordnen</h3>
+        <p>Die Werkzeuge <strong>+ Text</strong>, <strong>+ Box</strong> und <strong>+ Linie</strong> setzen neue Overlay-Elemente auf die Zeichenfläche. Bildelemente stammen aus den Steuerelementen zum Einfügen von Bildern, die unter <a href="#templates-overlays">Vorlagen, Text, Boxen und Bilder</a> beschrieben sind; dort stehen auch die Gestaltungsoptionen für jeden Elementtyp.</p>
+        <ul>
+          <li>Ein Element anklicken, um es auszuwählen. Mit <strong>Shift-Klick</strong> auf weitere Elemente der Zeichenfläche lassen sich mehrere gleichzeitig auswählen. Eine Mehrfachauswahl kann gemeinsam gezogen, schrittweise verschoben, dupliziert oder gelöscht werden. Sie kann nicht als Gruppe skaliert, ausgerichtet oder umgestaltet werden. Stil- und Geometrieänderungen gelten jeweils nur für ein Element.</li>
+          <li><strong>Sperren</strong> verhindert, dass ein Element versehentlich verschoben wird. <strong>Duplizieren</strong> erstellt eine Kopie; das ist ein schneller Weg zu einem ähnlichen Element.</li>
+          <li><strong>Kopieren</strong>, <strong>Ausschneiden</strong> und <strong>Einfügen</strong> verschieben oder duplizieren Elemente über die Zwischenablage. <strong>Stil kopieren</strong> und <strong>Stil einfügen</strong> übertragen das Aussehen eines Text-, Box- oder Linienelements (Farbe, Kontur, Schriftart und Ähnliches) auf ein anderes Element <em>desselben Typs</em>, ohne dessen Position oder Inhalt zu ändern. Bei Bildelementen und bei nicht übereinstimmendem Typ von Quelle und Ziel sind sie ausgegraut.</li>
+          <li>Das Untermenü <strong>Anordnen</strong> im Rechtsklickmenü ordnet die Ebenen neu: <strong>In den Vordergrund</strong>, <strong>Eine Ebene nach vorne</strong>, <strong>Eine Ebene nach hinten</strong>, <strong>In den Hintergrund</strong>. Ein eigener Eintrag in demselben Rechtsklickmenü, <strong>Auf Hintergrund reduzieren</strong>, verschmilzt ein Element dauerhaft mit dem Hintergrundfoto. Danach lässt es sich nicht mehr verschieben oder umgestalten.</li>
+          <li>Das Untermenü <strong>Anpassen</strong> im Rechtsklickmenü eines Bildelements hat zwei Gruppen. <strong>Strecken</strong>, <strong>Einpassen</strong> und <strong>Ausfüllen</strong> legen fest, wie die Pixel des Bildes seine <em>aktuelle</em> Box füllen. <strong>An sicheren Bereich anpassen</strong>, <strong>Breite anpassen</strong> und <strong>Höhe anpassen</strong> passen die Box an die Hilfslinie <strong>Sicherer Bereich</strong> an (an deren volle Größe, nur an deren Breite oder nur an deren Höhe), jeweils zentriert. Beide Gruppen sind ausgegraut, solange das Element gesperrt ist.</li>
+          <li><strong>Rückgängig</strong>/<strong>Wiederholen</strong> gelten für die gesamte Bearbeitungssitzung.</li>
+        </ul>
+
+        <h3 id="background-vs-backdrop">Hintergrundfoto vs. Hintergrund</h3>
+        <p>Die beiden klingen ähnlich, werden aber nicht auf dieselbe Weise gespeichert:</p>
+        <ul>
+          <li>Das <strong>Hintergrundfoto</strong> ist das eine Foto, auf dem das gesamte Bild aufbaut. Es wird über <strong>Durchsuchen</strong> oder ein Beispielbild-Vorschaubild geladen, beides im Abschnitt <strong>Hintergrund</strong> in der Seitenleiste der Registerkarte Senden. Es gibt immer genau eines. Ein neu geladenes ersetzt das vorhandene. Das erste Hintergrundfoto kann zu jedem Zeitpunkt der Sitzung geladen werden, auch wenn bereits Text-, Box- oder Bildelemente auf der Zeichenfläche liegen. Diese Elemente bleiben erhalten. Sobald ein Hintergrundfoto geladen ist, bleiben <strong>Durchsuchen</strong> und die Beispielbild-Vorschaubilder deaktiviert. Um zu einem anderen Foto zu wechseln, zuerst <strong>Neue Vorlage</strong> wählen; das beginnt eine neue Karte. <strong>Rückgängig</strong> und <strong>Hintergrundfoto entfernen</strong> funktionieren weiterhin. <strong>Das Hintergrundfoto wird nie mit einer Vorlage gespeichert.</strong> Eine Vorlage speichert nur ihre Overlay-Elemente, sodass dieselbe Vorlage bei jedem Kontakt mit einem anderen Foto verwendet werden kann.</li>
+          <li>Ein <strong>Hintergrund</strong> ist ein eingefügtes Bildelement (<strong>+ Bild</strong>), das ganz nach hinten im Ebenenstapel gelegt und auf die volle Bildgröße gestreckt wurde. Der Eintrag <strong>Als Hintergrund festlegen</strong> im Rechtsklickmenü erledigt das. Anders als das Hintergrundfoto <strong>wird ein Hintergrund mit der Vorlage gespeichert</strong>. So entsteht eine Vorlage mit einem festen, wiederverwendbaren Foto als Teil ihres Designs (eine Logo-Karte, ein fester QSL-Hintergrund und Ähnliches).</li>
+          <li>Ein Rechtsklick auf die leere Zeichenfläche und <strong>In Hintergrund umwandeln</strong> wandelt das aktuelle Hintergrundfoto in ein Hintergrundelement um. Das ist nützlich, unmittelbar bevor eine Vorlage gespeichert wird, die immer ein bestimmtes Foto enthalten soll. Dabei werden der aktuelle Zuschnitt und die Bildkorrekturen fest übernommen; das Hintergrundfoto bleibt danach leer.</li>
+          <li>Ein Rechtsklick auf ein Hintergrundelement und <strong>In Hintergrundfoto umwandeln</strong> wandelt es zurück. Es ersetzt das aktuell geladene Hintergrundfoto und entfernt das Element, sofort und mit einem einzigen Klick. <strong>Rückgängig</strong> stellt das vorherige Hintergrundfoto und das entfernte Element gemeinsam wieder her. Ein Hintergrundelement ist gesperrt, was das Rechtsklickmenü der Zeichenfläche blockieren kann. Erscheint beim Rechtsklick auf die Zeichenfläche kein Menü, die Schaltfläche <strong>In Hintergrundfoto umwandeln</strong> in der Zeile des Elements in der Liste <strong>ELEMENTE</strong> der angedockten Seitenleiste verwenden.</li>
+          <li>Ein Rechtsklick auf die leere Zeichenfläche und <strong>Hintergrundfoto entfernen</strong> löscht das aktuelle Hintergrundfoto, ohne es als Hintergrundelement zu behalten. Anders als bei „In Hintergrund umwandeln“ wird das Foto verworfen, sofort und mit einem einzigen Klick. Mit <strong>Rückgängig</strong> kommt es zurück.</li>
+          <li>Es kann immer nur einen Hintergrund geben. Wird ein neuer festgelegt oder umgewandelt, ersetzt er den bisherigen Hintergrund automatisch.</li>
+        </ul>
+
+        <h3>Bild anpassen</h3>
+        <p>Helligkeit, Kontrast, Sättigung, Gamma, Schärfen und Entrauschen werden mit der Arbeitsvorlage gespeichert und angewendet, bevor die Overlays gezeichnet werden. Die ursprüngliche Quelldatei wird dabei nicht überschrieben.</p>
+
+        <h3>Abschließen oder verwerfen</h3>
+        <ul>
+          <li><strong>SENDEN</strong> (die große, farblich hervorgehobene Schaltfläche) übernimmt den Zustand des Editors in das vorbereitete TX-Bild und startet die Aussendung sofort. Dieselbe Karte bleibt danach unverändert geöffnet, sodass sie erneut gesendet, weiter bearbeitet oder beiseitegelegt werden kann, während ein älteres Bild aus <strong>Gesendete Bilder</strong> erneut gesendet wird. Dies ist der einzige Weg, ein Bild zu senden. Eine weitere Senden-Schaltfläche gibt es an anderer Stelle nicht.</li>
+          <li><strong>Zurücksetzen</strong> kehrt zum zuletzt übernommenen Zustand zurück.</li>
+          <li><strong>Neue Vorlage</strong> ist die einzige Aktion, die die aktuelle Karte schließt. Sie verwirft die Karte und beginnt jedes Mal mit einem neuen, leeren Editor. Gingen ungespeicherte Änderungen verloren, erscheint ein Bestätigungsdialog.</li>
+        </ul>
+
+        <div class="warning"><strong>Grenzen der Vorschau.</strong> Die Vorschau ist für Zuschnitt, Skalierung, Bildkorrekturen und Overlay-Platzierung exakt. Sie simuliert nicht den Farbverlust (Chroma) oder andere Farbeffekte, die eine vollständige Sende- und Empfangsstrecke bei jedem SSTV-Modus mit sich bringt.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="templates-overlays" class="help-topic" data-help-topic data-category="Senden" data-keywords="vorlage vorlagen overlay overlays text box bild linie ebene element inspektor geometrie schriftart fett kursiv farbe füllung kontur schatten stapel verlauf bildfüllung drehung eckenradius perspektive makros qso felder einfügen ready rack bibliothek vorlagenbibliothek kacheln liste ansicht speichern laden anheften lösen umbenennen löschen importieren exportieren legacy mtm">
+        <p class="topic-category">Senden</p>
+        <h2>Vorlagen, Text, Boxen, Bilder und Linien</h2>
+        <p>Mit Vorlagenelementen lassen sich wiederverwendbare Layouts im QSL-Stil über dem Hintergrundfoto aufbauen, speichern und für spätere Kontakte sofort wieder abrufen. Was dabei gespeichert wird und was nicht, steht unter <a href="#background-vs-backdrop">Hintergrundfoto vs. Hintergrund</a>.</p>
+
+        <h3>Ein Layout aufbauen</h3>
+        <ul>
+          <li><strong>Text</strong>-, <strong>Box</strong>-, <strong>Linien</strong>- oder <strong>Bild</strong>-Elemente hinzufügen. Als Bildquelle dienen eine Datei, die Zwischenablage, das zuletzt empfangene Bild und der Empfangsverlauf.</li>
+          <li>Ein Element in der Elementeliste oder auf der Zeichenfläche auswählen und dann über die Registerkarten Geometrie/Text/Bild des Inspektors Position, Größe und Aussehen exakt festlegen.</li>
+          <li>Mit Shift-Klick auf weitere Elemente der Zeichenfläche mehrere gleichzeitig auswählen und verschieben (alle Auswahl- und Ebenen-Steuerelemente stehen unter <a href="#image-editor">Das zu sendende Bild bearbeiten</a>).</li>
+        </ul>
+
+        <h3>Textgestaltung</h3>
+        <p>Textelemente können jede mitgelieferte Schriftart in beliebiger Größe verwenden, fett und/oder kursiv. Über eine einfache Füllfarbe hinaus lassen sich eine Kontur (Umriss) mit Farbe und Stärke, ein Schlagschatten mit einstellbarem Versatz oder ein „3D-Stapel“-Effekt aus wiederholten Kopien mit Schrittversatz hinzufügen. Statt einer einfarbigen Füllung sind auch ein Farbverlauf oder ein Bild als Füllung möglich (aus einer Datei oder der Zwischenablage). Sinnvoll ist die Kombination, die den Text über dem Hintergrundfoto gut lesbar hält. Um eine Bildfüllung zu entfernen und zu einer einfarbigen Füllung zurückzukehren, im Rechtsklickmenü <strong>Bildfüllung entfernen</strong> wählen oder die Schaltfläche <strong>ENTFERNEN</strong> neben den Bildfüllungs-Steuerelementen verwenden.</p>
+        <p>Standardmäßig verkleinert das Ändern der Boxgröße eines Textelements die Schrift, damit der Text weiterhin hineinpasst. Wird die Box wieder vergrößert, wächst die Schrift nicht über ihre eingestellte Größe hinaus. Mit einem Rechtsklick auf ein Textelement und <strong>Schrift bis Boxgröße vergrößern</strong> darf die Schrift auch wachsen, wenn Platz vorhanden ist. Die Option ist standardmäßig aus und gilt pro Element. Wird sie für ein Textelement eingeschaltet, hat das keine Auswirkung auf andere. Beim Neuladen einer Vorlage wird die Einstellung wieder auf „aus“ gesetzt. Die vergrößerte Schriftgröße wird mit der Vorlage gespeichert, sodass eine neu geladene Vorlage den Text weiterhin in der zuletzt erreichten Größe zeigt, nicht in der ursprünglich eingestellten.</p>
+
+        <h3>Box- und Liniengestaltung</h3>
+        <p>Boxen unterstützen eine Füllfarbe oder einen Farbverlauf, einen optionalen Rahmen mit Stärke, abgerundete Ecken und Deckkraft. Linien unterstützen eine Strichfarbe und Strichstärke. Beide sind reine Geometrie, keine Fotos, und fügen sich daher sauber über jeden Hintergrund.</p>
+
+        <h3>Perspektivische Verzerrung</h3>
+        <p>Bild- und Boxelemente lassen sich statt als einfaches Rechteck zu einer Form mit vier freien Ecken verzerren. Damit wirkt ein flaches Bild, als läge es schräg im Raum, zum Beispiel ein leicht schief auf den Hintergrund „geklebtes“ Foto. Dazu im Inspektor des Elements <strong>Perspektive</strong> einschalten und anschließend die vier Eckgriffe auf der Zeichenfläche ziehen.</p>
+
+        <h3>Live-Felder einfügen</h3>
+        <p>Das Menü „Feld einfügen“ setzt Platzhalter wie sein Rufzeichen, sein Locator, eigenes Rufzeichen, eigener Locator, Frequenz, Modus, UTC-Zeit, Datum, Entfernung und Richtung in ein Textelement. Ein einmal eingegebener Wert aktualisiert jede Stelle, an der der Platzhalter vorkommt. Die Felder sind danach gruppiert, woher ihr Wert stammt:</p>
+        <ul>
+          <li><strong>Eigene Station</strong> — eigenes Rufzeichen, Name und Locator aus den <a href="#station-options">Stationsoptionen</a> sowie aktuelles Datum und Uhrzeit. Immer verfügbar.</li>
+          <li><strong>Transceiver</strong> — aktuelle Frequenz und Betriebsart des verbundenen Transceivers. Bleibt auf der gesendeten Karte leer, wenn kein Transceiver verbunden ist.</li>
+          <li><strong>Pro QSO</strong> — Rufzeichen, Locator, Rapport, Entfernung und Richtung der Gegenstation. Dafür muss zuerst ein Wert in die Leiste <strong>QSO-DATEN</strong> eingetragen werden, sonst bleiben sie leer. Die Leiste QSO-DATEN ist die Zeile mit Feldern am oberen Rand des TX-Bildeditors, die die kontaktbezogenen Werte für die als Nächstes zu sendende Karte enthält.</li>
+        </ul>
+        <p>Die vollständige Platzhalterreferenz und die Berechnung von Entfernung/Richtung stehen unter <a href="#macros">Makros und Vorlagenfelder</a>.</p>
+
+        <h3>Vorlagen speichern und abrufen</h3>
+        <ol class="steps">
+          <li>Einen Vorlagennamen eingeben und <strong>SPEICHERN</strong> wählen. Ein Rechtsklick auf die Zeichenfläche oder auf das Hintergrundfoto bzw. den Hintergrund bietet ebenfalls <strong>Vorlage speichern</strong>. Ist bereits ein Name eingetragen, wird sofort unter diesem Namen gespeichert. Andernfalls wird der nächste freie Name „tmp0“, „tmp1“, … eingesetzt und sofort gespeichert.</li>
+          <li>Mit dem Filter der Vorlagenbibliothek gespeicherte Layouts finden. Mit dem Umschalter oben im Bereich zwischen der Ansicht <strong>LISTE</strong> und <strong>KACHELN</strong> wechseln. Die Auswahl wird gemerkt. Ein einfacher Klick auf eine Zeile oder Kachel wählt sie aus und zeigt ihre Schaltflächen Laden, Anheften, Exportieren und Löschen. Ein Doppelklick lädt sie; ein Rechtsklick bietet dieselben Aktionen als Menü. Mit Rechtsklick und <strong>Umbenennen</strong> lässt sich der Name direkt bearbeiten (Enter übernimmt, Esc verwirft). Eine angeheftete Vorlage trägt das Abzeichen <strong>ANGEHEFTET</strong>. <strong>Anheften</strong> auf einer Vorlage legt sie in das Ready Rack unter <strong>VORLAGEN</strong>, die Leiste mit neun Plätzen an anderer Stelle im TX-Editor.</li>
+          <li>Im Ready Rack wählt ein einfacher Klick auf einen Platz ihn aus und zeigt seine Schaltflächen Laden, Lösen, Exportieren und Löschen. Ein Doppelklick auf einen Platz lädt ihn; ein Rechtsklick bietet dieselben Aktionen als Menü. Mit Rechtsklick und <strong>Umbenennen</strong> lässt sich der Name direkt bearbeiten (Enter übernimmt, Esc verwirft). Die Zifferntasten 1–9 rufen einen Platz direkt auf, wenn der Editor den Tastaturfokus hat. Das ist der schnellste Weg, mitten im QSO zu antworten, ohne die Maus anzufassen.</li>
+          <li>Beim Laden über ungespeicherte Arbeit wird zuerst nachgefragt: <strong>Ungespeicherte Änderungen verwerfen?</strong>, unter Nennung der Vorlage, die sie ersetzen würde. Ein Platz mit der Anzeige <strong>Geladen</strong> ist derjenige, aus dem der aktuelle Inhalt der Zeichenfläche stammt. Sobald seitdem etwas geändert wurde, zeigt er <strong>Geladen • bearbeitet</strong>.</li>
+          <li>Das Löschen aus dem Ready Rack verlangt eine Bestätigung, die Vorlage und Platznummer nennt. Das Löschen aus der Liste der Vorlagenbibliothek verlangt ebenfalls eine Bestätigung, die die Vorlage nennt.</li>
+          <li>Mit <strong>EXPORTIEREN</strong> ein Paket als einzelne Datei speichern, das sich mit anderen Funkamateuren teilen lässt, und mit <strong>IMPORTIEREN</strong> ein von jemand anderem geteiltes Paket laden.</li>
+          <li><strong>LEGACY-IMPORT</strong> lädt eine <code>.mtm</code>- oder <code>.mti</code>-Vorlagendatei aus einer alten YONIQ/MMSSTV-Installation. Der größte Teil des Inhalts (Text, Position, Farbe, Bilder, Boxen) wird übernommen; einige nur dort vorhandene Effekte (Farbverläufe mit mehreren Stufen, gestrichelte oder dekorative Linienstile, Unterstreichen/Durchstreichen, die meisten Makro-Platzhalter außer dem eigenen Rufzeichen des Absenders) haben hier keine Entsprechung und werden angenähert oder weggelassen. Eine Statusmeldung weist darauf hin, wenn etwas angepasst werden musste. Die Einzelheiten stehen im Protokoll.</li>
+        </ol>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="identification" class="help-topic" data-help-topic data-category="Senden" data-keywords="kennung identifikation stationskennung id fsk fsk-id cw cw-id morse morsecode audiodatei sounddatei mmv rufzeichen nr rst nachlauf tail frequenz ton wpm senden decodieren decoder empfang rx hören gehörte stationen erfassungsfenster sekunden">
+        <p class="topic-category">Senden</p>
+        <h2>Stationskennung</h2>
+        <p>Die Kennungseinstellungen werden unter <strong>Optionen → Kennung</strong> konfiguriert. Der obere Abschnitt (Aus / CW / Audiodatei) und die Kontrollkästchen darunter legen fest, was <em>Sie</em> senden. Ein separates Paar Kontrollkästchen legt fest, was die Anwendung automatisch von anderen Stationen <em>hört</em>.</p>
+
+        <h3>Was Sie senden</h3>
+        <ul>
+          <li><strong>FSK-ID beim Senden einfügen</strong> codiert nach dem Bild das konfigurierte Stationsrufzeichen, wenn aktiviert.</li>
+          <li><strong>CW (Morse)</strong> sendet den konfigurierten <strong>CW-ID-Text</strong> mit dem gewählten <strong>CW-ID-Ton (Hz)</strong> und der gewählten <strong>CW-ID-Geschwindigkeit (WpM)</strong>.</li>
+          <li><strong>Audiodatei</strong> spielt anstelle der CW-Kennung eine unterstützte <code>.mmv</code>-Audiodatei aus dem Vorgängerprogramm ab.</li>
+          <li><strong><a class="term" href="#glossary-nr">NR</a>/RST</strong> kann der <a class="term" href="#glossary-fsk-id">FSK-ID</a> ein konfiguriertes statisches Unterpaket hinzufügen. Es wird nicht automatisch aus dem aktuellen Logbuch-Austausch befüllt.</li>
+        </ul>
+        <p>Die Nachlauf-Zusammenfassung auf der Registerkarte „Senden“ zeigt, ob die aktuelle Kombination FSK + CW, FSK + Audiodatei, nur ein Verfahren oder Aus ist.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Feld</th><th>Bereich</th><th>Standard</th></tr></thead>
+            <tbody>
+              <tr><td>CW-ID-Text</td><td>Freier Text</td><td><code>DE %m</code> (sendet „DE“, gefolgt von Ihrem Rufzeichen)</td></tr>
+              <tr><td>CW-ID-Ton (Hz)</td><td>100–3000 Hz</td><td>1000 Hz</td></tr>
+              <tr><td>CW-ID-Geschwindigkeit (WpM)</td><td>10–50 <a class="term" href="#glossary-wpm">WpM</a></td><td>28 WpM</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Was die Anwendung automatisch hört</h3>
+        <p>Zwei separate Kontrollkästchen lassen Scanline Studio auf die Kennung <em>anderer</em> Stationen hören und sie für Sie protokollieren, unabhängig davon, was Sie selbst senden:</p>
+        <ul>
+          <li><strong>FSK-ID beim Empfang decodieren</strong> liest die von anderen Stationen gesendete FSK-Kennung.</li>
+          <li><strong>CW-ID beim Empfang decodieren</strong> liest die von anderen Stationen gesendete Morse-Kennung und öffnet dazu um jeden Empfang ein Hörfenster (<strong>CW-ID-Erfassungsfenster (Sekunden)</strong>, 5–20 Sekunden, Standard 12).</li>
+        </ul>
+        <p>Alles, was auf diese Weise decodiert wird, erscheint unter <a href="#receive-controls">Gehörte Stationen</a> auf der Registerkarte „Empfang“. Sie müssen nichts weiter tun, um es zu sehen.</p>
+
+        <div class="warning"><strong>Die vorschriftsmäßige Kennung bleibt Ihre Verantwortung.</strong> Prüfen Sie, ob gewählter Text, Rufzeichen, Verfahren und Zeitpunkt den für Ihre Station geltenden Vorschriften entsprechen.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="gallery" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="galerie empfang verlauf historie bilder miniaturansichten vorschaubilder filter heute nicht geloggt markiert suche notiz exportieren ausgewähltes bild speicherort speicher festplatte frei bildbetrachter kopieren">
+        <p class="topic-category">Bilder und Logbuch</p>
+        <h2>Empfangene Bilder durchsuchen</h2>
+        <p>Die Galerie ist der durchsuchbare Verlauf abgeschlossener Empfänge. Eine Miniaturansicht auswählen, um dieses Bild zu prüfen und zu verwalten.</p>
+
+        <h3>Ein Bild finden</h3>
+        <ul>
+          <li>Filtern nach <strong>Alle</strong>, <strong>Heute</strong>, <strong>Nicht geloggt</strong> oder <strong>Markiert</strong>.</li>
+          <li>Das Suchfeld für Modus- oder Notiztext verwenden.</li>
+          <li><strong>Aktualisieren</strong> wählen, um den Verlauf neu zu laden, und <strong>Neuestes</strong>, um zum neuesten Bild zurückzukehren.</li>
+        </ul>
+
+        <h3>Mit der Auswahl arbeiten</h3>
+        <ul>
+          <li>Eine Notiz hinzufügen oder wichtige Bilder markieren.</li>
+          <li><strong>Exportieren</strong> wählen, um eine Kopie in einem gewählten Bildformat zu schreiben. Bei der Wahl von JPEG gilt die JPEG-Qualität aus der Registerkarte „Allgemein“.</li>
+          <li><strong>Im Logbuch öffnen</strong> wählen, um das Bild mit einem bestehenden QSO zu verknüpfen oder ein neues QSO anzulegen und zu verknüpfen.</li>
+          <li>Den Bildbetrachter öffnen für Einpassen/100 % Zoom, Navigation vorheriges/nächstes Bild, Kopieren in die Zwischenablage und Öffnen des Dateispeicherorts.</li>
+        </ul>
+
+        <h3>Rechtsklick auf eine Miniaturansicht</h3>
+        <p>Ein Rechtsklick auf eine Miniaturansicht wählt sie aus und öffnet ein Menü mit denselben Aktionen wie der Bereich „Ausgewähltes Bild“: <strong>Im Logbuch öffnen</strong>, <strong>Exportieren</strong>, <strong>An TX übergeben</strong>, <strong>Markiert</strong>, <strong>Notiz hinzufügen…</strong> und <strong>Löschen</strong>. <strong>Markiert</strong> schaltet die Markierung direkt um. <strong>Notiz hinzufügen…</strong> öffnet einen kleinen Dialog zum Eingeben einer Notiz, ohne das Bild zuvor auswählen zu müssen.</p>
+
+        <p>Die Karte „Speicherort“ zeigt den aktiven Bildordner, die Namenskonvention und den verfügbaren Speicherplatz. Standardmäßig enthalten die Dateinamen des Verlaufs einen Zeitstempel, den Modus und eine kurze Kennung.</p>
+        <div class="warning"><strong>Dateien außerhalb der Anwendung verschieben.</strong> Wird ein Bild des Verlaufs in einem Dateimanager verschoben oder gelöscht, kann der Galerie-Eintrag es möglicherweise nicht mehr öffnen. Mit „Aktualisieren“ die Ansicht abgleichen.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="logbook" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="logbuch log qso eintrag datensatz rufzeichen utc frequenz betriebsart modus sstv rst rapport locator name qth land notizen suche bearbeiten speichern adif importieren exportieren">
+        <p class="topic-category">Bilder und Logbuch</p>
+        <h2>QSOs loggen und finden</h2>
+        <p>Die Registerkarte „Logbuch“ speichert Stationskontakte zusammen mit dem Empfangsverlauf in der Datenbank der Anwendung.</p>
+
+        <h3>Ein QSO loggen</h3>
+        <ol class="steps">
+          <li><strong>Neu</strong> wählen oder <strong>QSO loggen</strong> aus einem empfangenen Bild heraus verwenden, um verfügbare Angaben vorab auszufüllen.</li>
+          <li>Rufzeichen, UTC-Beginn/-Ende, Frequenz, Betriebsart, SSTV-Modus, gesendeten und empfangenen Rapport sowie alle vorhandenen Stationsangaben oder Notizen eingeben.</li>
+          <li><strong>QSO loggen</strong> wählen. Die optionale UDP-Weiterleitung läuft, nachdem der lokale Eintrag gespeichert wurde.</li>
+        </ol>
+
+        <h3>Suchen und bearbeiten</h3>
+        <p>Nach exaktem Rufzeichen und UTC-Datumsbereich filtern, dann eine Zeile auswählen, um sie zu bearbeiten. <strong>Änderungen speichern</strong> wählen, um den Eintrag zu aktualisieren.</p>
+
+        <h3><a class="term" href="#glossary-adif">ADIF</a>-Austausch</h3>
+        <p><strong>Importieren…</strong> verwenden, um Einträge aus einer ADIF-Datei hinzuzufügen, und <strong>Exportieren…</strong>, um passende Einträge zu schreiben. Eine Warnung über einen unvollständigen Import bedeutet, dass bereits verarbeitete Einträge möglicherweise hinzugefügt wurden, bevor der fehlerhafte Eintrag erreicht wurde.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="qrz.com abfrage lookup rufzeichen zugangsdaten benutzername passwort weiterleitung udp wsjt-x loggedadif gridtracker n1mm log4om port datenschutz">
+        <p class="topic-category">Bilder und Logbuch</p>
+        <h2>QRZ.com-Abfrage und UDP-Weiterleitung</h2>
+        <p>Beide Integrationen sind optional. Sie nur dann in den Optionen konfigurieren, wenn sie Teil Ihres Logbuch-Arbeitsablaufs sind.</p>
+
+        <h3>QRZ.com</h3>
+        <ul>
+          <li>Die Rufzeichenabfrage aktivieren und die QRZ.com-Zugangsdaten unter <strong>Optionen → QRZ.com</strong> eingeben.</li>
+          <li><strong>Testen</strong> verwenden, um die Zugangsdaten zu prüfen.</li>
+          <li>Auf der Karte <strong>BILDMETADATEN</strong> auf der Registerkarte Empfang neben einem empfangenen Rufzeichen <strong>QRZ abfragen</strong> wählen, um Name, QTH und Locator abzurufen. Siehe <a href="#receive-controls">Empfangs-Bedienelemente und Telemetrie</a>.</li>
+        </ul>
+        <p>Diese Seite konfiguriert nur die Rufzeichenabfrage. Die aktuelle Anwendung bietet in den Optionen keine Einstellung für Uploads in das QRZ-Logbuch.</p>
+        <div class="warning"><strong>Speicherung der Zugangsdaten.</strong> Die aktuelle Anwendung speichert das QRZ.com-Passwort lokal unverschlüsselt in ihrer Einstellungsdatei. Ein eigenes Passwort verwenden, nicht eines, das auch für andere Konten genutzt wird.</div>
+
+        <h3>ADIF über UDP</h3>
+        <p>Unter <strong>Optionen → Weiterleitung</strong> für jedes Ziel Name, Host und Port hinzufügen. Jedes neu geloggte QSO wird als <code>LoggedADIF</code>-Nachricht im WSJT-X-Protokoll an die aktivierten Ziele gesendet. Übliche lokale Ports sind 2237 für GridTracker und 2333 für manche Konfigurationen von N1MM Logger+ oder Log4OM. Den Port in der Dokumentation der empfangenden Anwendung nachschlagen.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="radio-cat" class="help-topic" data-help-topic data-category="Funkgerät und Audio" data-keywords="funkgerät transceiver cat cat-steuerung backend keines rigctld hamlib eingebunden flrig host port seriell serielle schnittstelle modell baudrate ptt vox rts dtr verbinden verbindung testen bandbreite filter durchlassbereich voreinstellung 1800 2400 2800 favorit favoriten pro favorit 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm aktuelle speichern">
+        <p class="topic-category">Funkgerät und Audio</p>
+        <h2>Transceiver und CAT einrichten</h2>
+        <p><strong>Optionen → Transceiver / CAT</strong> öffnen, ein Backend wählen, dessen Verbindungsdaten eingeben, testen, speichern und anschließend die eigentliche Verbindung zum Transceiver herstellen. <strong>Verbindung testen</strong>, <strong>Verbinden</strong> und <strong>Trennen</strong> befinden sich alle auf dieser Registerkarte unterhalb der Backend-Einstellungen, nicht in der Transceiver-Kopfzeile des Hauptfensters.</p>
+        <p>Sendeleistung, der Abstimmton und die automatische Abschaltung bei zu hohem <a class="term" href="#glossary-swr">SWR</a> nach dem Verbinden werden in einem eigenen Thema behandelt: siehe <a href="#radio-tune-safety">Abstimmen und TX-Sicherheit</a>.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Backend</th><th>Wann wählen</th><th>Wichtigste Einstellungen</th></tr></thead>
+            <tbody>
+              <tr><td>Keines</td><td>Abstimmung und PTT werden außerhalb der Anwendung bedient.</td><td>Keine Verbindungseinstellungen.</td></tr>
+              <tr><td>rigctld</td><td>Ein Hamlib-<code>rigctld</code>-Prozess oder ein kompatibler Server läuft bereits.</td><td>Host und TCP-Port.</td></tr>
+              <tr><td>Hamlib (eingebunden)</td><td>Scanline Studio soll eine installierte Hamlib-Bibliothek direkt laden.</td><td>Bibliothek, Hamlib-Modellnummer des Transceivers, serielle CAT-Schnittstelle, Baudrate und PTT-Methode.</td></tr>
+              <tr><td>flrig</td><td>Eine <code>flrig</code>-Instanz steuert den Transceiver bereits.</td><td>Host und XML-RPC-Port.</td></tr>
+              <tr><td>OmniRig (Windows, Client-Modus)</td><td>OmniRig läuft bereits und Scanline Studio soll sich den Transceiver mit einer anderen OmniRig-fähigen Anwendung teilen, etwa einem Logbuchprogramm. Nur unter Windows.</td><td>Keine Verbindungseinstellungen an dieser Stelle. Die Auswahl des Transceivers erfolgt im Konfigurationsdialog von OmniRig.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Ablauf bei Hamlib (eingebunden)</h3>
+        <ol class="steps">
+          <li>Den Pfad zur Hamlib-Bibliothek für die normale automatische Erkennung leer lassen oder eine bestimmte gemeinsam genutzte Bibliothek auswählen. <strong>Testen</strong> wählen.</li>
+          <li>Ein Modell aus der erkannten Liste wählen oder die numerische Hamlib-Modell-ID eingeben.</li>
+          <li>Serielle CAT-Schnittstelle und Baudrate auswählen.</li>
+          <li>PTT wählen. CAT nutzt die CAT-Verbindung. RTS/DTR nutzt die gewählte PTT-Schnittstelle. VOX sendet keinen Tastbefehl und verlässt sich auf die audiogesteuerte VOX des Transceivers.</li>
+          <li><strong>CAT testen</strong> und, falls zutreffend, <strong>PTT testen</strong> ausführen.</li>
+          <li><strong>Speichern</strong> wählen, dann <strong>Verbinden</strong>. „Verbinden“ verwendet die gespeicherten Einstellungen, daher neu bearbeitete Werte zuerst speichern.</li>
+        </ol>
+
+        <div class="warning"><strong>Nur ein Steuerprogramm gleichzeitig.</strong> Der direkte serielle Zugriff schlägt häufig fehl, wenn ein anderes Programm die Schnittstelle bereits belegt. Ein Backend mit Freigabefunktion wie rigctld oder flrig verwenden, wenn mehrere Anwendungen mit demselben Transceiver arbeiten müssen.</div>
+
+        <h3>Filterbandbreite (Transceiver-Kopfzeile)</h3>
+        <p>Wenn das verbundene Backend dies unterstützt, erscheint ein kleines Bandbreiten-Bedienelement auf der Transceiver-Kopfzeilenkarte am oberen Rand des Hauptfensters. Es ist vom oben beschriebenen Optionen-Dialog getrennt. Es bietet drei gängige Schnellauswahlen, 1800, 2400 und 2800 Hz, aber es kann auch jeder andere Wert eingegeben und mit <strong>Setzen</strong> angefordert werden. Nicht jedes Backend unterstützt dies. flrig nicht: Seine Bandbreiten-Rückmeldung lässt sich über verschiedene Transceiver hinweg nicht zuverlässig in einen einfachen Hz-Wert umrechnen.</p>
+        <div class="warning"><strong>Zu schmal kann das Bild zerstören.</strong> Ein zu schmales Filter kann die SSTV-Decodierung stören oder das gesendete Audio beschneiden. Der Transceiver kann die Anforderung zudem stillschweigend auf sein nächstliegendes real vorhandenes Filter runden, statt sie exakt zu übernehmen.</div>
+
+        <h3>Filterbandbreite pro Favorit gespeichert</h3>
+        <p>Jeder Favorit speichert neben Frequenz und Betriebsart eine Filterbandbreite und wendet bei der Auswahl alle drei an. Das Setzen der Betriebsart lässt den Transceiver auf sein Standardfilter für diese Betriebsart zurückfallen, das bei manchen Transceivern für SSTV viel zu schmal ist. Die Bandbreite wird deshalb immer nach der Betriebsart gesendet.</p>
+        <p>Die Schnellauswahlen im Dialog <strong>Liste bearbeiten…</strong> richten sich nach der für diesen Favoriten gewählten Betriebsart. SSB- und Datenbetriebsarten bieten 1800, 2400 und 2800 Hz. FM-Betriebsarten bieten 9000, 12000 und 15000 Hz. Wird die Betriebsart eines Favoriten zwischen diesen beiden Gruppen gewechselt, wandert seine Bandbreite mit. Das Feld bleibt frei editierbar, sodass jeder Wert zwischen 50 und 20000 Hz eingegeben werden kann, und ein eingegebener Wert wird genau so gesendet, wie er eingegeben wurde.</p>
+        <p>Ein Favorit, der vor Einführung dieser Funktion gespeichert wurde, hat keine gespeicherte Bandbreite. Er verwendet 2400 Hz bei SSB- und Datenbetriebsarten und 15000 Hz bei FM-Betriebsarten.</p>
+        <div class="warning"><strong>Die Auswahl eines Favoriten überschreibt ein von Hand eingestelltes Filter.</strong> Backends, die keine Bandbreite setzen können, etwa flrig und OmniRig, überspringen diesen Schritt und lassen das Filter des Transceivers unverändert.</div>
+
+        <h3>Welche Betriebsarten ein Favorit verwenden kann</h3>
+        <p>Der Dialog <strong>Liste bearbeiten…</strong> bietet sechs Betriebsarten: USB, LSB, FM, DATA-U, DATA-L und DATA-FM. Die DATA-Betriebsarten nutzen den Datenanschluss des Transceivers statt des Mikrofonwegs, was bei SSTV über die Soundkarte normalerweise gewünscht ist. Nicht jeder Transceiver hat DATA-FM.</p>
+        <p>Betriebsarten, die für SSTV nicht verwendet werden (AM, CW und RTTY), werden nicht angeboten. <strong>Aktuelle speichern</strong> ist nicht verfügbar, solange der Transceiver auf einer Betriebsart außerhalb dieser sechs steht, damit kein Favorit angelegt werden kann, den der Dialog nicht anzeigen könnte.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="radio-tune-safety" class="help-topic" data-help-topic data-category="Funkgerät und Audio" data-keywords="abstimmen abstimmton tune tx sendeleistung leistung pwr audio verstärkung pegel instrument alc swr stehwellenverhältnis sicherheit abschaltung schwelle ptt test dummy-load kunstantenne">
+        <p class="topic-category">Funkgerät und Audio</p>
+        <h2>Abstimmen und TX-Sicherheit</h2>
+        <p>Die Registerkarte „Transceiver / CAT“ enthält einen kontrollierten Abstimmton, um die Wiedergabe-Verstärkung der Anwendung anhand der Instrumente des Transceivers einzustellen.</p>
+
+        <ol class="steps">
+          <li>Wo möglich eine Dummy-Load oder eine freie Testfrequenz verwenden und mit niedriger <strong>Pwr</strong> beginnen.</li>
+          <li><strong>Abstimmen</strong> wählen. Scanline Studio tastet PTT und erzeugt bis zu 30 Sekunden lang einen Dauerton.</li>
+          <li><strong>Pwr</strong> langsam erhöhen und dabei die HF-Leistungs- und <a class="term" href="#glossary-alc">ALC</a>-Anzeigen des Transceivers beobachten.</li>
+          <li>Aufhören, bevor die ALC übermäßig ausschlägt. <strong>Abstimmen beenden</strong> wählen oder die Zeitbegrenzung abwarten.</li>
+        </ol>
+
+        <p><strong>Senden bei zu hohem <a class="term" href="#glossary-swr">SWR</a> abbrechen</strong> bricht eine laufende Aussendung ab, nachdem der verbundene Transceiver bei zwei aufeinanderfolgenden Abfragen einen Wert über der gewählten Schwelle gemeldet hat. Die Option kann nicht funktionieren, wenn Transceiver oder Backend kein SWR melden.</p>
+        <div class="safety"><strong>Kein primärer Schutz.</strong> Software-Abfragen und CAT können ausfallen oder verzögert reagieren. Die SWR-Abschaltung ist eine zusätzliche Absicherung, kein Ersatz für den Hardware-Schutz des Transceivers, eine geeignete Antennenanlage oder die Überwachung durch den Funkamateur.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="audio-options" class="help-topic" data-help-topic data-category="Funkgerät und Audio" data-keywords="audio optionen einstellungen aufnahme wiedergabe gerät soundkarte capture playback abtastrate sample rate tx taktversatz takt offset stereo mono links rechts kanal leistung aufzeichnung neustart">
+        <p class="topic-category">Funkgerät und Audio</p>
+        <h2>Audioeinstellungen</h2>
+        <p>Die Audioeinstellungen legen fest, wo SSTV in die Anwendung hinein- und wieder hinausgelangt.</p>
+        <dl>
+          <dt>Aufnahmegerät (RX)</dt><dd>Der Eingang, der das empfangene Audio des Transceivers führt.</dd>
+          <dt>Wiedergabegerät (TX)</dt><dd>Der Ausgang, der den Sendeaudiopfad des Transceivers speist.</dd>
+          <dt>Abtastrate</dt><dd>Die DSP-Rate in ganzen Hertz, von 5000 bis 48500 (11025 Hz ist der klassische Standardwert). Das Speichern einer Änderung übernimmt sie sofort, indem die Aufnahme kurz neu geöffnet und ein laufender Empfang beendet wird. Läuft gerade eine Aufzeichnung, wird die Änderung möglicherweise erst nach einem Neustart wirksam.</dd>
+          <dt>TX-Taktversatz</dt><dd>Eine manuelle Korrektur von -1500 bis 1500 Hz für einen gemessenen Fehler des Sende-Soundtakts, etwa wenn eine Gegenstation meldet, dass das Signal etwas zu schnell oder zu langsam klingt. Sie ändert das Timing der erzeugten Töne, nicht die Abtastrate des Geräts. Ohne echte Messung auf null belassen.</dd>
+          <dt>Stereo-Aufnahmequelle</dt><dd>Mono mischt beide Eingangskanäle; Links oder Rechts wählt nur den jeweiligen Kanal.</dd>
+          <dt>TX-Audio getrennt auf beide Stereokanäle ausgeben</dt><dd>Dupliziert das Sendesignal für Interfaces, die beide Kanäle benötigen.</dd>
+        </dl>
+        <div class="tip"><strong>Gerätenamen können sich ändern.</strong> USB-Audiogeräte werden nach einem Wechsel des Anschlusses oder einem Betriebssystem-Update möglicherweise anders aufgelistet. Verschwinden die Pegel nach einer Hardware-Änderung, beide Geräteauswahlen erneut prüfen.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="decodierung decoder decodieren optionen empfindlichkeit squelch rauschsperre bpf bandpass demodulator hilbert pll nulldurchgang puffer pufferung aus ein erweitert auto stopp neustart sync synchronisation schräglauf slant">
+        <p class="topic-category">Referenz der Optionen</p>
+        <h2>Decodieroptionen</h2>
+        <p>Die Registerkarte „Decodierung“ ändert das Verhalten des Empfängers. Mit den Standardwerten beginnen und beim Lösen eines konkreten Empfangsproblems jeweils nur eine Einstellung ändern. Es sind dieselben Einstellungen, die auf der Registerkarte „Empfang“ in der <a href="#receive-controls">Eingangskette</a> angezeigt werden. Eine Änderung an einer der beiden Stellen wirkt sich auf beide aus.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Einstellung</th><th>Bedeutung</th></tr></thead>
+            <tbody>
+              <tr><td>Squelch-Schwelle</td><td>Höhere Werte unterdrücken mehr Rauschen, erfordern aber ein stärkeres Signal.</td></tr>
+              <tr><td>RX-Bandpassfilter</td><td>„Normal“ deaktiviert das Filter; „Breit“ ist der empfohlene Standard; „Steil“ und „Sehr steil“ unterdrücken mehr benachbarte Signalenergie, sind aber weniger tolerant gegenüber Drift.</td></tr>
+              <tr><td>Demodulator</td><td><a class="term" href="#glossary-hilbert">Hilbert-Transformation</a> ist der an das Legacy-Verhalten angelehnte Standard. <a class="term" href="#glossary-pll">PLL</a> und Nulldurchgang sind wählbare Alternativen. Das AVT-Training verwendet intern unabhängig davon immer PLL.</td></tr>
+              <tr><td>RX-Pufferung</td><td>„Aus“ verhindert das Neuzeichnen bereits empfangener Zeilen; „Ein“ hält Zeilen im Arbeitsspeicher; „Erweitert“ nutzt eine Zwischenspeicherung auf dem Datenträger für lange oder schwierige Empfänge.</td></tr>
+              <tr><td>Auto-Stopp</td><td>Kann einen unregelmäßigen oder schwachen Empfang abbrechen.</td></tr>
+              <tr><td>Auto-Neustart</td><td>Kann bei einem während des Empfangs erkannten stärkeren Synchronimpuls neu starten.</td></tr>
+              <tr><td>Auto-Sync</td><td>Versucht, die Synchronisation während der Decodierung wiederherzustellen.</td></tr>
+              <tr><td>Auto-Schräglauf</td><td>Korrigiert den vom Soundtakt verursachten Schräglauf während des Empfangs. Erfordert RX-Pufferung.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Live-Änderungen, die das aktuelle Bild stören könnten, warten bis zum Ende dieses Empfangs, statt den Algorithmus mitten im Bild zu wechseln.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="general-storage-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="allgemein speicher speicherort speicherorte ordner verzeichnisse bilder konfiguration einstellungen json datenbank verlauf db protokoll log jpeg qualität sprache neustart dateien verschieben fensterposition">
+        <p class="topic-category">Referenz der Optionen</p>
+        <h2>Allgemeine Optionen und Speicherorte</h2>
+        <p>Die Registerkarte „Allgemein“ steuert Sprache, Fensterverhalten, die Qualität beim manuellen JPEG-Export und die Speicherorte der Anwendungsdaten.</p>
+
+        <dl>
+          <dt>Fensterposition und -größe merken</dt><dd>Stellt beim nächsten Start von Scanline Studio das Hauptfenster dort wieder her, wo es zuletzt stand (einschließlich Maximierungszustand), statt es immer in Standardgröße und -position zu öffnen.</dd>
+          <dt>Exportqualität (JPEG)</dt><dd>Kompressionsqualität von 1–100, nur beim manuellen Export eines empfangenen Bildes als JPEG über die Schaltfläche „Exportieren“ der Galerie verwendet. Empfangene Bilder werden unabhängig von dieser Einstellung immer automatisch als PNG gespeichert.</dd>
+        </dl>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Speicherort</th><th>Was sich ändert</th><th>Vorhandene Daten</th></tr></thead>
+            <tbody>
+              <tr><td>Ordner für RX-Bilder</td><td>Neue Empfänge werden sofort dort gespeichert.</td><td>Vorhandene Bilder werden nicht verschoben.</td></tr>
+              <tr><td>RX-Audio automatisch speichern</td><td>Das Rohaudio neuer Empfänge wird sofort neben dem Bild gespeichert.</td><td>Vorhandene Audiodateien werden nicht verschoben.</td></tr>
+              <tr><td>Ordner der Konfigurationsdatei</td><td>Der Speicherort von <code>settings.json</code> ändert sich sofort.</td><td>Die Anwendung verschiebt ihre Einstellungen beim Übernehmen des Speicherorts mit.</td></tr>
+              <tr><td>Ordner der Datenbankdatei</td><td>Der Speicherort der gemeinsamen <code>history.db</code> ändert sich beim nächsten Start.</td><td>Das Verschieben wird vorgemerkt und erfordert einen Neustart.</td></tr>
+              <tr><td>Ordner für Anwendungsprotokoll</td><td>Neue Protokollausgaben landen sofort im gewählten Ordner.</td><td>Ältere Protokolle bleiben dort, wo sie geschrieben wurden.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Die Felder für den Konfigurations- und den Datenbankordner zeigen den aktiven Speicherort. Eine Neustart-Aufforderung erscheint, wenn ein vorgemerktes Verschieben der Datenbank abgeschlossen werden muss.</p>
+        <div class="warning"><strong>Vor manuellen Änderungen sichern.</strong> Scanline Studio schließen, bevor <code>settings.json</code> oder <code>history.db</code> manuell kopiert oder bearbeitet werden. Erst das Schließen der Anwendung macht eine Kopie von <code>history.db</code> für sich allein vollständig — warum, erklärt <a href="#files-backup-privacy">Dateien, Sicherungen und Datenschutz</a>. SQLite-Datenbankdateien niemals als Text zusammenführen.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="advanced-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="erweitert dsp pll vco schleifenfilter grenzfrequenz ordnung nulldurchgang iir fir glättung tx bpf lpf bandpass tiefpass filter taps koeffizienten diagnose standardwerte">
+        <p class="topic-category">Referenz der Optionen</p>
+        <h2>Erweiterte DSP-Optionen</h2>
+        <p>Diese Bedienelemente legen die aus der Vorgängeranwendung übernommenen Low-Level-Parameter des Demodulators und der Sendefilter offen. Kaum jemand muss diese Registerkarte anfassen. Die Standardwerte entsprechen bereits dem, was der Rest der Anwendung erwartet. Sie dient gemessenen Experimenten und der Diagnose, nicht dem routinemäßigen Abgleich.</p>
+
+        <h3>Feinabstimmung PLL-Demodulator</h3>
+        <p>Der PLL-Demodulator (Phasenregelschleife) folgt der Frequenz des eingehenden Bildtons, um die Helligkeit zurückzugewinnen. Diese Werte gelten immer dann, wenn auf der Registerkarte „Decodierung“ „PLL“ als Demodulator gewählt ist, und während des AVT-Trainings unabhängig von dieser Auswahl immer.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Feld</th><th>Was es ändert</th><th>Bereich</th><th>Standard</th></tr></thead>
+            <tbody>
+              <tr><td><a class="term" href="#glossary-vco">VCO</a>-Verstärkung</td><td>Wie stark die Schleife auf einen Frequenzfehler reagiert. Höhere Werte folgen schneller, können bei Rauschen aber überschwingen.</td><td>0.35–10</td><td>1.0</td></tr>
+              <tr><td>Schleifenfilter-Ordnung</td><td>Wie viele Stufen die Nachführungskorrektur glätten, bevor sie angewendet wird.</td><td>1–32</td><td>1</td></tr>
+              <tr><td>Schleifenfilter-Grenzfrequenz (Hz)</td><td>Die Frequenz, oberhalb derer die Regelschleife nicht mehr reagiert.</td><td>1–3900 Hz</td><td>1500 Hz</td></tr>
+              <tr><td>Ausgangsfilter-Ordnung</td><td>Wie viele Stufen das zurückgewonnene Helligkeitssignal glätten.</td><td>1–32</td><td>3</td></tr>
+              <tr><td>Ausgangsfilter-Grenzfrequenz (Hz)</td><td>Die Frequenz, oberhalb derer das zurückgewonnene Helligkeitssignal weggeglättet wird.</td><td>1–3900 Hz</td><td>900 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning"><strong>Hohe Grenzfrequenzen verschlechtern das Bild.</strong> Die beiden Grenzfrequenzfelder akzeptieren Werte weit oberhalb jedes sinnvollen Bereichs. Der PLL-Demodulator zerfällt bereits deutlich unterhalb des Maximums von 3900&nbsp;Hz in ein sichtbares Fischgrätmuster, wo Hilbert- und Nulldurchgangs-Demodulator bei derselben Einstellung lediglich körnig werden. Der sichere Bereich ist für die drei nicht derselbe, daher kann das Feld keinen erzwingen. Beide auf ihren Standardwerten belassen, sofern nicht bewusst ein gemessenes Experiment durchgeführt wird.</div>
+
+        <h3>Feinabstimmung Nulldurchgangs-Demodulator</h3>
+        <p>Der Nulldurchgangs-Diskriminator gewinnt die Helligkeit auf andere Weise zurück, nämlich indem er misst, wie oft die Tonschwingung die Nulllinie kreuzt. Er wird verwendet, wenn auf der Registerkarte „Decodierung“ „Nulldurchgang“ als Demodulator gewählt ist.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Feld</th><th>Was es ändert</th><th>Bereich</th><th>Standard</th></tr></thead>
+            <tbody>
+              <tr><td>Glättungsmodus</td><td><a class="term" href="#glossary-iir">IIR</a> und <a class="term" href="#glossary-fir">FIR</a> sind zwei unterschiedliche mathematische Ansätze zur Glättung des zurückgewonnenen Signals; „Aus“ wendet keine an.</td><td>IIR, FIR, Aus</td><td>IIR</td></tr>
+              <tr><td>Ausgangsfilter-Ordnung</td><td>Dasselbe Prinzip wie die Ordnung des PLL-Ausgangsfilters oben.</td><td>1–32</td><td>3</td></tr>
+              <tr><td>Ausgangsfilter-Grenzfrequenz (Hz)</td><td>Dasselbe Prinzip wie die Grenzfrequenz des PLL-Ausgangsfilters oben.</td><td>1–3900 Hz</td><td>900 Hz</td></tr>
+              <tr><td>Glättung</td><td>Die Grenzfrequenz des Glättungsfilters.</td><td>500–8000 Hz</td><td>2200 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>TX-Audiofilterung</h3>
+        <p>Diese Einstellungen formen das Audio, das Scanline Studio beim Senden erzeugt, unabhängig von den Demodulator-Einstellungen oben (die nur den Empfang betreffen).</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Feld</th><th>Was es ändert</th><th>Bereich</th><th>Standard</th></tr></thead>
+            <tbody>
+              <tr><td>TX-Bandpassfilter aktivieren</td><td>Beschränkt das gesendete Audio auf den SSTV-Tonbereich und verringert so Störanteile außerhalb des Bandes.</td><td>Ein/Aus</td><td>Ein</td></tr>
+              <tr><td>Filter-Taps</td><td>Wie steil dieses Bandpassfilter ist. Mehr Taps trennen schärfer, kosten aber mehr CPU-Leistung.</td><td>2–512, nur gerade Zahlen</td><td>24</td></tr>
+              <tr><td>TX-Tiefpassfilter aktivieren</td><td>Entfernt gesendete Audioanteile oberhalb einer gewählten Frequenz.</td><td>Ein/Aus</td><td>Aus</td></tr>
+              <tr><td>Tiefpass-Grenzfrequenz</td><td>Die Frequenz, oberhalb derer gesendetes Audio entfernt wird, wenn das Tiefpassfilter oben eingeschaltet ist.</td><td>100–3000 Hz</td><td>2000 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="warning"><strong>Ausgangszustand festhalten.</strong> Diese Einstellungen können die Decodierung oder das TX-Audio verschlechtern, ohne dass eine erkennbare Fehlermeldung erscheint. Jeweils nur einen Wert ändern, eine repräsentative WAV-Testaufnahme aufbewahren und bei schlechteren Ergebnissen <strong>Abschnitt auf Standardwerte zurücksetzen</strong> verwenden.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="appearance-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="darstellung erscheinungsbild design theme dunkelmodus hellmodus dunkel hell system schriftgröße groß normal anzeige augen ermüdung bildschirm helligkeit nacht decodierung decodieranzeige indikator blinken">
+        <p class="topic-category">Referenz der Optionen</p>
+        <h2>Darstellungsoptionen</h2>
+        <p>Die Registerkarte „Darstellung“ ändert das Aussehen der Anwendung. Sie hat keinen Einfluss auf Empfang, Senden oder gespeicherte Daten, lässt sich also jederzeit gefahrlos ausprobieren und wieder zurückstellen.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Einstellung</th><th>Auswahl</th><th>Wirkung</th></tr></thead>
+            <tbody>
+              <tr><td>Farbdesign</td><td>Hell, Dunkel, System</td><td>„Hell“ und „Dunkel“ schalten die Farben der gesamten Anwendung um, sobald Sie „Speichern“ wählen. Ein Neustart ist nicht erforderlich. „System“ folgt der Hell/Dunkel-Einstellung des Betriebssystems und wechselt automatisch, wenn diese später geändert wird.</td></tr>
+              <tr><td>Schriftgröße</td><td>Normal, Groß</td><td>„Groß“ vergrößert Text und Bedienelemente in der gesamten Anwendung. Das ist auf einem kleinen Bildschirm, einer hochauflösenden Anzeige oder einfach zum leichteren Lesen nützlich. Es ist eine feste Größe, kein Schieberegler. Eine Zwischenstufe gibt es nicht.</td></tr>
+              <tr><td>Decodieranzeige blinkt</td><td>Ein, Aus</td><td>Standardmäßig eingeschaltet. Der Schalter <strong>Empfang</strong> in der Transceiver-Kopfzeile und die RX-Anzeige in der Statusleiste werden beide bernsteinfarben und zeigen <strong>Decodierung</strong>, solange ein Bild aktiv decodiert wird — von jeder Registerkarte aus sichtbar. Beim Ausschalten bleiben die bernsteinfarbene Färbung und der Text „Decodierung“ erhalten, das Blinken hört jedoch auf und die Farbe wird stattdessen dauerhaft angezeigt.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Alle drei Einstellungen werden sofort wirksam, sobald Sie <strong>Speichern</strong> wählen, wie alles andere im Optionen-Dialog. <strong>Abschnitt auf Standardwerte zurücksetzen</strong> setzt alle drei auf „Hell“, „Normal“ und „Ein“ zurück, wird aber erst beim Speichern wirksam.</p>
+        <div class="tip"><strong>Nachts in einem abgedunkelten Raum im Einsatz?</strong> „Dunkel“ verhindert, dass die Oberfläche den Raum erhellt, und ist bei Dunkelheit angenehmer für die Augen.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="station-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="station stationsdaten optionen rufzeichen call callsign operator name locator grid square maidenhead standard rst rapport signalrapport makros overlay cw fsk log logbuch">
+        <p class="topic-category">Referenz der Optionen</p>
+        <h2>Stationsoptionen</h2>
+        <p>Die Registerkarte „Station“ enthält die Identitätsangaben, auf die andere Funktionen stillschweigend zurückgreifen: Vorlagen-Makros, Kennung und Logbuch lesen sie alle von hier, statt eine erneute Eingabe zu verlangen.</p>
+
+        <dl>
+          <dt>Eigenes Rufzeichen</dt><dd>Speist das Einfügefeld „MEIN RUFZEICHEN“ des TX-Bildeditors, den CW-ID-Text, die FSK-Stationskennung und jedes geloggte QSO. Bleibt es leer, funktionieren alle vier nicht, daher lohnt es sich, es vor allem anderen einzutragen.</dd>
+          <dt>Eigener Name</dt><dd>Steht Vorlagen-Overlays als Einfügefeld „MEIN NAME“ zur Verfügung. Rein kosmetisch. Nichts anderes in der Anwendung liest ihn.</dd>
+          <dt>Eigener Locator</dt><dd>Der eigene <a class="term" href="#glossary-maidenhead-grid">Maidenhead-Locator</a>. Das Feld wird nicht geprüft, daher funktioniert auch jede beliebige Freitext-Ortsangabe. Wird für ein Overlay-Feld „MEIN LOCATOR“ verwendet und zusammen mit dem Locator der Gegenstation zur Berechnung von Entfernung und Richtung für Vorlagenfelder.</dd>
+          <dt>Standard-RST</dt><dd>Füllt die Felder „Gesendet“ und „Empfangen“ vor, wenn ein neues QSO geloggt wird. Standardwert ist <strong>595</strong>. SSTV-Stationen tauschen Lesbarkeit/Stärke/<em>Video</em> (R-S-V) aus, nicht den sonst im Amateurfunk üblichen Rapport Lesbarkeit/Stärke/<em>Ton</em> (R-S-T), daher wäre 599 der falsche Rapport zum Vorbelegen. Das Feld leeren, wenn lieber nichts vorbelegt und der Rapport jedes Mal von Hand eingegeben werden soll.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="configurations" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="konfigurationen konfiguration voreinstellungen profil profile wechseln umschalten zurücksetzen klonen umbenennen löschen standard gespeicherte einstellungen operator station schnellwechsel setup">
+        <p class="topic-category">Werkzeuge und Referenz</p>
+        <h2>Konfigurationen</h2>
+        <p>Konfigurationen sind benannte Momentaufnahmen, mit denen sich ganze Gruppen von Anwendungseinstellungen umschalten lassen, zum Beispiel zwischen verschiedenen Transceivern, Interfaces oder Betriebssituationen.</p>
+        <dl>
+          <dt>Wechseln zu</dt><dd>Übernimmt die ausgewählte gespeicherte Konfiguration. Während des Sendens oder einer Aufnahme wird der Wechsel abgelehnt.</dd>
+          <dt>Zurücksetzen</dt><dd>Wechselt zurück zur Standardkonfiguration.</dd>
+          <dt>Klonen als…</dt><dd>Erstellt aus der aktuellen Konfiguration eine neue.</dd>
+          <dt>Umbenennen…</dt><dd>Ändert den Anzeigenamen der Konfiguration.</dd>
+          <dt>Löschen…</dt><dd>Entfernt die ausgewählte benannte Konfiguration nach Bestätigung dauerhaft.</dd>
+        </dl>
+        <p>Ein Wechsel wird grundsätzlich abgelehnt, solange eine Aussendung oder eine Audioaufnahme läuft. In anderen Fällen kann eine Einstellung, die sich nicht im laufenden Betrieb übernehmen lässt, eine Warnung über eine nur teilweise Übernahme auslösen. Den Ergebnisdialog lesen und die Anwendung neu starten, wenn dazu aufgefordert wird.</p>
+        <div class="note"><strong>Ungespeicherte Änderungen in den Optionen.</strong> Der Konfigurationswechsel arbeitet mit gespeicherten Einstellungen. Eine offene Änderung in den Optionen zuerst abschließen oder abbrechen, bevor die neue Konfiguration als verlässlicher Ausgangszustand betrachtet wird.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="calibration-tools" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="kalibrierung loopback selbsttest tongenerator wav decodieren exportieren sitzung log logbuch adif werkzeuge diagnose testton">
+        <p class="topic-category">Werkzeuge und Referenz</p>
+        <h2>Menü Kalibrierung und Extras</h2>
+        <p>Dieses Menü fasst Selbsttests und Hilfsprogramme zusammen, die bei der Einrichtung oder Fehlersuche nützlich sind.</p>
+
+        <h3>Kalibrierung</h3>
+        <ul>
+          <li><strong>Loopback-Selbsttest</strong> codiert und decodiert intern, um den Signalweg innerhalb der Anwendung zu prüfen. Ein bestandener Test zeigt, dass der Softwarepfad funktioniert. Physisches Audiointerface, Kabel, Transceiver oder HF-Weg werden dabei nicht getestet.</li>
+          <li><strong>Tongenerator…</strong> erzeugt einen wählbaren Audioton für eine wählbare Dauer. Mit Vorsicht verwenden: Je nach Aufbau der Station kann das Audiosignal einen sendebereiten Transceiver erreichen.</li>
+        </ul>
+
+        <h3>Extras</h3>
+        <ul>
+          <li><strong>WAV-Datei decodieren…</strong> spielt eine kompatible Audioaufnahme durch den SSTV-Decoder ab.</li>
+          <li><strong>Logbuch als ADIF exportieren…</strong> exportiert die QSO-Daten des Logbuchs im ADIF-Format.</li>
+          <li><strong>Makros</strong> öffnet die Token-Referenz und eine Vorschau der aufgelösten Werte.</li>
+        </ul>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="sstv-modes" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="sstv modi modus liste martin scottie robot avt pasokon pd mr ml mn mc mp sc2 vis code unterstützt welche modi betriebsarten übersicht">
+        <p class="topic-category">Werkzeuge und Referenz</p>
+        <h2>Unterstützte SSTV-Modi</h2>
+        <p>Scanline Studio decodiert und sendet dieselben SSTV-Modusfamilien wie seine Vorgängerprogramme. Jeder unten aufgeführte Modus ist über die Modusauswahl auf der Registerkarte Senden verfügbar, und jeder wird beim Empfang automatisch anhand seines VIS-Codes erkannt.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Familie</th><th>Modi</th></tr></thead>
+            <tbody>
+              <tr><td>Martin</td><td>M1, M2</td></tr>
+              <tr><td>Scottie</td><td>S1, S2, DX</td></tr>
+              <tr><td>Robot</td><td>36, 72, 24</td></tr>
+              <tr><td>PD</td><td>50, 90, 120, 160, 180, 240, 290</td></tr>
+              <tr><td>Pasokon</td><td>P3, P5, P7</td></tr>
+              <tr><td>MR / ML</td><td>MR73, MR90, MR115, MR140, MR175, ML180, ML240, ML280, ML320</td></tr>
+              <tr><td>MN</td><td>MN73, MN110, MN140</td></tr>
+              <tr><td>MC</td><td>MC110, MC140, MC180</td></tr>
+              <tr><td>MP</td><td>MP73, MP115, MP140, MP175</td></tr>
+              <tr><td>SC2</td><td>SC2-60, SC2-120, SC2-180</td></tr>
+              <tr><td>AVT</td><td>AVT</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Die Schnellmodus-Schaltflächen der MODE-Karte auf der Registerkarte Empfang (siehe <a href="#receive-first-picture">Das erste Bild empfangen</a>) enthalten eine praxistaugliche Auswahl dieser Modi. Mit einem Rechtsklick auf einen Platz lässt er sich mit jedem beliebigen Modus aus der vollständigen Liste oben neu belegen.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="macros" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="makros makro tokens platzhalter vorlage variablen prozent m datum uhrzeit zeit rufzeichen name locator grid frequenz modus betriebsart entfernung richtung peilung his_grid vorschau qso fill benutzerdefiniert feld txt">
+        <p class="topic-category">Werkzeuge und Referenz</p>
+        <h2>Makros und Vorlagenfelder</h2>
+        <p>Makros ersetzen Tokens in TX-Textelementen durch aktuelle Werte der Station, des Transceivers, der Uhrzeit oder der QSO-Fill-Felder.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Wert</th><th>Quelle</th></tr></thead>
+            <tbody>
+              <tr><td>Eigenes Rufzeichen, Name, Locator</td><td>Optionen → Station.</td></tr>
+              <tr><td>Datum und Uhrzeit in <a class="term" href="#glossary-utc">UTC</a></td><td>Die Uhr des Computers.</td></tr>
+              <tr><td>Frequenz und Betriebsart</td><td>Die aktive CAT-Verbindung. Leer, wenn kein Zustand des Transceivers verfügbar ist.</td></tr>
+              <tr><td>Rufzeichen der Gegenstation, Locator, Rapport und weitere QSO-Felder</td><td>Die QSO-Daten-Werte des Vorlageneditors.</td></tr>
+              <tr><td>Entfernung und Richtung</td><td>Berechnet aus dem eigenen konfigurierten Locator und der Vorlagenvariablen <code>his_grid</code>.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p><strong>Extras → Makros</strong> öffnen, um die genaue Schreibweise der in der laufenden Version verfügbaren Tokens zu sehen und eine Vorschau der Stations- und Zeitwerte zu erhalten. Jedes eingegebene <code>{word}</code>, das keines der oben aufgeführten eingebauten Tokens ist, wird zu einem benutzerdefinierten Feld: Es fügt der QSO-Daten-Leiste automatisch eine passende Zeile hinzu, die bei jedem Senden der Karte neu aufgelöst wird. Ein falsch geschriebenes Token verschwindet daher nicht, sondern erscheint als unerwartete zusätzliche Zeile in der QSO-Daten-Leiste.</p>
+        <p>Der Wert eines benutzerdefinierten Felds bleibt erhalten, wenn du innerhalb derselben Editor-Sitzung zu einer anderen Vorlage wechselst — ein Feld wie <code>{txt}</code> kann so eine Notiz oder Nachricht über mehrere Vorlagen hinweg speichern, ohne sie jedes Mal neu einzutippen. Erst der <strong>LEEREN</strong>-Button der QSO-Daten-Leiste oder eine neu gestartete Editor-Sitzung setzt es zurück.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="keyboard-shortcuts" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="tastenkürzel tastenkombinationen tastatur shortcuts tasten strg ctrl bild öffnen speichern bild exportieren zwischenablage einfügen pfeiltasten verschieben nudge shift umschalt ready rack 1 9 suche">
+        <p class="topic-category">Werkzeuge und Referenz</p>
+        <h2>Tastenkürzel</h2>
+        <p>Die Verfügbarkeit kann davon abhängen, welche Registerkarte oder welches Editor-Steuerelement gerade den Fokus hat.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tastenkürzel</th><th>Aktion</th></tr></thead>
+            <tbody>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>O</kbd></td><td>Ein Quellbild zum Senden öffnen.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>S</kbd></td><td>Auf der Registerkarte Senden die aktuelle TX-Bearbeitung übernehmen. Auf anderen Registerkarten das aktuelle RX-Bild speichern, sofern vorhanden.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd></td><td>Das aktuell empfangene Bild speichern/exportieren.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>V</kbd></td><td>Ein Bild aus der Zwischenablage im TX-Editor einfügen, wenn der Editorkontext dies zulässt.</td></tr>
+              <tr><td>Pfeiltasten</td><td>Den aktiven Zuschnitt oder die ausgewählte Editor-Geometrie um einen kleinen Betrag verschieben.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + Pfeiltaste</td><td>Die größere Schrittweite des Editors verwenden, wo unterstützt.</td></tr>
+              <tr><td><kbd>Shift</kbd> + Pfeiltaste</td><td>Die Größe des aktiven Zuschnitts ändern, wo unterstützt.</td></tr>
+              <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Vorlagen aus dem Ready Rack abrufen, wenn der TX-Editor das Tastenkürzel besitzt.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>K</kbd> oder <kbd>/</kbd></td><td>Den Fokus auf die Suche in dieser Hilfe setzen.</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Suchergebnisse der Hilfe oder das mobile Inhaltsverzeichnis schließen.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="dateien ordner pfade einstellungen json verlauf history db sqlite wal shm write ahead logging journal bilder logs protokolle sicherung backup wiederherstellen datenschutz telemetrie passwort qrz windows linux macos appdata config speicherort">
+        <p class="topic-category">Support</p>
+        <h2>Dateien, Sicherungen und Datenschutz</h2>
+        <p>Die aktiven Speicherorte werden unter <strong>Optionen → Allgemein → Speicherort</strong> angezeigt. Die Standardwerte folgen der Konvention des Betriebssystems für Anwendungsdaten.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Daten</th><th>Typische Datei</th><th>Sichern?</th></tr></thead>
+            <tbody>
+              <tr><td>Anwendungseinstellungen</td><td><code>settings.json</code></td><td>Ja, besonders nach abgeschlossener Einrichtung der Station.</td></tr>
+              <tr><td>Empfangsverlauf und QSO-Logbuch</td><td><code>history.db</code>, zusätzlich <code>history.db-wal</code> und <code>history.db-shm</code>, sofern vorhanden</td><td>Ja. Dies ist eine SQLite-Datenbank, die von beiden Funktionen gemeinsam genutzt wird. Die drei Dateien zusammen kopieren oder die Anwendung vorher schließen.</td></tr>
+              <tr><td>Empfangene Bilder</td><td>PNG-Dateien im konfigurierten Ordner für RX-Bilder</td><td>Ja, wenn die Bilder unabhängig vom Datenbankindex von Bedeutung sind.</td></tr>
+              <tr><td>Diagnose</td><td>Protokolldateien der Anwendung</td><td>In der Regel nur bei der Untersuchung eines Fehlers.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Scanline Studio schließen, bevor eine konsistente manuelle Sicherung von Datenbank und Einstellungen erstellt wird. Datenbank und RX-Bilder zusammen sichern, damit die Verweise in der Galerie weiterhin nutzbar bleiben.</p>
+        <div class="warning"><strong>Während die Anwendung läuft, ist <code>history.db</code> nicht die vollständige Datenbank.</strong> Scanline Studio verwendet das Write-Ahead-Logging von SQLite, daher können aktuelle Verbindungen und der Empfangsverlauf noch in der danebenliegenden Datei <code>history.db-wal</code> stehen. Wer in diesem Moment nur <code>history.db</code> kopiert, verliert diese Daten. Entweder zuerst die Anwendung schließen, wodurch diese Änderungen in <code>history.db</code> zurückgeschrieben und die beiden zusätzlichen Dateien entfernt werden, oder <code>history.db</code>, <code>history.db-wal</code> und <code>history.db-shm</code> gemeinsam als Satz kopieren. Das gilt für Sicherungsprogramme und synchronisierte Ordner genauso wie für eine manuelle Kopie.</div>
+        <ul>
+          <li>Scanline Studio benötigt für den normalen Betrieb weder Produkttelemetrie noch ein Cloud-Konto.</li>
+          <li>QRZ.com und die konfigurierte UDP-Weiterleitung senden nur dann Daten, wenn diese Integrationen aktiviert und verwendet werden.</li>
+          <li>Das aktuelle QRZ.com-Passwort wird unverschlüsselt lokal in den Einstellungen gespeichert.</li>
+          <li><strong>Hilfe → Anwendungsprotokoll öffnen</strong> öffnet den aktuellen Speicherort des Diagnoseprotokolls. Ein Protokoll vor der Weitergabe durchsehen, da es Pfade, Rufzeichen, Hostnamen oder Betriebsdetails enthalten kann.</li>
+        </ul>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="fehlersuche fehlerbehebung probleme keine decodierung kein audio kein ton schräges bild schräglauf übersteuerung clipping ptt fehlgeschlagen cat getrennt sendefehler senden fehler fehlende datei galerie absturz logs protokolle">
+        <p class="topic-category">Support</p>
+        <h2>Fehlerbehebung</h2>
+        <p>Beim sichtbaren Symptom beginnen, immer nur eine Sache auf einmal ändern und bei sporadischen Fehlern eine WAV-Aufnahme oder ein Anwendungsprotokoll aufbewahren.</p>
+
+        <h3>Die RX-Pegelanzeige bewegt sich nicht</h3>
+        <ol class="steps">
+          <li>Prüfen, ob der Schalter <strong>Empfang</strong> in der Kopfzeile eingeschaltet ist und die <strong>Automatische Erkennung</strong> auf der Registerkarte Empfang auf <strong>Empfangsbereit</strong> steht. Solange die Automatische Erkennung auf <strong>Pausiert</strong> steht, läuft der Wasserfall zwar weiter, aber die Pegelanzeige und die Decodierung der Stationskennung bleiben stehen.</li>
+          <li>Sicherstellen, dass der Transceiver Audio liefert und das Kabel physisch angeschlossen ist.</li>
+          <li>Das Aufnahmegerät unter Optionen → Audio erneut auswählen.</li>
+          <li>Bei einem Stereogerät die Aufnahmequellen Mono, Links und Rechts durchprobieren.</li>
+          <li>Eingabeberechtigung des Betriebssystems, Stummschaltung und Geräte-Routing prüfen.</li>
+        </ol>
+
+        <h3>Audio ist sichtbar, aber kein Bild beginnt</h3>
+        <ul>
+          <li>Sicherstellen, dass die Automatische Erkennung <strong>Empfangsbereit</strong> anzeigt und nicht Pausiert.</li>
+          <li>Eine zu hoch eingestellte Squelch-Schwelle verringern.</li>
+          <li>Am Transceiver ein breiteres Empfangsfilter und das richtige Seitenband verwenden.</li>
+          <li>Wenn der Modus bekannt ist und der VIS-Code verloren ging, die nächste Decodierung mit der zugehörigen Schnellmodus-Schaltfläche erzwingen.</li>
+          <li>Das Signal aufzeichnen und mit „WAV-Datei decodieren“ erneut versuchen.</li>
+        </ul>
+
+        <h3>Das Bild ist schräg</h3>
+        <ul>
+          <li>RX-Pufferung und automatische Schräglaufkorrektur unter Optionen → Decodierung aktivieren.</li>
+          <li>Während des Empfangs den Wert Schräglauf ppm beobachten und „Schräglauf korrigieren“ verwenden, sobald eine stabile Schätzung vorliegt.</li>
+          <li>Wiederholte Rapporte von Gegenstationen über Schräglauf im eigenen Sendesignal können darauf hinweisen, dass ein gemessener TX-Taktversatz eingetragen werden muss. Den Wert nicht raten.</li>
+        </ul>
+
+        <h3>Der Empfang bricht ab oder die XRUN-Zahl steigt</h3>
+        <ul>
+          <li>Andere Anwendungen schließen, die das Audiogerät oder die CPU stark belasten.</li>
+          <li>Sicherstellen, dass das USB-Audiointerface eine stabile Verbindung hat.</li>
+          <li>Erweiterte DSP-Änderungen vermeiden, bis der Audiotransport stabil ist.</li>
+        </ul>
+
+        <h3>CAT oder PTT funktioniert nicht</h3>
+        <ul>
+          <li>Bearbeitete Einstellungen unter Transceiver / CAT speichern, bevor Verbinden gewählt wird.</li>
+          <li>Die aktive Verbindung trennen, bevor ein Backend-Test ausgeführt wird.</li>
+          <li>Host/Port für rigctld oder flrig prüfen, und bei einem entfernten Host auch die Firewall-Freigabe.</li>
+          <li>Bei eingebundenem Hamlib Bibliothek, Modellnummer, serielles Gerät, Baudrate und PTT-Methode testen.</li>
+          <li>Sicherstellen, dass kein anderes Programm die serielle Schnittstelle exklusiv geöffnet hat.</li>
+          <li>VOX lässt sich nicht per Befehl testen: Sie beruht darauf, dass der Transceiver tatsächlich anliegendes TX-Audio erkennt.</li>
+        </ul>
+
+        <h3>Senden schlägt fehl oder bricht ab</h3>
+        <ul>
+          <li>Sicherstellen, dass ein Wiedergabegerät und ein vorbereitetes Bild ausgewählt sind.</li>
+          <li>PTT und Zustand des Transceivers mit einem kurzen, kontrollierten Test prüfen.</li>
+          <li>Wenn die Meldung ein hohes SWR (Stehwellenverhältnis) nennt, sofort abbrechen und die Antennenanlage untersuchen. Nicht einfach nur den Grenzwert anheben.</li>
+          <li>Das Anwendungsprotokoll öffnen, um den genauen Fehler zu sehen.</li>
+        </ul>
+
+        <h3>Ein Bild aus der Galerie lässt sich nicht öffnen</h3>
+        <p>Die Datei wurde möglicherweise außerhalb der Anwendung verschoben oder gelöscht. Aktualisieren wählen, den konfigurierten Ordner für RX-Bilder prüfen und die Datei bei Bedarf aus einer Sicherung wiederherstellen.</p>
+
+        <h3>Dunkelmodus oder Große Schrift verhalten sich nicht wie erwartet</h3>
+        <ul>
+          <li>Sicherstellen, dass auf der Registerkarte Darstellung <strong>Speichern</strong> gewählt wurde. Beide Einstellungen wirken sofort nach dem Speichern, eine nicht gespeicherte Änderung hat jedoch keine Wirkung.</li>
+          <li>Das Farbdesign <strong>System</strong> folgt der Hell/Dunkel-Einstellung des Betriebssystems. Wer ein festes Erscheinungsbild unabhängig von der Betriebssystemeinstellung möchte, wählt direkt Hell oder Dunkel.</li>
+          <li>Große Schrift ist eine einzelne feste Größe, kein Schieberegler. Es gibt keinen Zwischenwert, nur Normal oder Groß.</li>
+        </ul>
+
+        <h3>Gehörte Stationen bleibt leer</h3>
+        <ul>
+          <li>Sicherstellen, dass <strong>FSK decodieren</strong> und/oder <strong>CW decodieren</strong> unter Optionen → Kennung eingeschaltet sind. Beide sind standardmäßig aktiv, können dort aber einzeln abgeschaltet werden.</li>
+          <li>Nicht jede Station sendet eine Kennung, die die Anwendung erkennt: Eine Station kann FSK/CW mit einer Geschwindigkeit, einem Ton oder einem Format verwenden, das Scanline Studio nicht decodiert, oder sie identifiziert sich gar nicht per Ton.</li>
+          <li>Die Liste füllt sich nur mit Stationen, die tatsächlich empfangen wurden. Sie ist kein Verzeichnis darüber, wer gerade auf dem Band aktiv ist.</li>
+        </ul>
+
+        <div class="tip"><strong>Sinnvolles Support-Paket.</strong> Anwendungsversion aus Hilfe → Über Scanline Studio…, Betriebssystem, gewähltes Audio- und CAT-Backend, genauen Fehlertext, Schritte zur Reproduktion und den relevanten Auszug aus dem Anwendungsprotokoll notieren. Eine kurze WAV-Datei nur beilegen, wenn sie zur Reproduktion eines Decodierproblems nötig ist.</div>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossar begriffe abkürzungen fachbegriffe afc agc cat dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead locator grid nr utc wpm hilbert pll rufzeichen rapport">
+        <p class="topic-category">Support</p>
+        <h2>Glossar</h2>
+        <p>Zeigen Sie an beliebiger Stelle dieses Handbuchs auf einen gepunktet unterstrichenen Begriff oder setzen Sie den Fokus darauf, um seine Definition zu sehen, ohne die Seite zu verlassen. Jeder Begriff verweist auf die eine Definition hier.</p>
+        <dl>
+          <dt id="glossary-adif">ADIF</dt><dd>Amateur Data Interchange Format; das Standard-Dateiformat, mit dem Logbuch-Software QSO-Einträge austauscht.</dd>
+          <dt id="glossary-afc">AFC</dt><dd>Automatische Frequenznachführung (AFC); misst den empfangenen Sync-Ton und zieht die Decodierung zurück in Richtung der Nennfrequenz, um eine leicht verstimmte Gegenstation zu korrigieren. Sie korrigiert ausschließlich die Verstimmung. Gegen Rauschen oder Störungen richtet sie nichts aus.</dd>
+          <dt id="glossary-agc">AGC</dt><dd>Automatische Verstärkungsregelung (AGC); normalisiert den Pegel des empfangenen Signals für die Verarbeitung.</dd>
+          <dt id="glossary-alc">ALC</dt><dd>Automatische Aussteuerungsregelung (ALC); eine Schaltung im Funkgerät, die die Ansteuerung zurücknimmt, wenn das Sende-NF-Signal die Endstufe sonst übersteuern würde.</dd>
+          <dt id="glossary-avt-training">AVT-Training</dt><dd>Ein Decoder-Zustand für die AVT-SSTV-Betriebsartenfamilie, die das eingehende Signal erst vermessen muss, bevor sie einrasten und das Bild decodieren kann. Er unterscheidet sich von den üblichen Zuständen „Suche“/„eingerastet“ der anderen Betriebsarten.</dd>
+          <dt id="glossary-bpf">BPF</dt><dd>Bandpassfilter; lässt einen gewählten Frequenzbereich durch und unterdrückt alles außerhalb davon.</dd>
+          <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver, die CAT-Steuerung: Übertragung von Frequenz, Betriebsart, PTT und Telemetrie zwischen Computer und Funkgerät.</dd>
+          <dt id="glossary-dsp">DSP</dt><dd>Digitale Signalverarbeitung.</dd>
+          <dt id="glossary-fir">FIR</dt><dd>Finite Impulse Response (endliche Impulsantwort); eines der beiden gängigen digitalen Filterkonzepte (siehe auch IIR). Ein FIR-Filter ist immer stabil, benötigt für dieselbe Flankensteilheit aber mehr Rechenaufwand.</dd>
+          <dt id="glossary-fsk-id">FSK ID</dt><dd>Per Frequenzumtastung (FSK) gesendete Stationskennung, die als FSK-ID rund um eine SSTV-Aussendung übertragen wird.</dd>
+          <dt id="glossary-hamlib">Hamlib</dt><dd>Eine Bibliothek samt Werkzeugen zur Steuerung von Funkgeräten, die viele Transceiver unterstützt.</dd>
+          <dt id="glossary-hilbert">Hilbert-Transformation</dt><dd>Ein mathematisches Verfahren zur Bestimmung der Momentanfrequenz eines Signals; die Standard-Demodulatormethode, mit der Scanline Studio eingehende SSTV-Töne wieder in Helligkeitswerte umsetzt.</dd>
+          <dt id="glossary-iir">IIR</dt><dd>Infinite Impulse Response (unendliche Impulsantwort); das andere gängige digitale Filterkonzept (siehe auch FIR). Ein IIR-Filter ist rechengünstiger, kann sich bei extremen Einstellungen aber weniger vorhersehbar verhalten.</dd>
+          <dt id="glossary-lpf">LPF</dt><dd>Tiefpassfilter; lässt Frequenzen unterhalb einer gewählten Grenzfrequenz durch und entfernt alles darüber.</dd>
+          <dt id="glossary-maidenhead-grid">Maidenhead-Locator</dt><dd>Ein kurzer Buchstaben-Zahlen-Code (z. B. JO22), der einen Standort auf der Erde bezeichnet; im Amateurfunk als kompaktes „Hier bin ich“ anstelle einer vollständigen Adresse verwendet.</dd>
+          <dt id="glossary-nr">NR</dt><dd>Eine Serien- bzw. Referenznummer; hier das optionale numerische Teilpaket, das die FSK-Kennung zusätzlich zum Rufzeichen mitführen kann.</dd>
+          <dt id="glossary-pll">PLL</dt><dd>Phasenregelschleife (Phase-Locked Loop); eine der Demodulatormethoden, mit denen Scanline Studio den eingehenden Bildton verfolgen und daraus die Helligkeit zurückgewinnen kann.</dd>
+          <dt id="glossary-ppm">PPM</dt><dd>Parts per million (Millionstel); hier ein kleiner Fehler des Audio-Taktes, der zu schrägen Bildern führen kann.</dd>
+          <dt id="glossary-ptt">PTT</dt><dd>Push to talk (Sendetaste); die Steuerung, die den Sender tastet.</dd>
+          <dt id="glossary-qso">QSO</dt><dd>Eine Funkverbindung zwischen Stationen.</dd>
+          <dt id="glossary-qsl">QSL</dt><dd>Bestätigung einer Funkverbindung; häufig in Form einer gestalteten Karte oder eines SSTV-Bildes.</dd>
+          <dt id="glossary-rst">RST</dt><dd>Rapport aus Lesbarkeit (Readability), Signalstärke (Strength) und Ton (Tone). Bei SSTV-Verbindungen können verwandte Rapport-Konventionen verwendet werden.</dd>
+          <dt id="glossary-sstv">SSTV</dt><dd>Slow-Scan Television (Schmalbandfernsehen): Standbilder, die als Töne im NF-Bereich über einen Funkkanal übertragen werden.</dd>
+          <dt id="glossary-swr">SWR</dt><dd>Stehwellenverhältnis (Standing Wave Ratio); ein Maß für die Fehlanpassung der Impedanz im HF-Pfad.</dd>
+          <dt id="glossary-utc">UTC</dt><dd>Koordinierte Weltzeit; die einheitliche Zeitzone, in der Funkamateure ihre Verbindungen loggen, damit Aufzeichnungen aus verschiedenen Zeitzonen vergleichbar bleiben.</dd>
+          <dt id="glossary-vco">VCO</dt><dd>Spannungsgesteuerter Oszillator (Voltage-Controlled Oscillator); der abstimmbare interne Oszillator, mit dem der PLL-Demodulator den eingehenden Bildton verfolgt.</dd>
+          <dt id="glossary-vis">VIS</dt><dd>Vertical Interval Signalling: der VIS-Code im SSTV-Vorspann, der die Bildbetriebsart kennzeichnet.</dd>
+          <dt id="glossary-vox">VOX</dt><dd>Sprachgesteuertes Senden (Voice-Operated Transmit); das Funkgerät tastet sich selbst, sobald es ein NF-Eingangssignal erkennt.</dd>
+          <dt id="glossary-wpm">WpM</dt><dd>Wörter pro Minute (WpM); die Geschwindigkeitseinheit für die CW-Kennung (Morsecode).</dd>
+          <dt id="glossary-xrun">XRUN</dt><dd>Pufferunter-/-überlauf (XRUN) des Audiopuffers; deutet in der Regel darauf hin, dass Audiodaten nicht rechtzeitig verarbeitet wurden.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+
+      <footer class="page-footer">
+        <p>Scanline Studio steht unter der Lizenz LGPL-3.0-or-later. Dieses Handbuch beschreibt den Anwendungsstand der Revision <span data-help-version>aktuell</span>.</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

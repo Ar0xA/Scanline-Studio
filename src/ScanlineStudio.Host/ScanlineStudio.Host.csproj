@@ -85,7 +85,7 @@
        matches .html/.css/.js, so the maintainer README and Node structural check (.md/.mjs) stay
        repository-only, not application runtime assets. -->
   <ItemGroup>
-    <None Include="..\..\docs\help\**\*.html;..\..\docs\help\**\*.css;..\..\docs\help\**\*.js"
+    <None Include="..\..\assets\help\**\*.html;..\..\assets\help\**\*.css;..\..\assets\help\**\*.js"
           Link="help\%(RecursiveDir)%(Filename)%(Extension)"
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
