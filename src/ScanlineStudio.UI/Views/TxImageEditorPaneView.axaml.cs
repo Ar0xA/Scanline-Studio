@@ -525,12 +525,56 @@ public partial class TxImageEditorPaneView : UserControl
     /// and can dismiss the flyout the instant it opens.</para>
     /// <para>Element rotation (2026-09-20, round-3 plan-review nit): this handler was ALREADY
     /// generic -- it has no Quick-Style-specific logic, it just shows whatever
-    /// <see cref="FlyoutBase.AttachedFlyout"/> lives on the captured anchor. Box's Fill &amp;
-    /// Border "Rotate by:" row and Image's/Line's own new dedicated Rotate flyout all reuse this
-    /// SAME handler rather than each getting a separately-named duplicate that would do the
-    /// identical two lines of work -- name kept as-is (not renamed) to avoid unrelated churn on an
-    /// already-shipped, tested method.</para></summary>
+    /// <see cref="FlyoutBase.AttachedFlyout"/> lives on the captured anchor. Image's/Line's own
+    /// dedicated (always rotate-only) Rotate flyout reuses this SAME handler rather than a
+    /// separately-named duplicate that would do the identical work -- name kept as-is (not renamed)
+    /// to avoid unrelated churn on an already-shipped, tested method.</para>
+    /// <para>Revised (2026-09-20, user-reported): Text/Box no longer fold a "Rotate by" row into
+    /// this SAME flyout's font/color content -- that read as nonsensical from the "Rotate…" menu
+    /// label. This handler now resets <c>ShowRotateFlyoutContent</c> to false first (Quick
+    /// Style/Fill &amp; Border mode); the sibling <see cref="OnOpenElementRotateFlyout"/> sets it
+    /// true instead (rotate-only mode) before showing the exact same flyout via
+    /// <see cref="ShowAnchoredFlyout"/>. Image/Line have no such property (the switch in
+    /// <see cref="SetShowRotateFlyoutContent"/> just no-ops for them), so this stays a harmless,
+    /// unconditional reset for those two.</para></summary>
     private void OnOpenElementQuickStyleFlyout(object? sender, RoutedEventArgs e)
+    {
+        SetShowRotateFlyoutContent(sender, showRotate: false);
+        ShowAnchoredFlyout();
+    }
+
+    /// <summary>User-reported (2026-09-20): a "Rotate…" item that opened the SAME flyout as "Quick
+    /// Style…"/"Fill & Border…", with a rotate row just bolted onto the bottom of the font/color
+    /// content, read as nonsensical -- clicking "Rotate…" should show ONLY a rotate control. Text
+    /// and Box already use their one <c>FlyoutBase.AttachedFlyout</c> slot for that style panel
+    /// (single-valued, can't hold a second independent popup), so this sets
+    /// <c>OverlayElementViewModel.ShowRotateFlyoutContent</c>/<c>BoxElementViewModel.ShowRotateFlyoutContent</c>
+    /// true (their own AXAML mode-switches the flyout's content on it) before showing the SAME
+    /// proven <see cref="FlyoutBase.ShowAttachedFlyout"/> mechanism <see cref="OnOpenElementQuickStyleFlyout"/>
+    /// already uses -- no new Avalonia primitive, no new anchor-capture/timing risk. Image and Line
+    /// have no such mode to set (their own dedicated flyout is always rotate-only already), so their
+    /// own "Rotate…" item keeps using <see cref="OnOpenElementQuickStyleFlyout"/> directly, unaffected
+    /// by this handler.</summary>
+    private void OnOpenElementRotateFlyout(object? sender, RoutedEventArgs e)
+    {
+        SetShowRotateFlyoutContent(sender, showRotate: true);
+        ShowAnchoredFlyout();
+    }
+
+    private static void SetShowRotateFlyoutContent(object? sender, bool showRotate)
+    {
+        switch ((sender as MenuItem)?.DataContext)
+        {
+            case OverlayElementViewModel text:
+                text.ShowRotateFlyoutContent = showRotate;
+                break;
+            case BoxElementViewModel box:
+                box.ShowRotateFlyoutContent = showRotate;
+                break;
+        }
+    }
+
+    private void ShowAnchoredFlyout()
     {
         if (_lastContextMenuAnchor is not { } target)
         {

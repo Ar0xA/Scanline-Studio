@@ -104,6 +104,10 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     [ObservableProperty]
     private double _rotationDegrees;
 
+    /// <inheritdoc cref="OverlayElementViewModel.ShowRotateFlyoutContent"/>
+    [ObservableProperty]
+    private bool _showRotateFlyoutContent;
+
     /// <summary>TX editor gap-items plan (2026-09-01, box gradient fill) -- SAME simplified 2-stop
     /// shape <see cref="OverlayElementViewModel.GradientEnabled"/> already established for text, on
     /// the SAME "text gradients already shipped, boxes only had flat fill" gap Fable's comparative

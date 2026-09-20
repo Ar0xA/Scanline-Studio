@@ -1198,7 +1198,7 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateCounterclockwise90}" Command="{Binding RotateCounterclockwise90Command}" IsEnabled="{Binding CanRotate}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Rotate180}" Command="{Binding Rotate180Command}" IsEnabled="{Binding CanRotate}" />
                                                             <Separator />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateByMenu}" Click="OnOpenElementQuickStyleFlyout" IsEnabled="{Binding CanRotate}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateByMenu}" Click="OnOpenElementRotateFlyout" IsEnabled="{Binding CanRotate}" />
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
@@ -1210,29 +1210,38 @@
                                                      shared resource" reasoning as Border.ContextMenu's own doc comment just above
                                                      — DataContext inheritance must resolve against THIS element. ColorView (not
                                                      ColorPicker) so the picker is immediately interactive with no second click —
-                                                     ColorPicker is itself just a button that opens one of these. -->
+                                                     ColorPicker is itself just a button that opens one of these.
+                                                     User-reported (2026-09-20): a single AttachedFlyout can't hold two independent
+                                                     popups (single-valued, see above), so "Rotate…" used to open THIS SAME flyout
+                                                     with a "Rotate by" row bolted onto the font/color content — genuinely confusing,
+                                                     not what "Rotate…" implies. Fixed by mode-switching the ONE flyout's own content
+                                                     between two IsVisible-toggled panels instead of introducing an untested second
+                                                     popup primitive: OnOpenElementQuickStyleFlyout sets ShowRotateFlyoutContent=false
+                                                     before showing (Quick Style mode), OnOpenElementRotateFlyout sets it true
+                                                     (Rotate-only mode) — same proven ShowAttachedFlyout/anchor-capture mechanism
+                                                     either way, just different content underneath. -->
                                                 <FlyoutBase.AttachedFlyout>
                                                     <Flyout Placement="Right">
-                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="200">
-                                                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
-                                                                <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
-                                                                         Text="{Binding FontSizePx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                                                            </Grid></Border>
-                                                            <ColorView Color="{Binding Color, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
-                                                                       IsAlphaEnabled="False" IsAccentColorsVisible="False" />
-                                                            <!-- Element rotation (2026-09-20) — arbitrary-angle rotation, folded into this
-                                                                 SAME flyout rather than a second attached one (single-valued, see this
-                                                                 Border's own ContextMenu comment above). Live-applies as typed, absolute
-                                                                 degrees (same convention as RotationDegrees itself), not a delta. -->
-                                                            <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
-                                                                <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotateByLabel}" />
-                                                                <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
-                                                                               HorizontalAlignment="Right" Width="110" Minimum="-360" Maximum="360" Increment="1"
-                                                                               IsEnabled="{Binding CanRotate}"
-                                                                               Value="{Binding RotationDegrees, Mode=TwoWay}" />
-                                                            </Grid></Border>
-                                                        </StackPanel>
+                                                        <Panel MinWidth="200">
+                                                            <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" IsVisible="{Binding !ShowRotateFlyoutContent}">
+                                                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.FontSizeLabel}" />
+                                                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Right" Width="70"
+                                                                             Text="{Binding FontSizePx, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                                </Grid></Border>
+                                                                <ColorView Color="{Binding Color, Converter={x:Static conv:Rgb24ToColorConverter.Instance}, Mode=TwoWay}"
+                                                                           IsAlphaEnabled="False" IsAccentColorsVisible="False" />
+                                                            </StackPanel>
+                                                            <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" IsVisible="{Binding ShowRotateFlyoutContent}">
+                                                                <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotateByLabel}" />
+                                                                    <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
+                                                                                   HorizontalAlignment="Right" Width="110" Minimum="-360" Maximum="360" Increment="1"
+                                                                                   IsEnabled="{Binding CanRotate}"
+                                                                                   Value="{Binding RotationDegrees, Mode=TwoWay}" />
+                                                                </Grid></Border>
+                                                            </StackPanel>
+                                                        </Panel>
                                                     </Flyout>
                                                 </FlyoutBase.AttachedFlyout>
                                                 <!-- Phase 8 canvas-preview amendment: shadow copy,
@@ -1443,26 +1452,31 @@
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendBackward}" Command="{Binding MoveDownCommand}" CommandParameter="{Binding}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.SendToBackMenu}" Command="{Binding SendToBackCommand}" CommandParameter="{Binding}" />
                                                         </MenuItem>
-                                                        <!-- Element rotation (2026-09-20) — same shape as the text element's own Rotate
-                                                             submenu; "Rotate…" opens the SAME Fill & Border flyout below (a "Rotate by"
-                                                             row folded into it) via the shared OnOpenElementQuickStyleFlyout handler.
-                                                             Additionally gated on !PerspectiveEnabled — mutually exclusive with the
-                                                             warp transform (TemplateBoxElement.RotationDegrees's own doc comment). -->
+                                                        <!-- Element rotation (2026-09-20, revised — user-reported: a bolted-on "Rotate
+                                                             by" row inside the Fill & Border flyout was confusing) — "Rotate…" now
+                                                             mode-switches the SAME flyout to a rotate-only panel instead, via
+                                                             OnOpenElementRotateFlyout (see the flyout's own comment below for the
+                                                             mechanism). Additionally gated on !PerspectiveEnabled — mutually exclusive
+                                                             with the warp transform (TemplateBoxElement.RotationDegrees's own doc
+                                                             comment). -->
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateMenu}">
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateClockwise90}" Command="{Binding RotateClockwise90Command}" IsEnabled="{Binding CanRotate}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateCounterclockwise90}" Command="{Binding RotateCounterclockwise90Command}" IsEnabled="{Binding CanRotate}" />
                                                             <MenuItem Header="{loc:Translate Panes.TxImageEditor.Rotate180}" Command="{Binding Rotate180Command}" IsEnabled="{Binding CanRotate}" />
                                                             <Separator />
-                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateByMenu}" Click="OnOpenElementQuickStyleFlyout" IsEnabled="{Binding CanRotate}" />
+                                                            <MenuItem Header="{loc:Translate Panes.TxImageEditor.RotateByMenu}" Click="OnOpenElementRotateFlyout" IsEnabled="{Binding CanRotate}" />
                                                         </MenuItem>
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.FlattenElement}" Command="{Binding FlattenCommand}" CommandParameter="{Binding}" />
                                                         <Separator />
                                                         <MenuItem Header="{loc:Translate Panes.TxImageEditor.Remove}" InputGesture="Delete" Command="{Binding RemoveCommand}" CommandParameter="{Binding}" />
                                                     </ContextMenu>
                                                 </Border.ContextMenu>
+                                                <!-- User-reported (2026-09-20): same mode-switching fix as the text element's own
+                                                     flyout above — see that Border's own comment for the full mechanism. -->
                                                 <FlyoutBase.AttachedFlyout>
                                                     <Flyout Placement="Right">
-                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" MinWidth="220">
+                                                        <Panel MinWidth="220">
+                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" IsVisible="{Binding !ShowRotateFlyoutContent}">
                                                             <CheckBox Classes="Industry" Content="{loc:Translate Panes.TxImageEditor.FillColorLabel}"
                                                                       IsChecked="{Binding FillEnabled}" />
                                                             <ColorView IsEnabled="{Binding FillEnabled}"
@@ -1488,8 +1502,8 @@
                                                                 <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
                                                                         Minimum="0" Maximum="1" Value="{Binding Opacity}" VerticalAlignment="Center" />
                                                             </Grid></Border>
-                                                            <!-- Element rotation (2026-09-20) — same "folded into the existing single
-                                                                 flyout" reasoning as the text element's own Rotate-by row. -->
+                                                        </StackPanel>
+                                                        <StackPanel Spacing="{StaticResource IndustrySpacingGroup}" IsVisible="{Binding ShowRotateFlyoutContent}">
                                                             <Border Classes="IndustryRow" IsEnabled="{Binding CanRotate}"><Grid ColumnDefinitions="Auto,*">
                                                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxImageEditor.RotateByLabel}" />
                                                                 <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
@@ -1497,6 +1511,7 @@
                                                                                Value="{Binding RotationDegrees, Mode=TwoWay}" />
                                                             </Grid></Border>
                                                         </StackPanel>
+                                                        </Panel>
                                                     </Flyout>
                                                 </FlyoutBase.AttachedFlyout>
                                                 <!-- TX editor gap-items plan, item 3 — the warped-preview
