@@ -1,0 +1,1031 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Offline user guide for Scanline Studio, a cross-platform SSTV receive, edit, transmit, gallery, and logbook application.">
+  <meta name="help-version" content="2026.09">
+  <title>Scanline Studio User Guide</title>
+  <link rel="stylesheet" href="styles.css">
+  <script>
+    window.ScanlineHelpStrings = {
+      noResultsTemplate: "No help topics found for “{query}”. Try fewer or different words.",
+      unversioned: "unversioned"
+    };
+  </script>
+  <script src="help-search.js" defer></script>
+  <script src="help.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">Skip to help content</a>
+
+  <header class="app-header">
+    <div class="brand" aria-label="Scanline Studio user guide">
+      <span class="brand-mark" aria-hidden="true">S▥</span>
+      <span>
+        <span class="brand-name">Scanline Studio</span>
+        <span class="brand-subtitle">Offline user guide</span>
+      </span>
+    </div>
+
+    <div class="search-shell" role="search">
+      <label class="search-label" for="help-search">Search this guide</label>
+      <div class="search-box">
+        <span class="search-icon" aria-hidden="true">⌕</span>
+        <input id="help-search"
+               type="search"
+               placeholder="Search receiving, CAT, templates, errors…"
+               autocomplete="off"
+               spellcheck="false"
+               role="combobox"
+               aria-haspopup="listbox"
+               aria-controls="search-results"
+               aria-expanded="false"
+               aria-autocomplete="list">
+        <kbd class="search-shortcut" aria-hidden="true">Ctrl K</kbd>
+      </div>
+      <div id="search-results" class="search-results" role="listbox" aria-label="Help search results" hidden></div>
+    </div>
+
+    <button id="menu-toggle" class="menu-toggle" type="button" aria-controls="help-sidebar" aria-expanded="false">
+      Contents
+    </button>
+  </header>
+
+  <noscript>
+    <p class="noscript-note">Search and the generated contents menu need JavaScript. All help topics remain readable below without it.</p>
+  </noscript>
+
+  <div class="layout">
+    <aside id="help-sidebar" class="sidebar" aria-label="Help contents">
+      <h2 class="toc-heading">Contents</h2>
+      <nav id="help-toc">
+        <p>Loading contents…</p>
+      </nav>
+    </aside>
+
+    <main id="main-content" class="content">
+      <section class="hero" aria-labelledby="guide-title">
+        <p class="kicker">SSTV operator handbook</p>
+        <h1 id="guide-title">Scanline Studio User Guide</h1>
+        <p class="hero-lede">
+          Set up your station, receive and inspect SSTV pictures, prepare mode-exact transmissions,
+          manage received images, and keep a searchable QSO log—all from one workspace.
+        </p>
+        <div class="hero-meta">
+          <span>Guide revision: <span data-help-version>current</span></span>
+          <span>Works offline</span>
+          <span>Windows · Linux · macOS</span>
+        </div>
+      </section>
+
+      <nav class="quick-links" aria-label="Common starting points">
+        <a class="quick-link" href="#first-time-setup">
+          <span class="quick-link-label">Start here</span>
+          <span class="quick-link-title">Set up the application</span>
+          <span class="quick-link-copy">Choose audio devices, enter station details, and optionally connect a radio.</span>
+        </a>
+        <a class="quick-link" href="#receive-first-picture">
+          <span class="quick-link-label">On the air</span>
+          <span class="quick-link-title">Receive a picture</span>
+          <span class="quick-link-copy">Check levels, start listening, and let VIS mode detection do the rest.</span>
+        </a>
+        <a class="quick-link" href="#troubleshooting">
+          <span class="quick-link-label">Something wrong?</span>
+          <span class="quick-link-title">Troubleshoot a problem</span>
+          <span class="quick-link-copy">Work from symptoms such as no decode, slanted images, or failed PTT.</span>
+        </a>
+      </nav>
+
+      <article id="welcome" class="help-topic" data-help-topic data-category="Getting started" data-keywords="about overview purpose sstv yoniq mmsstv cross platform user interface tabs">
+        <p class="topic-category">Getting started</p>
+        <h2>Welcome to Scanline Studio</h2>
+        <p>
+          Scanline Studio is a cross-platform amateur-radio application for receiving, preparing,
+          transmitting, organizing, and logging analog SSTV pictures. It is a ground-up rewrite of
+          YONIQ, an MMSSTV fork, with a modern audio, CAT, image, and logbook workflow.
+        </p>
+
+        <h3>The four main tabs</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tab</th><th>Use it for</th></tr></thead>
+            <tbody>
+              <tr><td>Receive</td><td>Monitor audio, decode pictures, inspect sync and signal quality, and act on the current frame.</td></tr>
+              <tr><td>Transmit</td><td>Choose an SSTV mode and image, edit the outgoing frame, set identification, and transmit it.</td></tr>
+              <tr><td>Gallery</td><td>Browse automatically saved receptions, search and flag them, add notes, export, and link them to QSOs.</td></tr>
+              <tr><td>Logbook</td><td>Create and edit QSO records, search the log, and import or export ADIF.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note"><strong>Offline by design.</strong> Core receiving, editing, transmitting, gallery, and logbook work does not depend on a cloud service. QRZ.com callsign lookup is an optional online feature.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="requirements" class="help-topic" data-help-topic data-category="Getting started" data-keywords="requirements hardware sound card interface radio transceiver cable audio operating system hamlib rigctld flrig">
+        <p class="topic-category">Getting started</p>
+        <h2>What you need</h2>
+        <p>The exact station varies, but a typical on-air setup contains these parts.</p>
+        <ul>
+          <li>A Windows, Linux, or macOS computer with Scanline Studio installed.</li>
+          <li>A sound input carrying the radio's received audio.</li>
+          <li>A sound output connected to the radio's transmit audio input.</li>
+          <li>An amateur-radio transceiver suitable for the SSTV activity you plan to use.</li>
+          <li>A legal station licence and operating privileges for your frequency, mode, and location.</li>
+          <li>Optional <a class="term" href="#glossary-cat">CAT</a>/<a class="term" href="#glossary-ptt">PTT</a> control through linked Hamlib, <code>rigctld</code>, or <code>flrig</code>.</li>
+        </ul>
+        <div class="safety"><strong>RF safety.</strong> Test with a dummy load when practical. Start with low transmit drive, watch ALC and SWR on the radio, and follow the radio and interface manufacturers' grounding, isolation, and duty-cycle guidance.</div>
+        <p>CAT is optional. With <strong>None (no radio control)</strong> selected, you can still receive and generate TX audio, but you must tune and key the radio outside Scanline Studio.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="first-time-setup" class="help-topic" data-help-topic data-category="Getting started" data-keywords="initial first setup configure options audio capture playback callsign grid language storage cat save">
+        <p class="topic-category">Getting started</p>
+        <h2>First-time setup</h2>
+        <p>Complete the audio and station steps first. Add CAT control only if you want Scanline Studio to read and control the radio.</p>
+
+        <ol class="steps">
+          <li>Open <strong>Options</strong> from the main menu.</li>
+          <li>On <strong>Audio</strong>, choose the capture device connected to RX audio and the playback device connected to TX audio.</li>
+          <li>Leave the sample rate at its default unless you have a specific DSP-rate requirement. A measured transmit sound-clock correction belongs in <strong>TX clock offset</strong>, not Sample rate. Choose the correct stereo capture source if your interface exposes two channels.</li>
+          <li>On <strong>Station</strong>, enter your callsign, name, and Maidenhead grid square. These values feed templates and log records.</li>
+          <li>On <strong>General</strong>, choose your language and review the storage locations.</li>
+          <li>If you use CAT, configure and test it on <strong>Radio / CAT</strong>. See <a href="#radio-cat">Radio and CAT setup</a>.</li>
+          <li>Select <strong>Save</strong>.</li>
+        </ol>
+
+        <div class="tip"><strong>Keep the first test simple.</strong> Verify receive audio and decode before adding automatic PTT, QRZ.com, forwarding, or advanced DSP changes. This makes faults much easier to isolate.</div>
+
+        <h3>Options tabs at a glance</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Options tab</th><th>Documented in</th></tr></thead>
+            <tbody>
+              <tr><td>General</td><td><a href="#general-storage-options">General and storage options</a></td></tr>
+              <tr><td>Appearance</td><td><a href="#appearance-options">Appearance options</a></td></tr>
+              <tr><td>Audio</td><td><a href="#audio-options">Audio settings</a></td></tr>
+              <tr><td>Radio / CAT</td><td><a href="#radio-cat">Radio and CAT setup</a>, <a href="#radio-tune-safety">Tune and TX safety</a></td></tr>
+              <tr><td>Station</td><td><a href="#station-options">Station options</a></td></tr>
+              <tr><td>Decode</td><td><a href="#decode-options">Decode options</a></td></tr>
+              <tr><td>Identification</td><td><a href="#identification">Station identification</a></td></tr>
+              <tr><td>Advanced</td><td><a href="#troubleshooting">Troubleshooting</a> references the settings most likely to matter here.</td></tr>
+              <tr><td>QRZ.com</td><td><a href="#qrz-forwarding">QRZ.com lookup and UDP forwarding</a></td></tr>
+              <tr><td>Forwarding</td><td><a href="#qrz-forwarding">QRZ.com lookup and UDP forwarding</a></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="workspace" class="help-topic" data-help-topic data-category="Getting started" data-keywords="main window layout menu header frequency favourites presets rx level power status tabs receive transmit gallery logbook file configurations calibration tools options help website github about application log menu bar">
+        <p class="topic-category">Getting started</p>
+        <h2>Tour of the workspace</h2>
+        <p>The fixed main window keeps station state at the top and task-specific tools in four tabs below.</p>
+
+        <h3>Menu bar</h3>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Menu</th><th>Contains</th></tr></thead>
+            <tbody>
+              <tr><td>File</td><td>Open a source image for transmit, export the current received frame, and exit.</td></tr>
+              <tr><td>Configurations</td><td>Switch, clone, rename, or delete saved settings profiles. See <a href="#configurations">Configurations</a>.</td></tr>
+              <tr><td>Calibration</td><td>The loopback self-test and the tone generator. See <a href="#calibration-tools">Calibration and tools menu</a>.</td></tr>
+              <tr><td>Tools</td><td>Decode a WAV file, export the logbook as ADIF, and the macros reference. See <a href="#calibration-tools">Calibration and tools menu</a>.</td></tr>
+              <tr><td>Options</td><td>Opens the settings dialog directly. See the "Options reference" topics below.</td></tr>
+              <tr><td>Help</td><td>This user guide, the project website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), the project's GitHub page, the application log folder, and About (version and license).</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Header and transceiver controls</h3>
+        <ul>
+          <li><strong>Frequency and mode</strong> show the connected radio's current state. You can request a frequency or supported radio mode when CAT is linked.</li>
+          <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
+          <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
+          <li><strong>Pwr</strong> is the application's TX playback gain. It is not the operating system's device volume, and not the radio's RF power setting.</li>
+          <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. The label reads <strong>Transmitting</strong> for that whole window (a real Transmit or a Tune tone), then returns to <strong>Receiving</strong> once it finishes. Otherwise the label switches to <strong>RX Muted</strong> whenever capture is stopped. It blinks amber and reads <strong>Decoding</strong> while an image is being decoded. The blink can be turned off in <a href="#appearance-options">Appearance options</a>. The matching status-bar chip does the same, so the transmitting and decoding state is visible from any tab, not only Receive.</li>
+          <li><strong>Stop TX</strong>, next to <strong>Receiving</strong>, cancels an in-progress transmission immediately. It is always visible, regardless of which tab you're on, so it is reachable without switching to the Transmit tab first.</li>
+        </ul>
+
+        <h3>Status indicators</h3>
+        <dl>
+          <dt>CAT linked</dt><dd>The configured radio backend is connected.</dd>
+          <dt>TX ERROR</dt><dd>The last transmit attempt ended in an error or automatic SWR cutoff. It reports the last outcome. It does not permanently lock out the next attempt.</dd>
+          <dt>Line, slant, buffer, frames today, log entries</dt><dd>Compact operating telemetry for the current session.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="receive-first-picture" class="help-topic" data-help-topic data-category="Receiving" data-keywords="receive first image picture decode vis listen auto detect audio level save frame abort copy tx log qso">
+        <p class="topic-category">Receiving</p>
+        <h2>Receive your first picture</h2>
+        <p>Scanline Studio normally identifies the incoming mode from its <a class="term" href="#glossary-vis">VIS</a> header and fills the image from top to bottom as lines arrive. See <a href="#sstv-modes">Supported SSTV modes</a> for the full list of modes it recognizes.</p>
+
+        <ol class="workflow">
+          <li>Tune the radio to the SSTV activity and select the correct sideband and filter.</li>
+          <li>Confirm the RX meter responds without spending much time in the red clipping range.</li>
+          <li>Confirm the header's <strong>Receiving</strong> toggle is on (it starts on by default), then on <strong>Receive</strong> set <strong>Auto-detect</strong> to <strong>Listening</strong>. Both are needed: <strong>Receiving</strong> controls audio capture, <strong>Auto-detect</strong> controls whether the decoder searches that audio.</li>
+          <li>Wait for a valid header. The detected mode, line progress, and incoming image update automatically.</li>
+        </ol>
+
+        <p>If the sender's header is missing or damaged, use a quick-mode button in the <strong>MODE</strong> card on the Receive tab to force the <em>next</em> decode into that mode. Right-click a slot for two more options. <strong>Hold this mode</strong> locks every following reception to that mode and ignores the sender's VIS header until you select <strong>Release</strong>. <strong>Reassign this slot</strong> points the slot at a different mode.</p>
+
+        <h3>Actions on the incoming frame</h3>
+        <ul>
+          <li><strong>Export frame…</strong> exports the current image to a location you choose.</li>
+          <li><strong>Abort</strong> abandons the current reception and returns to searching.</li>
+          <li><strong>Decode WAV…</strong> selects recorded audio and runs it through the decoder again.</li>
+          <li><strong>Copy to TX</strong> sends the received picture to the Transmit workspace.</li>
+          <li><strong>Log QSO</strong> begins a log entry associated with the reception.</li>
+          <li><strong>Record</strong> saves incoming audio for later diagnosis or re-decoding.</li>
+        </ul>
+
+        <div class="note"><strong>Automatic history.</strong> Completed receptions are saved as PNG files in the configured RX images folder and indexed in the Gallery. Manual JPEG export quality does not change these history PNG files.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality stations heard worked before fsk cw id new station callsign">
+        <p class="topic-category">Receiving</p>
+        <h2>Reception controls and telemetry</h2>
+        <p>The Receive tab shows what the decoder is doing. You rarely need to adjust anything here.</p>
+
+        <h3>Stations heard and worked-before</h3>
+        <ul>
+          <li><strong>Stations heard</strong> is a running list of identification the application has automatically read from FSK or CW sent around other stations' pictures. No action is needed from you. Each line shows the decoded identification (a callsign, or a full CW text such as "DE W1AW"), whether it came from FSK or CW, the time in UTC, and the SSTV mode, newest first, up to the most recent 20. Turn FSK or CW decoding on or off in <a href="#identification">Station identification</a>.</li>
+          <li><strong>Worked before</strong> checks the current reception's callsign against your logbook and shows either <strong>New station</strong> or the band and date of your most recent prior contact with it. Once you have logged that callsign more than once, a count appears in front. It is a quick heads-up, not a substitute for checking your log before claiming a new one.</li>
+        </ul>
+
+        <h3>Frame metadata</h3>
+        <p>The <strong>FRAME METADATA</strong> card next to the incoming picture shows the current reception's Callsign, NR/RST, CW ID, Name/QTH/Grid from QRZ.com, Frequency, Mode/VIS, Started time, and file size, plus a per-frame <strong>Note</strong> and <strong>Flag</strong>.</p>
+        <p>The callsign fills automatically from decoded FSK or CW identification. If it decoded wrongly or not at all, type it into <strong>Override callsign</strong>, then select <strong>Lookup QRZ</strong> to pull name, QTH, and grid. This requires <a href="#qrz-forwarding">QRZ.com</a> to be configured in Options.</p>
+
+        <h3>Sync &amp; slant</h3>
+        <ul>
+          <li><strong>Source</strong> reports whether the decoder is searching, locked, or in <a class="term" href="#glossary-avt-training">AVT training</a>.</li>
+          <li><strong>Slant <a class="term" href="#glossary-ppm">ppm</a></strong> estimates sound-clock mismatch that would tilt the picture.</li>
+          <li><strong>Re-sync</strong> asks the decoder to reacquire line timing.</li>
+          <li><strong>Correct slant</strong> redraws buffered lines using the current correction when buffering is enabled.</li>
+          <li><strong>Squelch level</strong> changes how strong a signal must be before it is treated as SSTV. Higher settings reduce false decodes but can miss weak signals.</li>
+        </ul>
+
+        <h3>Input chain</h3>
+        <ul>
+          <li><strong><a class="term" href="#glossary-bpf">BPF</a></strong> controls RX band-pass sharpness. Wide is the recommended starting point. Sharper filters reject adjacent interference but tolerate less drift. Despite its name, <strong>Normal</strong> switches the filter off entirely. The same setting is in Options → Decode (see <a href="#decode-options">Decode options</a>). A mid-picture change waits until that reception ends.</li>
+          <li><strong>Notch</strong> suppresses a narrow interfering tone. Click the spectrum trace to choose its frequency, then switch it on. It is off by default, and it is not remembered between sessions.</li>
+          <li>Leave the notch off unless you can actually see a carrier in the spectrum. It is a narrow filter placed inside the signal band, so it removes picture along with the interference. That trade is worth making against a real carrier and is a pure loss without one. Switch it off again once the interference goes away.</li>
+          <li><strong><a class="term" href="#glossary-agc">AGC</a> gain</strong>, <strong>buffer</strong>, <strong><a class="term" href="#glossary-xrun">XRUN</a></strong>, and <strong>clipping</strong> help diagnose the audio path.</li>
+        </ul>
+
+        <h3>DSP</h3>
+        <ul>
+          <li><strong><a class="term" href="#glossary-afc">AFC</a></strong> switches automatic frequency control on or off. It is on by default. AFC measures the sync tone and shifts the decode back toward its nominal frequency, which corrects a station that is tuned slightly off. Switch it off if you suspect AFC is locking onto interference instead of the signal.</li>
+          <li>The change applies during the current picture. From the next line onward the correction is no longer added, and the tone detectors return to their nominal frequencies. Lines already decoded keep the correction they were given.</li>
+          <li>While AFC is off, the <strong>Sync tone</strong> row on the Signal quality card shows a dash, because no correction is being measured.</li>
+          <li>AVT mode never uses AFC, whatever this is set to.</li>
+        </ul>
+
+        <div class="warning"><strong>Do not tune by numbers alone.</strong> If a picture decodes cleanly, avoid changing squelch, BPF, or advanced demodulator settings merely to make a readout look different.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="spectrum-waterfall" class="help-topic" data-help-topic data-category="Receiving" data-keywords="waterfall spectrum fft signal display bins per pixel start span gain zero peak hold both spec wf notch click">
+        <p class="topic-category">Receiving</p>
+        <h2>Spectrum and waterfall</h2>
+        <p>The spectrum shows the current audio-frequency distribution. The waterfall adds time history. These displays help you see an SSTV signal, interference, drift, and clipping symptoms.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Control</th><th>Effect</th></tr></thead>
+            <tbody>
+              <tr><td>Both / Spec / WF</td><td>Show both displays, spectrum only, or waterfall only.</td></tr>
+              <tr><td>Bins / px</td><td>Changes horizontal spectral aggregation and visual detail.</td></tr>
+              <tr><td>Start / Span</td><td>Choose the audio-frequency range displayed.</td></tr>
+              <tr><td>Gain / Zero</td><td>Adjust display scaling only. They do not change the captured audio.</td></tr>
+              <tr><td>Peak hold</td><td>Retains recent spectral peaks to make intermittent tones easier to see.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Clicking the spectrum selects the RX notch frequency. The notch affects the decoder input. The plotted spectrum and waterfall do not show the filtered result. Use <strong>Peak hold</strong> to tell a carrier from picture content: a carrier holds one frequency, and picture content does not.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="record-redecode" class="help-topic" data-help-topic data-category="Receiving" data-keywords="record wav re-decode decode wav replay audio file diagnose failed reception tools">
+        <p class="topic-category">Receiving</p>
+        <h2>Record and re-decode audio</h2>
+        <p>Audio recordings let you retry a marginal reception and preserve evidence for troubleshooting.</p>
+        <ol class="steps">
+          <li>Select <strong>Record</strong> on the Receive tab before or during the signal you want to preserve.</li>
+          <li>Select <strong>Stop recording</strong> when finished.</li>
+          <li>Choose <strong>Tools → Decode WAV file…</strong> or the frame's <strong>Decode WAV…</strong> action.</li>
+          <li>Select the WAV file and monitor the Receive tab as the decoder replays it.</li>
+        </ol>
+        <p>Try a forced quick mode only when you know the transmitted mode and the replay does not acquire it automatically. If the original recording clipped or omitted the signal, re-decoding cannot restore the missing audio.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr">
+        <p class="topic-category">Transmitting</p>
+        <h2>Transmit a picture</h2>
+        <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode.</p>
+
+        <ol class="workflow">
+          <li>On <strong>Transmit</strong>, select a mode (see <a href="#sstv-modes">Supported SSTV modes</a> for the full list) or leave mode following on Auto to reply in the last received mode.</li>
+          <li>Use <strong>Browse…</strong>, a stock image, a received image, or the blank editor as your source.</li>
+          <li>Crop, adjust, and add template elements.</li>
+          <li>Confirm the output device, duration, identification, Pwr level, and radio state. Then select the big <strong>TRANSMIT</strong> button to apply your edits and start sending in one step. With the CAT backend set to <strong>None</strong>, Scanline Studio sends no keying command. See <a href="#requirements">What you need</a> for keying the radio yourself.</li>
+        </ol>
+        <p>During transmission, progress shows percentage and remaining time. Select the header's <strong>Stop TX</strong> button, next to <strong>Receiving</strong>, to abort. See <a href="#workspace">Tour of the workspace</a>.</p>
+
+        <div class="note"><strong>Changing mode mid-edit.</strong> You can change the mode while a picture is still being edited — the crop, template elements, and background all resize to fit the new mode's dimensions and aspect ratio automatically. Switching back to the previous mode restores the exact same layout, so a mode change is always reversible this way. The mode selector is only disabled during an active transmission.</div>
+
+        <div class="safety"><strong>Before the first RF transmission.</strong> Use <a href="#radio-tune-safety">Tune and TX safety</a> to establish a clean drive level. Excess audio can cause ALC action, splatter, poor SSTV quality, or automatic SWR cutoff.</div>
+        <div class="note"><strong>Auto mode following.</strong> Auto normally matches the last received mode for a reply. It will not make an unsafe mid-transmit change, and it can decline a change when the already loaded image width is incompatible.</div>
+
+        <h3>While transmitting</h3>
+        <p>The Power/<a class="term" href="#glossary-alc">ALC</a> meter shows live PWR, ALC, and <a class="term" href="#glossary-swr">SWR</a> readings from the connected radio, when it reports them. It also shows a tone map of the audio-frequency range the current mode uses, and a TX clock readout. Together these confirm the transmission is progressing, not just that time is passing.</p>
+
+        <h3>Sent frames</h3>
+        <p>A "Sent frames" list on the Transmit tab keeps a short history of this session's transmissions. Each entry shows its outcome (Sent, Stopped, or Failed). Right-click a frame for <strong>Resend</strong> (transmit the same frame again) or <strong>Save…</strong> (export a copy of it). This history is session-only. It does not persist between application restarts the way the Gallery's receive history does.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="image-editor" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="image editor crop move scale rotate preview aspect letterbox safe area snap grid brightness contrast saturation gamma sharpen denoise new template cancel undo redo zoom multi select shift click lock duplicate copy paste style flatten fit stretch contain cover fit width fit height">
+        <p class="topic-category">Transmitting</p>
+        <h2>Edit the outgoing image</h2>
+        <p>The TX image editor is the main pane of the Transmit tab. There is no separate editor window to open. It combines non-destructive framing, image adjustments, and overlay composition: text, boxes, lines, and extra pictures on top of your base photo, also called the <strong>background</strong> (see <a href="#background-vs-backdrop">Background vs. backdrop</a>). Its mode-exact preview shows the pixels prepared for transmission.</p>
+
+        <h3>Frame the base image</h3>
+        <ul>
+          <li>Use <strong>Move</strong>, <strong>Crop</strong>, <strong>Scale</strong>, and <strong>Rotate</strong> tools on the canvas.</li>
+          <li><strong>Preserve aspect (letterbox)</strong> keeps proportions and fills unused frame space rather than stretching the image.</li>
+          <li><strong>Lock crop to mode</strong> constrains the crop rectangle to the selected mode's aspect ratio.</li>
+          <li><strong>Safe area</strong> displays a composition guide. It does not crop the transmitted frame.</li>
+          <li><strong>Snap grid</strong> snaps an element to a 5% grid after a drag or resize.</li>
+          <li>Use <strong>Fit</strong>, <strong>100%</strong>, and the zoom controls to change only your view of the editor.</li>
+        </ul>
+
+        <h3>Add and arrange elements</h3>
+        <p>The <strong>+ Text</strong>, <strong>+ Box</strong>, and <strong>+ Line</strong> tools place new overlay elements on the canvas. Picture elements come from the Insert Image controls covered in <a href="#templates-overlays">Templates, text, boxes, and images</a>, which also describes the styling options for each element type.</p>
+        <ul>
+          <li>Click an element to select it. <strong>Shift-click</strong> additional elements on the canvas to select several at once. A multi-selection can be dragged, nudged, duplicated, or deleted together. It cannot be resized, aligned, or restyled as a group. Style and geometry changes apply to one element at a time.</li>
+          <li><strong>Lock</strong> an element to stop it from being dragged by accident. <strong>Duplicate</strong> makes a copy, which is a quick way to build a related element.</li>
+          <li><strong>Copy</strong>, <strong>Cut</strong>, and <strong>Paste</strong> move or duplicate elements through the clipboard. <strong>Copy Style</strong> and <strong>Paste Style</strong> carry a text, box, or line element's appearance (color, outline, font, and similar) onto another element of the <em>same type</em>, without changing its position or content. They are greyed out for image elements and when the copied and target types do not match.</li>
+          <li>The right-click menu's <strong>Arrange</strong> submenu reorders layers: <strong>Bring to front</strong>, <strong>Bring forward</strong>, <strong>Send backward</strong>, <strong>Send to back</strong>. A separate item on that same right-click menu, <strong>Flatten into image</strong>, permanently merges one element into the background photo. After that you cannot move or restyle it.</li>
+          <li>A picture element's right-click <strong>Fit</strong> submenu has two groups. <strong>Stretch</strong>, <strong>Contain</strong>, and <strong>Cover</strong> change how the image's pixels fill its <em>current</em> box. <strong>Fit safe area</strong>, <strong>Fit width</strong>, and <strong>Fit height</strong> resize the box to match the <strong>Safe area</strong> guide (its full size, its width only, or its height only), centered. Both groups are greyed out while the element is locked.</li>
+          <li><strong>Undo</strong>/<strong>Redo</strong> cover the editing session.</li>
+        </ul>
+
+        <h3 id="background-vs-backdrop">Background vs. backdrop</h3>
+        <p>These sound similar but are not saved the same way:</p>
+        <ul>
+          <li>The <strong>background</strong> is the one photo the whole frame is built on. Load it with <strong>Browse</strong> or a stock image thumbnail, both in the <strong>Background</strong> section of the Transmit tab's sidebar. There is always exactly one. Loading a new one replaces it. You can load the first background at any point in the session, even with text, box, or picture elements already on the canvas. Those elements are kept. Once a background is loaded, <strong>Browse</strong> and the stock thumbnails stay disabled. To switch to a different photo, select <strong>New template</strong> first, which starts a fresh card. <strong>Undo</strong> and <strong>Remove background</strong> both still work. <strong>The background is never saved with a template.</strong> A template only stores its overlay elements, so you can reuse the same template with a different photo for every contact.</li>
+          <li>A <strong>backdrop</strong> is an inserted picture element (<strong>+ Image</strong>) that has been sent to the very back of the layer stack and stretched to fill the frame. The right-click menu's <strong>Set as backdrop</strong> item does this. Unlike the background, <strong>a backdrop is saved with the template</strong>. Use it to build a template with a fixed, reusable photo baked into its design (a logo card, a fixed QSL background, and similar).</li>
+          <li>Right-click the empty canvas and select <strong>Turn into backdrop</strong> to convert the current background into a backdrop element. This is useful right before saving a template that should always include a specific photo. It bakes in the current crop and adjustments, then leaves the background blank.</li>
+          <li>Right-click a backdrop element and select <strong>Turn into background</strong> to convert it back. It replaces whatever is currently loaded as the background and removes the element, immediately, on one click. <strong>Undo</strong> restores the previous background and the removed element together. A backdrop element is locked, which can block the canvas's right-click menu. If right-clicking the canvas shows no menu, use the <strong>Turn into background</strong> button on the element's row in the <strong>ELEMENTS</strong> list in the docked sidebar.</li>
+          <li>Right-click the empty canvas and select <strong>Remove background</strong> to clear the current background photo without keeping it as a backdrop element. Unlike Turn into backdrop, the photo is discarded, immediately, on one click. Use <strong>Undo</strong> to bring it back.</li>
+          <li>Only one backdrop can exist at a time. Setting or promoting a new one replaces the previous backdrop automatically.</li>
+        </ul>
+
+        <h3>Adjust the picture</h3>
+        <p>Brightness, contrast, saturation, gamma, sharpen, and denoise are stored with the working template and applied before overlays are drawn. They do not overwrite the original source file.</p>
+
+        <h3>Finish or discard</h3>
+        <ul>
+          <li><strong>TRANSMIT</strong> (the large, distinctly colored button) applies the editor state to the prepared TX frame and starts transmission immediately. The same card stays open and unchanged afterward, so you can send it again, keep editing, or set it aside while you resend an older frame from <strong>Sent frames</strong>. This is the only way to send a picture. There is no separate Transmit button elsewhere.</li>
+          <li><strong>Revert</strong> returns to the last applied state.</li>
+          <li><strong>New template</strong> is the only action that closes the current card. It discards the card and starts a fresh blank editor, every time. A confirmation dialog appears when unsaved edits would be lost.</li>
+        </ul>
+
+        <div class="warning"><strong>Preview limit.</strong> The preview is accurate for crop, scale, adjustments, and overlay placement. It does not simulate the chroma loss or other color effects introduced by a complete transmit-and-receive path for every SSTV mode.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="templates-overlays" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="template templates overlay overlays text box image line layer element inspector geometry font bold italic color fill outline shadow stack gradient picture fill rotation corner radius perspective macros qso fields insert ready rack library grid list view save load pin unpin rename delete import export">
+        <p class="topic-category">Transmitting</p>
+        <h2>Templates, text, boxes, images, and lines</h2>
+        <p>Template elements let you build reusable QSL-style layouts on top of the background photo, then save and instantly recall them for future contacts. See <a href="#background-vs-backdrop">Background vs. backdrop</a> for what does and does not get saved.</p>
+
+        <h3>Build a layout</h3>
+        <ul>
+          <li>Add <strong>Text</strong>, <strong>Box</strong>, <strong>Line</strong>, or <strong>Image</strong> elements. Image sources include a file, the clipboard, the last received image, and receive history.</li>
+          <li>Select an element in the Elements list or on the canvas, then use the Inspector's Geometry/Text/Image tabs for exact position, size, and appearance.</li>
+          <li>Shift-click additional elements on the canvas to select and move several at once (see <a href="#image-editor">Edit the outgoing image</a> for the full selection and layering controls).</li>
+        </ul>
+
+        <h3>Text styling</h3>
+        <p>Text elements can use any bundled font, at a chosen size, bold and/or italic. Beyond a plain fill color, you can add an outline (stroke) with a color and thickness, a drop shadow with an adjustable offset, or a "3D stack" repeated-copy effect with step-offset controls. You can also use a gradient fill, or a picture as the fill instead of a flat color (from a file or the clipboard). Pick whichever combination keeps the text legible over your background photo. To remove a picture fill and go back to a flat color, select <strong>Clear picture fill</strong> from the right-click menu, or use the <strong>CLEAR</strong> button next to the picture fill controls.</p>
+        <p>By default, resizing a text element's box shrinks the font to keep it fitting. Growing the box back does not grow the font past its set size. Right-click a text element and turn on <strong>Grow to fill box</strong> to let the font also grow larger when there is room. It is off by default and applies per element. Turning it on for one text element does not affect any other. The setting resets to off whenever a template reloads. The grown font size is saved with the template, so a reloaded template still shows text at the size it last grew to, not its original set size.</p>
+
+        <h3>Box and line styling</h3>
+        <p>Boxes support a fill color or gradient, an optional border with a thickness, rounded corners, and opacity. Lines support a stroke color and thickness. Both are plain geometry, not photos, so they composite cleanly over any background.</p>
+
+        <h3>Perspective transform</h3>
+        <p>Image and box elements can be skewed to a four-cornered shape instead of a plain rectangle. This is useful for making a flat picture look like it is lying at an angle, for example a photo "taped" onto a background at a slight tilt. Turn on <strong>Perspective</strong> in the element's inspector, then drag its four corner handles on the canvas.</p>
+
+        <h3>Insert live fields</h3>
+        <p>The Insert Field menu places tokens like his call, his grid, your call, your grid, frequency, mode, UTC time, date, distance, and bearing into a text element. Typing a value once updates every place that token appears. Fields are grouped by where their value comes from:</p>
+        <ul>
+          <li><strong>My side</strong> — your callsign, name, and grid from <a href="#station-options">Station options</a>, plus the current date and time. Always available.</li>
+          <li><strong>Radio</strong> — live frequency and mode from the connected rig. Shows blank on the transmitted card if no radio is connected.</li>
+          <li><strong>Per-QSO</strong> — the other station's callsign, grid, signal report, distance, and bearing. These need a value typed into the <strong>QSO FILL</strong> bar first, or they show blank. The QSO FILL bar is the row of fields at the top of the TX image editor that holds the per-contact values for the card about to be sent.</li>
+        </ul>
+        <p>See <a href="#macros">Macros and template fields</a> for the full token reference and how distance/bearing are calculated.</p>
+
+        <h3>Save and recall templates</h3>
+        <ol class="steps">
+          <li>Enter a template name and select <strong>SAVE</strong>. Right-clicking the canvas, or the background/backdrop image, also offers <strong>Save Template</strong>. If you have already typed a name, it saves immediately with that name. Otherwise it fills in the next free "tmp0", "tmp1", … name and saves right away.</li>
+          <li>Use the Template Library filter to find saved layouts. Switch between <strong>LIST</strong> and <strong>GRID</strong> view with the toggle at the top of the panel. Your choice is remembered. Click a row or tile once to select it and show its Load, Pin, Export, and Delete buttons. Double-click to load it, or right-click for the same actions as a menu. Right-click and select <strong>Rename</strong> to edit the name in place (Enter commits, Esc reverts). A pinned template shows a <strong>PINNED</strong> badge. Select <strong>Pin</strong> on a template to place it in the <strong>TEMPLATES</strong> rack, the strip of nine slots elsewhere in the TX editor.</li>
+          <li>In the Templates rack, click a slot once to select it and show its Load, Unpin, Export, and Delete buttons. Double-click a slot to load it, or right-click it for the same actions as a menu. Right-click and select <strong>Rename</strong> to edit the name in place (Enter commits, Esc reverts). Number keys 1–9 recall a slot directly when the editor has keyboard focus. This is the fastest way to reply mid-QSO without touching the mouse.</li>
+          <li>Loading over unsaved work asks first: <strong>Discard unsaved changes?</strong>, naming the template that would replace them. A slot showing <strong>Loaded</strong> is the one the canvas currently came from. It reads <strong>Loaded • edited</strong> once you have changed anything since.</li>
+          <li>Deleting from the Templates rack asks for confirmation, naming the template and its slot number. Deleting from the Template Library list asks for confirmation too, naming the template.</li>
+          <li>Use <strong>EXPORT</strong> to save a single-file bundle you can share with another operator, and <strong>IMPORT</strong> to load one someone shared with you.</li>
+          <li>Select <strong>IMPORT LEGACY</strong> to load a <code>.mtm</code> or <code>.mti</code> template file from a legacy YONIQ/MMSSTV install. Most content (text, position, color, images, boxes) carries over; a few legacy-only effects (multi-stop gradients, dash/decorative line styles, underline/strikethrough, most macro tokens other than the sender's own callsign) have no equivalent here and are approximated or dropped. A status message tells you if anything needed adjustment. The full detail is in the log.</li>
+        </ol>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="identification" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="identification id fsk cw morse sound file mmv callsign nr rst tail frequency wpm transmit decode rx hear stations heard window seconds">
+        <p class="topic-category">Transmitting</p>
+        <h2>Station identification</h2>
+        <p>Identification settings are configured in <strong>Options → Identification</strong>. The top section (Off / CW / Sound file) and the checkboxes below it control what <em>you</em> send. A separate pair of checkboxes controls what the application automatically <em>hears</em> from other stations.</p>
+
+        <h3>What you send</h3>
+        <ul>
+          <li><strong>Encode FSK ID on transmit</strong> encodes the configured station callsign after the picture when enabled.</li>
+          <li><strong>CW (Morse)</strong> sends the configured <strong>CW ID text</strong> at the selected <strong>CW ID tone (Hz)</strong> and <strong>CW ID speed (WPM)</strong>.</li>
+          <li><strong>Sound file</strong> plays a supported legacy <code>.mmv</code> audio file instead of CW identification.</li>
+          <li><strong><a class="term" href="#glossary-nr">NR</a>/RST</strong> can add a configured static sub-packet to <a class="term" href="#glossary-fsk-id">FSK ID</a>. It is not automatically filled from the current logbook exchange.</li>
+        </ul>
+        <p>The Transmit tab's Tail summary shows whether the current combination is FSK + CW, FSK + sound file, one method only, or off.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>Range</th><th>Default</th></tr></thead>
+            <tbody>
+              <tr><td>CW ID text</td><td>Free text</td><td><code>DE %m</code> (sends "DE" followed by your callsign)</td></tr>
+              <tr><td>CW ID tone (Hz)</td><td>100–3000 Hz</td><td>1000 Hz</td></tr>
+              <tr><td>CW ID speed (WPM)</td><td>10–50 <a class="term" href="#glossary-wpm">WPM</a></td><td>28 WPM</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>What the application automatically hears</h3>
+        <p>Two separate checkboxes let Scanline Studio listen for <em>other</em> stations' identification and log it for you, independent of what you yourself send:</p>
+        <ul>
+          <li><strong>Decode FSK ID on receive</strong> reads FSK identification sent by other stations.</li>
+          <li><strong>Decode CW ID on receive</strong> reads Morse identification sent by other stations, opening a listening window (<strong>CW ID capture window (seconds)</strong>, 5–20 seconds, default 12) around each reception.</li>
+        </ul>
+        <p>Anything decoded this way appears in <a href="#receive-controls">Stations heard</a> on the Receive tab. You do not need to do anything else to see it.</p>
+
+        <div class="warning"><strong>Legal identification remains your responsibility.</strong> Confirm that the selected text, callsign, method, and timing meet the rules that apply to your station.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="gallery" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="gallery receive history images thumbnails filter today unlogged flagged search note export selected frame storage disk free image viewer copy">
+        <p class="topic-category">Images and logging</p>
+        <h2>Browse received images</h2>
+        <p>The Gallery is the searchable history of completed receptions. Select a thumbnail to inspect and manage that frame.</p>
+
+        <h3>Find a frame</h3>
+        <ul>
+          <li>Filter by <strong>All</strong>, <strong>Today</strong>, <strong>Unlogged</strong>, or <strong>Flagged</strong>.</li>
+          <li>Use the search field for mode or note text.</li>
+          <li>Select <strong>Refresh</strong> to reload the history and <strong>Latest</strong> to return to the newest frame.</li>
+        </ul>
+
+        <h3>Work with the selection</h3>
+        <ul>
+          <li>Add a note or flag important frames.</li>
+          <li>Select <strong>Export</strong> to write a copy in a chosen image format. The General tab's JPEG quality applies when you choose JPEG.</li>
+          <li>Select <strong>Open in log</strong> to link the frame to an existing QSO or create and link a new QSO.</li>
+          <li>Open the image viewer for Fit/100% zoom, previous/next navigation, clipboard copy, and opening the file location.</li>
+        </ul>
+
+        <h3>Right-click a thumbnail</h3>
+        <p>Right-clicking a thumbnail selects it and opens a menu with the same actions as the Selected-frame panel: <strong>Open in log</strong>, <strong>Export</strong>, <strong>Send to TX</strong>, <strong>Flagged</strong>, <strong>Add note…</strong>, and <strong>Delete</strong>. <strong>Flagged</strong> toggles the flag directly. <strong>Add note…</strong> opens a small dialog to type a note without first selecting the frame.</p>
+
+        <p>The Storage card shows the active image folder, naming convention, and available disk space. By default, history filenames contain a timestamp, mode, and short identifier.</p>
+        <div class="warning"><strong>Moving files outside the application.</strong> If a history image is moved or deleted in a file manager, the Gallery entry may no longer open it. Use Refresh to reconcile the view.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="logbook" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="logbook qso record callsign utc frequency mode sstv rst grid name qth country notes search edit save adif import export">
+        <p class="topic-category">Images and logging</p>
+        <h2>Log and find QSOs</h2>
+        <p>The Logbook tab stores station contacts alongside receive history in the application database.</p>
+
+        <h3>Log a QSO</h3>
+        <ol class="steps">
+          <li>Select <strong>New</strong>, or use <strong>Log QSO</strong> from a received frame to prefill available context.</li>
+          <li>Enter the callsign, UTC start/end, frequency, radio mode, SSTV mode, sent and received reports, and any station details or notes you have.</li>
+          <li>Select <strong>Log QSO</strong>. Optional UDP forwarding runs after the local record is saved.</li>
+        </ol>
+
+        <h3>Search and edit</h3>
+        <p>Filter by exact callsign and UTC date range, then select a row to edit it. Choose <strong>Save changes</strong> to update the record.</p>
+
+        <h3><a class="term" href="#glossary-adif">ADIF</a> exchange</h3>
+        <p>Use <strong>Import…</strong> to add records from an ADIF file and <strong>Export…</strong> to write matching records. A partial-import warning means records already processed may have been added before the bad record was encountered.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="qrz.com lookup callsign credentials username password forwarding udp wsjt-x loggedadif gridtracker n1mm log4om port privacy">
+        <p class="topic-category">Images and logging</p>
+        <h2>QRZ.com lookup and UDP forwarding</h2>
+        <p>Both integrations are optional. Configure them in Options only if they are part of your logging workflow.</p>
+
+        <h3>QRZ.com</h3>
+        <ul>
+          <li>Enable callsign lookup and enter your QRZ.com credentials under <strong>Options → QRZ.com</strong>.</li>
+          <li>Use <strong>Test</strong> to check the credentials.</li>
+          <li>On the Receive tab's Frame metadata card, select <strong>Lookup QRZ</strong> next to a received callsign to pull name, QTH, and grid. See <a href="#receive-controls">Reception controls and telemetry</a>.</li>
+        </ul>
+        <p>This screen configures callsign lookup only. The current application does not provide an Options control for QRZ Logbook uploads.</p>
+        <div class="warning"><strong>Credential storage.</strong> The current application stores the QRZ.com password locally in its settings file without encryption. Use a unique password rather than one reused for other accounts.</div>
+
+        <h3>ADIF over UDP</h3>
+        <p>Under <strong>Options → Forwarding</strong>, add each destination's name, host, and port. Every newly logged QSO is sent to enabled destinations as a WSJT-X protocol <code>LoggedADIF</code> message. Common local ports include 2237 for GridTracker and 2333 for some N1MM Logger+ or Log4OM arrangements. Check the receiving application's documentation for its port.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="radio-cat" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="radio cat backend none rigctld hamlib linked flrig host port serial model baud ptt vox cat rts dtr connect test connection bandwidth filter passband preset 1800 2400 2800 favourite favourites per-favourite 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm store current">
+        <p class="topic-category">Radio and audio</p>
+        <h2>Radio and CAT setup</h2>
+        <p>Open <strong>Options → Radio / CAT</strong>, choose one backend, enter its connection details, test it, save it, and then connect the real radio session. <strong>Test connection</strong>, <strong>Connect</strong>, and <strong>Disconnect</strong> are all on this same tab, below the backend settings, not in the main window's transceiver header.</p>
+        <p>Once connected, transmit power, the Tune test tone, and the automatic high-<a class="term" href="#glossary-swr">SWR</a> cutoff live in a separate topic: see <a href="#radio-tune-safety">Tune and TX safety</a>.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Backend</th><th>When to choose it</th><th>Main settings</th></tr></thead>
+            <tbody>
+              <tr><td>None</td><td>You control tuning and PTT outside the application.</td><td>No connection settings.</td></tr>
+              <tr><td>rigctld</td><td>A Hamlib <code>rigctld</code> process or compatible server is already running.</td><td>Host and TCP port.</td></tr>
+              <tr><td>Linked Hamlib</td><td>You want Scanline Studio to load an installed Hamlib library directly.</td><td>Library, Hamlib rig model number, CAT serial port, baud rate, and PTT method.</td></tr>
+              <tr><td>flrig</td><td>An <code>flrig</code> instance is already controlling the radio.</td><td>Host and XML-RPC port.</td></tr>
+              <tr><td>OmniRig (Windows, client mode)</td><td>You already run OmniRig and want Scanline Studio to share the rig with another OmniRig-aware application, such as a logger. Windows only.</td><td>No connection settings here. Rig selection is in OmniRig's configuration dialog.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>Linked Hamlib sequence</h3>
+        <ol class="steps">
+          <li>Leave the Hamlib library path blank for normal auto-detection, or browse to a specific shared library. Select <strong>Test</strong>.</li>
+          <li>Choose a model from the detected list, or enter Hamlib's numeric model ID.</li>
+          <li>Select the CAT serial port and baud rate.</li>
+          <li>Choose PTT. CAT uses the CAT connection. RTS/DTR uses the selected PTT port. VOX sends no keying command and relies on the radio's audio-triggered VOX.</li>
+          <li>Run <strong>Test CAT</strong> and, when applicable, <strong>Test PTT</strong>.</li>
+          <li>Select <strong>Save</strong>, then <strong>Connect</strong>. Connect uses saved settings, so save newly edited values first.</li>
+        </ol>
+
+        <div class="warning"><strong>One controller at a time.</strong> Direct serial access commonly fails when another program already owns the port. Use a sharing backend such as rigctld or flrig when multiple applications must work with the same radio.</div>
+
+        <h3>Filter bandwidth (Transceiver header)</h3>
+        <p>When the connected backend supports it, a small bandwidth control appears on the Transceiver header card at the top of the main window. It is separate from the Options dialog above. It offers three common quick picks, 1800, 2400, and 2800 Hz, but you can type any other value and select <strong>Set</strong> to request it. Not every backend supports this. flrig does not: its bandwidth readback cannot be reliably converted to a plain Hz value across different radios.</p>
+        <div class="warning"><strong>Too narrow can break the picture.</strong> An overly narrow filter can break SSTV decode or clip transmitted audio. The radio may also silently snap your request to its nearest real filter rather than matching it exactly.</div>
+
+        <h3>Filter bandwidth stored per Favourite</h3>
+        <p>Each Favourite stores a filter bandwidth alongside its frequency and mode, and applies all three when you select it. Setting the mode makes the radio fall back to its default filter for that mode, which on some radios is far too narrow for SSTV. The bandwidth is therefore always sent after the mode.</p>
+        <p>The quick picks in the <strong>Edit list…</strong> dialog follow the mode you choose for that Favourite. SSB and data modes offer 1800, 2400 and 2800 Hz. FM modes offer 9000, 12000 and 15000 Hz. Changing a Favourite's mode between those two groups moves its bandwidth with it. The field stays freely editable, so you can type any value between 50 and 20000 Hz, and a value you type is sent exactly as typed.</p>
+        <p>A Favourite stored before this feature existed has no stored bandwidth. It uses 2400 Hz on SSB and data modes, and 15000 Hz on FM modes.</p>
+        <div class="warning"><strong>Selecting a Favourite overwrites a filter you set by hand.</strong> Backends that cannot set bandwidth, such as flrig and OmniRig, skip that step and leave the radio's filter alone.</div>
+
+        <h3>Which modes a Favourite can use</h3>
+        <p>The <strong>Edit list…</strong> dialog offers six modes: USB, LSB, FM, DATA-U, DATA-L and DATA-FM. The DATA modes use the radio's data connector rather than its microphone path, which is normally what you want for soundcard SSTV. Not every radio has DATA-FM.</p>
+        <p>Modes not used for SSTV (AM, CW and RTTY) are not offered. <strong>Store current</strong> is unavailable while the radio sits on a mode outside those six, so it cannot create a Favourite that the dialog could not display.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="radio-tune-safety" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="tune tx power pwr audio gain meter alc swr safety cutoff threshold ptt test dummy load">
+        <p class="topic-category">Radio and audio</p>
+        <h2>Tune and TX safety</h2>
+        <p>The Radio / CAT tab includes a controlled tone for setting application playback gain against the radio's meters.</p>
+
+        <ol class="steps">
+          <li>Use a dummy load or clear test frequency where practical, and begin with low <strong>Pwr</strong>.</li>
+          <li>Select <strong>Tune</strong>. Scanline Studio keys PTT and generates a steady tone for up to 30 seconds.</li>
+          <li>Slowly raise <strong>Pwr</strong> while watching the radio's RF power and <a class="term" href="#glossary-alc">ALC</a> indications.</li>
+          <li>Stop before ALC becomes excessive. Select <strong>Stop tune</strong> or let the time limit stop it.</li>
+        </ol>
+
+        <p><strong>Stop TX if <a class="term" href="#glossary-swr">SWR</a> too high</strong> cancels an active transmission after the connected radio reports a value over the chosen threshold for two consecutive polls. The option cannot work if the radio or backend does not report SWR.</p>
+        <div class="safety"><strong>Not primary protection.</strong> Software polling and CAT can fail or lag. The SWR cutoff is a convenience backstop, not a substitute for the transceiver's hardware protection, a suitable antenna system, or operator monitoring.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="audio-options" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="audio options capture playback device sample rate tx clock offset stereo mono left right channel performance recording restart">
+        <p class="topic-category">Radio and audio</p>
+        <h2>Audio settings</h2>
+        <p>Audio settings determine where SSTV enters and leaves the application.</p>
+        <dl>
+          <dt>Capture device (RX)</dt><dd>The input carrying received radio audio.</dd>
+          <dt>Playback device (TX)</dt><dd>The output feeding the radio's transmit audio path.</dd>
+          <dt>Sample rate</dt><dd>The DSP rate in whole hertz, from 5000 to 48500 (11025 Hz is the legacy default). Saving a change applies it live by briefly reopening capture and ending any current reception. If a recording is running, the change may wait until you restart.</dd>
+          <dt>TX clock offset</dt><dd>A manual correction, -1500 to 1500 Hz, for a measured transmit sound-clock error, for example when another station reports that your signal sounds slightly fast or slow. It changes generated tone timing, not the device sample rate. Leave it at zero without a real measurement.</dd>
+          <dt>Stereo capture source</dt><dd>Mono mixes both input channels; Left or Right selects only that channel.</dd>
+          <dt>Send TX audio to both stereo channels separately</dt><dd>Duplicates transmit output for interfaces that require both channels.</dd>
+        </dl>
+        <div class="tip"><strong>Device names can change.</strong> USB audio devices may enumerate differently after moving ports or updating the OS. If levels disappear after a hardware change, recheck both device selectors.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant">
+        <p class="topic-category">Options reference</p>
+        <h2>Decode options</h2>
+        <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. These are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing it in either place changes both.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Setting</th><th>Meaning</th></tr></thead>
+            <tbody>
+              <tr><td>Squelch level</td><td>Higher values reject more noise but require a stronger signal.</td></tr>
+              <tr><td>RX band-pass filter</td><td>Normal disables the filter; Wide is the recommended default; Sharp and Very sharp reject more adjacent energy but are less tolerant of drift.</td></tr>
+              <tr><td>Demodulator</td><td><a class="term" href="#glossary-hilbert">Hilbert transform</a> is the legacy-aligned default. <a class="term" href="#glossary-pll">PLL</a> and zero crossing are selectable alternatives. AVT training uses PLL internally regardless.</td></tr>
+              <tr><td>RX buffering</td><td>Off prevents past-line redraw; On holds lines in memory; Extended uses disk-backed staging for long or difficult receptions.</td></tr>
+              <tr><td>Auto-stop</td><td>Can abandon an erratic or weak reception.</td></tr>
+              <tr><td>Auto-restart</td><td>Can restart on a stronger sync detected during reception.</td></tr>
+              <tr><td>Auto-sync</td><td>Attempts to re-establish synchronization during decode.</td></tr>
+              <tr><td>Auto-slant</td><td>Corrects sound-clock slant while receiving. Requires RX buffering.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>Live changes that could disrupt the current picture wait until that reception ends rather than switching algorithms mid-image.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="general-storage-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="general storage folders locations images config settings json database history db log jpeg quality language restart move files">
+        <p class="topic-category">Options reference</p>
+        <h2>General and storage options</h2>
+        <p>The General tab controls language, window behavior, manual JPEG export quality, and application data locations.</p>
+
+        <dl>
+          <dt>Remember window position and size</dt><dd>Restores where you last left the main window (including maximized state) the next time you start Scanline Studio, instead of always opening at the default size and position.</dd>
+          <dt>Export quality (JPEG)</dt><dd>1–100 compression quality, used only when you manually export a received frame as JPEG from the Gallery's Export button. Received images are always auto-saved as PNG regardless of this setting.</dd>
+        </dl>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Location</th><th>What changes</th><th>Existing data</th></tr></thead>
+            <tbody>
+              <tr><td>RX images folder</td><td>New receptions are saved there immediately.</td><td>Existing images are not moved.</td></tr>
+              <tr><td>Auto-save RX audio</td><td>New receptions' raw audio is saved alongside the image immediately.</td><td>Existing audio files are not moved.</td></tr>
+              <tr><td>Config file folder</td><td>The <code>settings.json</code> location changes immediately.</td><td>The application relocates its settings as part of applying the location.</td></tr>
+              <tr><td>Database file folder</td><td>The shared <code>history.db</code> location changes on the next start.</td><td>The move is staged and requires a restart.</td></tr>
+              <tr><td>Application log folder</td><td>New log output switches to the selected folder immediately.</td><td>Older logs remain where they were written.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>The Config and Database folder boxes show the active location. A restart prompt appears when a staged database move needs completion.</p>
+        <div class="warning"><strong>Back up before manual edits.</strong> Close Scanline Studio before manually copying or editing <code>settings.json</code> or <code>history.db</code>. Closing the application is what makes a copy of <code>history.db</code> complete on its own — see <a href="#files-backup-privacy">Files, backups, and privacy</a> for why. Do not merge SQLite database files as text.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="advanced-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="advanced dsp pll vco loop filter cutoff order zero crossing iir fir smoothing tx bpf lpf filter taps diagnostics defaults">
+        <p class="topic-category">Options reference</p>
+        <h2>Advanced DSP options</h2>
+        <p>These controls expose low-level demodulator and transmit-filter parameters ported from the legacy application. Almost nobody needs to touch this tab. The defaults already match what the rest of the application expects. It exists for measured experiments and diagnosis, not routine tuning.</p>
+
+        <h3>PLL demodulator tuning</h3>
+        <p>The PLL (phase-locked loop) demodulator tracks the incoming picture tone's frequency to recover brightness. These values apply whenever "PLL" is the selected demodulator on the Decode tab, and always during AVT training regardless of that selection.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>What it changes</th><th>Range</th><th>Default</th></tr></thead>
+            <tbody>
+              <tr><td><a class="term" href="#glossary-vco">VCO</a> gain</td><td>How strongly the loop reacts to a frequency error. Higher tracks faster but can overshoot on noise.</td><td>0.35–10</td><td>1.0</td></tr>
+              <tr><td>Loop filter order</td><td>How many stages smooth the tracking correction before it's applied.</td><td>1–32</td><td>1</td></tr>
+              <tr><td>Loop filter cutoff</td><td>The frequency above which the tracking loop stops responding.</td><td>1–3900 Hz</td><td>1500 Hz</td></tr>
+              <tr><td>Output filter order</td><td>How many stages smooth the recovered brightness signal.</td><td>1–32</td><td>3</td></tr>
+              <tr><td>Output filter cutoff</td><td>The frequency above which the recovered brightness signal is smoothed away.</td><td>1–3900 Hz</td><td>900 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="warning"><strong>High cutoff values degrade the picture.</strong> The two cutoff fields accept values far above anything useful. The PLL demodulator breaks into a visible herringbone pattern well below the 3900&nbsp;Hz maximum, where the Hilbert and zero-crossing demodulators merely get grainy at the same setting. The safe range is not the same for all three, so the field cannot enforce one. Leave both at their defaults unless you are deliberately running a measured experiment.</div>
+
+        <h3>Zero-crossing demodulator tuning</h3>
+        <p>The zero-crossing discriminator recovers brightness a different way, by timing how often the tone waveform crosses zero. It is used whenever "Zero crossing" is the selected demodulator on the Decode tab.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>What it changes</th><th>Range</th><th>Default</th></tr></thead>
+            <tbody>
+              <tr><td>Smoothing mode</td><td><a class="term" href="#glossary-iir">IIR</a> and <a class="term" href="#glossary-fir">FIR</a> are two different math approaches to smoothing the recovered signal; Off applies none.</td><td>IIR, FIR, Off</td><td>IIR</td></tr>
+              <tr><td>Output filter order</td><td>Same idea as the PLL's output filter order, above.</td><td>1–32</td><td>3</td></tr>
+              <tr><td>Output filter cutoff</td><td>Same idea as the PLL's output filter cutoff, above.</td><td>1–3900 Hz</td><td>900 Hz</td></tr>
+              <tr><td>Smoothing</td><td>The smoothing filter's cutoff frequency.</td><td>500–8000 Hz</td><td>2200 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <h3>TX audio filtering</h3>
+        <p>These shape the audio Scanline Studio generates when transmitting, independent of the demodulator settings above (which only affect receiving).</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Field</th><th>What it changes</th><th>Range</th><th>Default</th></tr></thead>
+            <tbody>
+              <tr><td>Enable TX band-pass filter</td><td>Restricts transmitted audio to the SSTV tone range, reducing out-of-band noise.</td><td>On/Off</td><td>On</td></tr>
+              <tr><td>Filter taps</td><td>How sharp that band-pass filter is. More taps cut more sharply but cost more CPU.</td><td>2–512, even numbers only</td><td>24</td></tr>
+              <tr><td>Enable TX low-pass filter</td><td>Removes transmitted audio content above a chosen frequency.</td><td>On/Off</td><td>Off</td></tr>
+              <tr><td>Low-pass cutoff</td><td>The frequency above which transmitted audio is removed, when the low-pass filter above is on.</td><td>100–3000 Hz</td><td>2000 Hz</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="warning"><strong>Record the baseline.</strong> These settings can make decode or TX audio worse without an obvious error message. Change one value at a time, keep a representative WAV test recording, and use <strong>Reset section to defaults</strong> if results deteriorate.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="appearance-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="appearance theme dark mode light system font size large normal display eye strain screen brightness night decoding indicator blink">
+        <p class="topic-category">Options reference</p>
+        <h2>Appearance options</h2>
+        <p>The Appearance tab changes how the application looks. It has no effect on receiving, transmitting, or your saved data, so it's safe to try and switch back at any time.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Setting</th><th>Choices</th><th>What it does</th></tr></thead>
+            <tbody>
+              <tr><td>Theme</td><td>Light, Dark, System</td><td>Light and Dark switch the whole application's colors as soon as you select Save. No restart is needed. System follows your operating system's light/dark setting and switches automatically if you change that later.</td></tr>
+              <tr><td>Font size</td><td>Normal, Large</td><td>Large increases text and control sizes across the whole application. This is useful on a small screen, a high-resolution display, or simply for easier reading. It is one fixed size, not a slider. There is no in-between setting.</td></tr>
+              <tr><td>Decoding indicator blinks</td><td>On, Off</td><td>On by default. The Transceiver header's <strong>Receiving</strong> toggle and the status bar's RX indicator both turn amber and read <strong>Decoding</strong> while an image is actively decoding, visible from any tab. Turning this off keeps the amber "Decoding" color and text but stops the blink, showing a steady color instead.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>All three settings apply immediately once you select <strong>Save</strong>, the same as everything else in the Options dialog. <strong>Reset section to defaults</strong> returns all three to Light, Normal, and On, but only takes effect once you save.</p>
+        <div class="tip"><strong>Operating in a dim room at night?</strong> Dark keeps the interface from lighting up the room and is easier on your eyes after dark.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log">
+        <p class="topic-category">Options reference</p>
+        <h2>Station options</h2>
+        <p>The Station tab holds the identity values other features quietly rely on: template macros, identification, and the logbook all read from here rather than asking you to retype them.</p>
+
+        <dl>
+          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, and every QSO you log. Leaving this blank breaks all four at once, so it's worth setting before anything else.</dd>
+          <dt>Your name</dt><dd>Available to template overlays as a "MY NAME" insert-field. Purely cosmetic. Nothing else in the application reads it.</dd>
+          <dt>Your grid square</dt><dd>Your <a class="term" href="#glossary-maidenhead-grid">Maidenhead grid</a> locator. The field is not validated, so any free-text location you prefer also works. Used for a "MY GRID" overlay field and, together with a contact's grid, to calculate distance and bearing for template fields.</dd>
+          <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="configurations" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="configurations presets profile switch reset clone rename delete default saved settings operator station quick switch">
+        <p class="topic-category">Tools and reference</p>
+        <h2>Configurations</h2>
+        <p>Configurations are named snapshots for switching groups of application settings, for example between radios, interfaces, or operating setups.</p>
+        <dl>
+          <dt>Switch To</dt><dd>Applies the selected saved configuration. Switching is rejected while transmitting or recording.</dd>
+          <dt>Reset</dt><dd>Switches back to the Default configuration.</dd>
+          <dt>Clone into…</dt><dd>Creates a new configuration from the current one.</dd>
+          <dt>Rename…</dt><dd>Changes the configuration's display name.</dd>
+          <dt>Delete…</dt><dd>Permanently removes the selected named configuration after confirmation.</dd>
+        </dl>
+        <p>A switch is rejected outright when a transmission or audio recording is already active. In other circumstances, a setting that cannot be applied live can produce a partial-application warning. Read the result dialog and restart when instructed.</p>
+        <div class="note"><strong>Unsaved Options edits.</strong> Configuration switching operates on saved settings. Finish or cancel an open Options change before treating the new configuration as your known baseline.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="calibration-tools" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="calibration loopback self test tone generator wav decode export session log adif tools diagnostics">
+        <p class="topic-category">Tools and reference</p>
+        <h2>Calibration and tools menu</h2>
+        <p>The menu groups self-tests and utilities that are useful during setup or diagnosis.</p>
+
+        <h3>Calibration</h3>
+        <ul>
+          <li><strong>Loopback self-test</strong> encodes and decodes internally to verify the application path. A pass shows the software path works. It does not test your physical sound interface, cable, radio, or RF path.</li>
+          <li><strong>Tone generator…</strong> produces a chosen audio tone for a chosen duration. Use it carefully. Depending on radio setup, audio may reach a live transmitter.</li>
+        </ul>
+
+        <h3>Tools</h3>
+        <ul>
+          <li><strong>Decode WAV file…</strong> replays a compatible audio recording through the SSTV decoder.</li>
+          <li><strong>Export logbook as ADIF…</strong> exports QSO log data in ADIF format.</li>
+          <li><strong>Macros</strong> opens the token reference and a preview resolver.</li>
+        </ul>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="sstv-modes" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="sstv modes list martin scottie robot avt pasokon pd mr ml mn mc mp sc2 vis code supported which modes">
+        <p class="topic-category">Tools and reference</p>
+        <h2>Supported SSTV modes</h2>
+        <p>Scanline Studio decodes and transmits the same SSTV mode families as its predecessor applications. Every mode below is available from the mode selector on the Transmit tab, and every one is auto-detected on receive from its VIS header.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Family</th><th>Modes</th></tr></thead>
+            <tbody>
+              <tr><td>Martin</td><td>M1, M2</td></tr>
+              <tr><td>Scottie</td><td>S1, S2, DX</td></tr>
+              <tr><td>Robot</td><td>36, 72, 24</td></tr>
+              <tr><td>PD</td><td>50, 90, 120, 160, 180, 240, 290</td></tr>
+              <tr><td>Pasokon</td><td>P3, P5, P7</td></tr>
+              <tr><td>MR / ML</td><td>MR73, MR90, MR115, MR140, MR175, ML180, ML240, ML280, ML320</td></tr>
+              <tr><td>MN</td><td>MN73, MN110, MN140</td></tr>
+              <tr><td>MC</td><td>MC110, MC140, MC180</td></tr>
+              <tr><td>MP</td><td>MP73, MP115, MP140, MP175</td></tr>
+              <tr><td>SC2</td><td>SC2-60, SC2-120, SC2-180</td></tr>
+              <tr><td>AVT</td><td>AVT</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p>The MODE card's quick-mode buttons on the Receive tab (see <a href="#receive-first-picture">Receive your first picture</a>) hold a working subset of these. Right-click a slot to reassign it to any mode from the full list above.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="macros" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="macros tokens template variables percent m date time callsign name grid frequency mode distance bearing his_grid preview">
+        <p class="topic-category">Tools and reference</p>
+        <h2>Macros and template fields</h2>
+        <p>Macros replace tokens in TX text elements with current station, radio, time, or QSO-fill values.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Value</th><th>Source</th></tr></thead>
+            <tbody>
+              <tr><td>Your callsign, name, grid</td><td>Options → Station.</td></tr>
+              <tr><td><a class="term" href="#glossary-utc">UTC</a> date and time</td><td>The computer clock.</td></tr>
+              <tr><td>Frequency and radio mode</td><td>The live CAT connection. Blank when no radio state is available.</td></tr>
+              <tr><td>His call, grid, signal report, and other QSO fields</td><td>The template editor's QSO Fill values.</td></tr>
+              <tr><td>Distance and bearing</td><td>Calculated from your configured grid and the <code>his_grid</code> template variable.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Open <strong>Tools → Macros</strong> to see the exact token spelling available in the running version and preview station/time values. Any <code>{word}</code> you type that is not one of the built-in tokens above becomes a custom field: it automatically adds a matching row to the QSO FILL bar, resolved fresh each time the card is sent. A misspelled token therefore shows up as an unexpected extra QSO FILL row rather than disappearing.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="keyboard-shortcuts" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="keyboard shortcuts keys ctrl open image save frame export clipboard paste arrows nudge shift ready rack 1 9 search">
+        <p class="topic-category">Tools and reference</p>
+        <h2>Keyboard shortcuts</h2>
+        <p>Availability can depend on which tab or editor control currently owns focus.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Shortcut</th><th>Action</th></tr></thead>
+            <tbody>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>O</kbd></td><td>Open a source image for transmit.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>S</kbd></td><td>Apply the current TX edit on the Transmit tab. On other tabs, save the current RX frame when available.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>E</kbd></td><td>Save/export the current received frame.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>V</kbd></td><td>Add a clipboard image in the TX editor when the editor context accepts it.</td></tr>
+              <tr><td>Arrow keys</td><td>Nudge the active crop or selected editor geometry by a small amount.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + arrow</td><td>Use the editor's larger nudge step where supported.</td></tr>
+              <tr><td><kbd>Shift</kbd> + arrow</td><td>Resize active crop geometry where supported.</td></tr>
+              <tr><td><kbd>1</kbd>–<kbd>9</kbd></td><td>Recall Ready Rack templates when the TX editor owns the shortcut.</td></tr>
+              <tr><td><kbd>Ctrl</kbd> + <kbd>K</kbd> or <kbd>/</kbd></td><td>Focus search in this help guide.</td></tr>
+              <tr><td><kbd>Esc</kbd></td><td>Close help search results or the mobile contents panel.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="files folders paths settings json history db sqlite wal shm write ahead logging journal images logs backup restore privacy telemetry password qrz windows linux macos appdata config">
+        <p class="topic-category">Support</p>
+        <h2>Files, backups, and privacy</h2>
+        <p>Your active locations are shown under <strong>Options → General → Storage</strong>. Defaults follow the operating system's application-data convention.</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Data</th><th>Typical file</th><th>Back up?</th></tr></thead>
+            <tbody>
+              <tr><td>Application settings</td><td><code>settings.json</code></td><td>Yes, especially after completing station setup.</td></tr>
+              <tr><td>Receive history and QSO logbook</td><td><code>history.db</code>, plus <code>history.db-wal</code> and <code>history.db-shm</code> when they are present</td><td>Yes. This is a SQLite database shared by both features. Copy the three files together, or close the application first.</td></tr>
+              <tr><td>Received images</td><td>PNG files in the configured RX images folder</td><td>Yes, if the pictures matter independently of the database index.</td></tr>
+              <tr><td>Diagnostics</td><td>Application log files</td><td>Usually only when investigating a fault.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>Close Scanline Studio before making a consistent manual backup of the database and settings. Back up the database and RX images together if you want Gallery references to remain useful.</p>
+        <div class="warning"><strong>While the application runs, <code>history.db</code> is not the whole database.</strong> Scanline Studio uses SQLite write-ahead logging, so recent contacts and receive history can still be sitting in the <code>history.db-wal</code> file next to it. Copying <code>history.db</code> on its own at that moment loses them. Either close the application first, which folds those changes back into <code>history.db</code> and removes the two extra files, or copy <code>history.db</code>, <code>history.db-wal</code> and <code>history.db-shm</code> together as a set. This applies to backup tools and file-sync folders as much as to a manual copy.</div>
+        <ul>
+          <li>Scanline Studio does not require product telemetry or a cloud account for core use.</li>
+          <li>QRZ.com and configured UDP forwarding send data only when you enable and use those integrations.</li>
+          <li>The current QRZ.com password is stored locally without encryption in settings.</li>
+          <li><strong>Help → Open application log</strong> opens the current diagnostic log location. Review a log before sharing it because paths, callsigns, hosts, or operating details may be present.</li>
+        </ul>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="troubleshoot problems no decode no audio slanted image clipping ptt failed cat disconnected transmit error missing file gallery crash logs">
+        <p class="topic-category">Support</p>
+        <h2>Troubleshooting</h2>
+        <p>Start with the visible symptom, change one thing at a time, and preserve a WAV recording or application log when the failure is intermittent.</p>
+
+        <h3>The RX meter does not move</h3>
+        <ol class="steps">
+          <li>Check that the header's <strong>Receiving</strong> toggle is on and <strong>Auto-detect</strong> on the Receive tab is set to <strong>Listening</strong>. While Auto-detect is <strong>Paused</strong>, the waterfall keeps scrolling but the level meter and station-ID decode stop.</li>
+          <li>Confirm the radio is producing audio and the physical cable is connected.</li>
+          <li>Re-select the capture device in Options → Audio.</li>
+          <li>If the device is stereo, test Mono, Left, and Right capture source.</li>
+          <li>Check OS input permission, mute state, and device routing.</li>
+        </ol>
+
+        <h3>Audio is visible, but no picture starts</h3>
+        <ul>
+          <li>Confirm Auto-detect says <strong>Listening</strong>, not Paused.</li>
+          <li>Reduce an overly high squelch level.</li>
+          <li>Use a wider radio receive filter and correct sideband.</li>
+          <li>If you know the mode and the VIS header was lost, force the next decode with its quick-mode button.</li>
+          <li>Record the signal and retry with Decode WAV file.</li>
+        </ul>
+
+        <h3>The image is slanted</h3>
+        <ul>
+          <li>Enable RX buffering and Auto-slant in Options → Decode.</li>
+          <li>During reception, inspect Slant ppm and use Correct slant after a stable estimate is available.</li>
+          <li>Persistent TX reports about your outgoing slant may indicate a measured TX clock offset is needed. Do not guess the value.</li>
+        </ul>
+
+        <h3>Reception breaks up or XRUN increases</h3>
+        <ul>
+          <li>Close other applications that heavily use the audio device or CPU.</li>
+          <li>Confirm the USB audio interface has a stable connection.</li>
+          <li>Avoid advanced DSP changes until the audio transport is stable.</li>
+        </ul>
+
+        <h3>CAT or PTT fails</h3>
+        <ul>
+          <li>Save edited Radio / CAT settings before selecting Connect.</li>
+          <li>Disconnect the active session before running a backend test.</li>
+          <li>Check host/port for rigctld or flrig, and firewall access if it is not local.</li>
+          <li>For linked Hamlib, test the library, model number, serial device, baud rate, and PTT method.</li>
+          <li>Make sure another program has not exclusively opened the serial port.</li>
+          <li>VOX cannot be command-tested: it relies on the radio detecting actual TX audio.</li>
+        </ul>
+
+        <h3>Transmit fails or stops</h3>
+        <ul>
+          <li>Confirm a playback device and prepared image are selected.</li>
+          <li>Check PTT and radio state with a short controlled test.</li>
+          <li>If the message reports high SWR, stop and inspect the antenna system. Do not merely raise the cutoff.</li>
+          <li>Open the application log for the specific error.</li>
+        </ul>
+
+        <h3>A Gallery image will not open</h3>
+        <p>The file may have been moved or deleted outside the application. Select Refresh, check the configured RX images folder, and restore the file from backup if needed.</p>
+
+        <h3>Dark mode or Large text isn't what you expected</h3>
+        <ul>
+          <li>Confirm you selected <strong>Save</strong> on the Appearance tab. Both settings apply immediately once saved, but a change left unsaved has no effect.</li>
+          <li><strong>System</strong> theme follows your operating system's light/dark setting. Pick Light or Dark directly if you want it to stay put regardless of the OS setting.</li>
+          <li>Large is a single fixed size, not a slider. There is no in-between value, only Normal or Large.</li>
+        </ul>
+
+        <h3>Stations heard stays empty</h3>
+        <ul>
+          <li>Confirm <strong>FSK decode</strong> and/or <strong>CW decode</strong> are turned on in Options → Identification. Both are on by default, but either can be turned off there.</li>
+          <li>Not every station sends identification the application recognizes: a station may be using FSK/CW at a speed, tone, or format Scanline Studio doesn't decode, or may not be identifying by tone at all.</li>
+          <li>The list only fills from stations you actually receive. It is not a directory of who is active on the band.</li>
+        </ul>
+
+        <div class="tip"><strong>Useful support bundle.</strong> Note the application version from Help → About, the operating system, selected audio and CAT backend, exact error text, reproduction steps, and the relevant application-log excerpt. Include a short WAV only when it is needed to reproduce a decode issue.</div>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossary terms afc agc cat dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead grid nr utc wpm">
+        <p class="topic-category">Support</p>
+        <h2>Glossary</h2>
+        <p>Hover or focus a dotted-underlined term anywhere in this guide to see its definition without leaving the page. Each term links to the single definition here.</p>
+        <dl>
+          <dt id="glossary-adif">ADIF</dt><dd>Amateur Data Interchange Format; the standard file format logging software uses to exchange QSO records.</dd>
+          <dt id="glossary-afc">AFC</dt><dd>Automatic frequency control; measures the received sync tone and shifts the decode back toward its nominal frequency, correcting a station that is tuned slightly off. It corrects mistuning only. It does nothing about noise or interference.</dd>
+          <dt id="glossary-agc">AGC</dt><dd>Automatic gain control; normalizes received signal level for processing.</dd>
+          <dt id="glossary-alc">ALC</dt><dd>Automatic level control; a radio circuit that reduces drive when transmit audio would otherwise overdrive the final amplifier.</dd>
+          <dt id="glossary-avt-training">AVT training</dt><dd>A decoder state for the AVT SSTV mode family, which needs to measure the incoming signal before it can lock onto and decode the picture. This is distinct from the normal searching/locked states other modes use.</dd>
+          <dt id="glossary-bpf">BPF</dt><dd>Band-pass filter; passes a chosen frequency range and rejects everything outside it.</dd>
+          <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver control: frequency, mode, PTT, and telemetry communication with a radio.</dd>
+          <dt id="glossary-dsp">DSP</dt><dd>Digital signal processing.</dd>
+          <dt id="glossary-fir">FIR</dt><dd>Finite impulse response; one of two common digital filter designs (see also IIR). Always stable, at the cost of needing more computation for the same sharpness.</dd>
+          <dt id="glossary-fsk-id">FSK ID</dt><dd>Frequency-shift keyed station identification data sent around an SSTV transmission.</dd>
+          <dt id="glossary-hamlib">Hamlib</dt><dd>A radio-control library and toolset supporting many transceivers.</dd>
+          <dt id="glossary-hilbert">Hilbert transform</dt><dd>A mathematical technique for recovering a signal's instantaneous frequency; the default demodulator method Scanline Studio uses to turn incoming SSTV tones back into brightness values.</dd>
+          <dt id="glossary-iir">IIR</dt><dd>Infinite impulse response; the other common digital filter design (see also FIR). Cheaper to compute, but can behave less predictably if pushed to extreme settings.</dd>
+          <dt id="glossary-lpf">LPF</dt><dd>Low-pass filter; passes frequencies below a chosen cutoff and removes everything above it.</dd>
+          <dt id="glossary-maidenhead-grid">Maidenhead grid</dt><dd>A short letter-and-number code (e.g. JO22) that identifies a location on Earth, used across amateur radio for a compact "where I am" instead of a full address.</dd>
+          <dt id="glossary-nr">NR</dt><dd>A serial/reference number, here the optional numeric sub-packet FSK identification can carry alongside your callsign.</dd>
+          <dt id="glossary-pll">PLL</dt><dd>Phase-locked loop; one of the demodulator methods Scanline Studio can use to track the incoming picture tone and recover brightness from it.</dd>
+          <dt id="glossary-ppm">PPM</dt><dd>Parts per million; here, a small audio-clock error that can produce image slant.</dd>
+          <dt id="glossary-ptt">PTT</dt><dd>Push to talk; the control that keys the transmitter.</dd>
+          <dt id="glossary-qso">QSO</dt><dd>A radio contact between stations.</dd>
+          <dt id="glossary-qsl">QSL</dt><dd>Confirmation of a radio contact; often represented by a designed card or SSTV picture.</dd>
+          <dt id="glossary-rst">RST</dt><dd>Readability, strength, and tone signal report. SSTV exchanges may use related reporting conventions.</dd>
+          <dt id="glossary-sstv">SSTV</dt><dd>Slow-scan television: still images carried as audio-frequency tones over a radio channel.</dd>
+          <dt id="glossary-swr">SWR</dt><dd>Standing wave ratio; an indication of impedance mismatch in the RF path.</dd>
+          <dt id="glossary-utc">UTC</dt><dd>Coordinated Universal Time; the single time zone radio operators use to log contacts so records from different time zones stay comparable.</dd>
+          <dt id="glossary-vco">VCO</dt><dd>Voltage-controlled oscillator; the tunable internal oscillator the PLL demodulator uses to track the incoming picture tone.</dd>
+          <dt id="glossary-vis">VIS</dt><dd>Vertical interval signalling: the SSTV header code used to identify the picture mode.</dd>
+          <dt id="glossary-vox">VOX</dt><dd>Voice-operated transmit; the radio keys itself when it detects input audio.</dd>
+          <dt id="glossary-wpm">WPM</dt><dd>Words per minute; the speed unit used for CW (Morse code) identification.</dd>
+          <dt id="glossary-xrun">XRUN</dt><dd>An audio buffer underrun or overrun, usually indicating that audio data was not handled in time.</dd>
+        </dl>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <footer class="page-footer">
+        <p>Scanline Studio is licensed under LGPL-3.0-or-later. This guide describes the application state tracked for revision <span data-help-version>current</span>.</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>
