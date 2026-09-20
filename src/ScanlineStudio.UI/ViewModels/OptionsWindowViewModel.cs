@@ -775,7 +775,20 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         _ = LoadSafeAsync();
         _ = LoadTxVolumeSafeAsync();
         _ = LoadStorageLocationsSafeAsync();
+
+        // Live-locale-switch review (2026-09-20): same leak class as ConnectionEvents just above --
+        // this VM is AddTransient, a fresh instance per Options open, so a permanent subscription to
+        // the long-lived ILocalizationService singleton needs the same Dispose()-paired unsubscribe.
+        // Every stored GetString-backed member here is a transient status/error message tied to one
+        // in-flight action (Test Connection/PTT, Hamlib probe, a directory save) -- self-heals on
+        // the next attempt or accepted stale in the meantime, same convention as every other VM in
+        // this pass; every other GetString-backed member is a computed getter, so the blanket
+        // refresh alone covers the rest. Last statement, deliberately (see MainViewModel's own
+        // identical reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     private readonly IDisposable _connectionEventsSubscription;
 
@@ -785,8 +798,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     /// <see cref="IRadioSessionService.ConnectionEvents"/> stream, rooting the whole dead
     /// view-model graph for the app's remaining lifetime. Called from <c>OptionsWindowView</c>'s own
     /// <c>Closed</c> handler, same place <see cref="StopTuneIfActive"/>/<see cref="StopTestPttIfActive"/>
-    /// are already called from.</summary>
-    public void Dispose() => _connectionEventsSubscription.Dispose();
+    /// are already called from. Live-locale-switch review (2026-09-20): also unsubscribes from
+    /// <see cref="ILocalizationService.CultureChanged"/>, same leak class, same fix shape.</summary>
+    public void Dispose()
+    {
+        _connectionEventsSubscription.Dispose();
+        _localization.CultureChanged -= OnCultureChanged;
+    }
 
     /// <summary>Deliberately NOT the same idiom as <see cref="RadioStatusViewModel.OnConnectionEvent"/>'s
     /// own <c>CatLinked</c> -- that property is a "genuinely reachable RIGHT NOW" status light,

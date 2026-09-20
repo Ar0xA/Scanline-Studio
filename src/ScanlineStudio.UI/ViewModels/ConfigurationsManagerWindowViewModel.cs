@@ -117,7 +117,14 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
         switch (result.Outcome)
         {
             case ConfigurationPresetSwitchOutcome.Applied:
-                await ApplyCultureIfChangedAsync(selected.Name, result);
+                // yoniq-auditor finding (live-locale-switch review, 2026-09-20): SwitchToPresetAsync's
+                // own ConfigureAwait(false) chain (see this method's top comment) means we're not
+                // necessarily on the UI thread here -- ApplyCultureIfChangedAsync's SetCultureAsync
+                // call raises ILocalizationService.CultureChanged synchronously, and every subscriber
+                // is entitled to assume that fires on the UI thread (ILocalizationService.cs's own
+                // stated contract). Marshaling here, at the source, means no individual subscriber
+                // needs its own Dispatcher guard.
+                await Dispatcher.UIThread.InvokeAsync(() => ApplyCultureIfChangedAsync(selected.Name, result));
                 var warnings = new List<string>();
                 if (result.RxAudioDeferred)
                 {

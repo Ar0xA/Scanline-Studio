@@ -96,7 +96,14 @@ public sealed partial class DecoderTracePaneViewModel : ViewModelBase
         _logger = logger ?? NullLogger<DecoderTracePaneViewModel>.Instance;
         _timeProvider = timeProvider ?? TimeProvider.System;
         _pollTimer = new DispatcherTimer(CapturePollInterval, DispatcherPriority.Background, (_, _) => PollCapture());
+
+        // Live-locale-switch review (2026-09-20): WindowRangeDisplay is a computed getter, so the
+        // blanket refresh alone is enough. DI-singleton pane, never disposed -- permanent
+        // subscription, last statement (see MainViewModel's own identical reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     public string WindowRangeDisplay => _localization.GetString("Panes.RxDecodeLog.TraceRangeFormat", XOffset, XOffset + XWindow, ScopeSize);
 
