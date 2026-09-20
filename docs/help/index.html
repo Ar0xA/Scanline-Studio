@@ -832,7 +832,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="macros" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="macros tokens template variables percent m date time callsign name grid frequency mode distance bearing his_grid preview">
+      <article id="macros" class="help-topic" data-help-topic data-category="Tools and reference" data-keywords="macros tokens template variables percent m date time callsign name grid frequency mode distance bearing his_grid preview custom field persist txt">
         <p class="topic-category">Tools and reference</p>
         <h2>Macros and template fields</h2>
         <p>Macros replace tokens in TX text elements with current station, radio, time, or QSO-fill values.</p>
@@ -851,6 +851,7 @@
         </div>
 
         <p>Open <strong>Tools → Macros</strong> to see the exact token spelling available in the running version and preview station/time values. Any <code>{word}</code> you type that is not one of the built-in tokens above becomes a custom field: it automatically adds a matching row to the QSO FILL bar, resolved fresh each time the card is sent. A misspelled token therefore shows up as an unexpected extra QSO FILL row rather than disappearing.</p>
+        <p>A custom field's value stays filled in when you switch to a different template in the same editor session — so a field like <code>{txt}</code> can hold a note or message reused across several templates without retyping it each time. Clicking the QSO FILL bar's <strong>CLEAR</strong> button, or starting a new editor session, resets it.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
