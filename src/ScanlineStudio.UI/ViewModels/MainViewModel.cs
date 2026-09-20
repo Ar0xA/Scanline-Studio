@@ -246,7 +246,7 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>What the menu-row chip actually displays -- "N0CALL" (the standard ham-radio
     /// placeholder callsign) until the user sets a real one in Options, matching mock2's own
     /// chip always being present rather than appearing/disappearing.</summary>
-    public string CallsignDisplay => string.IsNullOrWhiteSpace(Callsign) ? "N0CALL" : Callsign;
+    public string CallsignDisplay => string.IsNullOrWhiteSpace(Callsign) ? OperatorSettings.CallsignFallback : Callsign;
 
     partial void OnCallsignChanged(string? value) => OnPropertyChanged(nameof(CallsignDisplay));
 
@@ -422,7 +422,13 @@ public partial class MainViewModel : ViewModelBase
     /// rather than becoming <see langword="async"/> itself just to read settings fresh on every
     /// click (an auditor plan-review round found the async-handler alternative introduced its own
     /// risks -- missing try/catch, an unstated tab-switch-ordering change -- for a freshness
-    /// guarantee nothing actually needed).</summary>
+    /// guarantee nothing actually needed).
+    ///
+    /// User-reported (2026-09-20): also pushes the fresh Callsign/Name/Grid into
+    /// <see cref="ActiveEditor"/> (<see cref="TxImageEditorPaneViewModel.RefreshOperatorSettings"/>)
+    /// when a TX image editor is open -- otherwise its %m/{name}/{grid}/{dist}/{bearing} macro
+    /// preview kept resolving against whatever <see cref="OperatorSettings"/> snapshot was current
+    /// when the editor opened, since that field is not itself reloaded by this method.</summary>
     public async Task LoadOperatorSettingsAsync()
     {
         try
@@ -430,6 +436,13 @@ public partial class MainViewModel : ViewModelBase
             var snapshot = await _optionsSettingsService.LoadAsync();
             Callsign = snapshot.Callsign;
             DefaultRst = snapshot.DefaultRst;
+            ActiveEditor?.RefreshOperatorSettings(new OperatorSettings
+            {
+                Callsign = snapshot.Callsign,
+                Name = snapshot.OperatorName,
+                Grid = snapshot.OperatorGrid,
+                DefaultRst = snapshot.DefaultRst,
+            });
         }
         catch (Exception ex)
         {

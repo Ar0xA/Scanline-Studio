@@ -488,7 +488,6 @@
   "Panes.TxImageEditor.ElementsHeader": "ELEMENTE",
   "Panes.TxImageEditor.InspectorHeader": "INSPEKTOR",
   "Panes.TxImageEditor.QsoFillHeader": "QSO-DATEN",
-  "Panes.TxImageEditor.TemplateVariableCountFormat": "{0} FELDER",
   "Panes.TxImageEditor.SendHeader": "SENDEN",
   "Panes.TxImageEditor.SendMetaFormat": "{0} · {1:0.0} s",
   "Panes.TxImageEditor.NoQsoFields": "Noch keine Vorlagenfelder in diesem Layout.",

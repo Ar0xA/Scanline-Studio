@@ -19,6 +19,23 @@ public sealed record OperatorSettings
     /// of `"595"` -- nowhere else in the codebase should hardcode it a second time.</summary>
     public const string DefaultRstFallback = "595";
 
+    /// <summary>User-reported (2026-09-20): blank <see cref="Callsign"/> must read as this
+    /// placeholder everywhere it's displayed or baked into a macro, not as an empty string --
+    /// same "null/blank means unset, apply the documented default AT THE READ SITE" convention as
+    /// <see cref="DefaultRstFallback"/>. Not stored on disk as a property-initializer default
+    /// (System.Text.Json won't honor one for an absent JSON key -- see <see cref="DefaultRst"/>'s
+    /// own doc comment for the confirmed limitation); an operator who explicitly clears the box
+    /// still persists blank, not this literal.</summary>
+    public const string CallsignFallback = "N0CALL";
+
+    /// <summary>Same "unset means apply this at the read site" convention as
+    /// <see cref="CallsignFallback"/>, for a blank <see cref="Grid"/> (user-reported 2026-09-20).</summary>
+    public const string GridFallback = "XX00";
+
+    /// <summary>Same "unset means apply this at the read site" convention as
+    /// <see cref="CallsignFallback"/>, for a blank <see cref="Name"/> (user-reported 2026-09-20).</summary>
+    public const string NameFallback = "NONAME";
+
     public string? Callsign { get; init; }
 
     public string? Name { get; init; }

@@ -97,8 +97,9 @@ public sealed class MacrosReferenceWindowViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         // Load still parked -- OperatorSettings hasn't landed yet, so %m resolves against the
-        // still-default (empty-callsign) OperatorSettings this VM starts with.
-        Assert.Equal(string.Empty, vm.PreviewText);
+        // still-default (empty-callsign) OperatorSettings this VM starts with, which is
+        // OperatorSettings.CallsignFallback ("N0CALL"), not empty (user-reported 2026-09-20).
+        Assert.Equal(OperatorSettings.CallsignFallback, vm.PreviewText);
 
         var raised = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         vm.PropertyChanged += (_, e) =>

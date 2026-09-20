@@ -4,12 +4,12 @@ namespace ScanlineStudio.Application;
 
 /// <summary>Maidenhead grid-square locator math -- great-circle distance/bearing between two grid
 /// squares, for <see cref="MacroTextResolver"/>'s <c>{dist}</c>/<c>{bearing}</c> tokens (auditor
-/// usability review follow-up, 2026-08-18: the TX Image Editor's own DIST/BEAM insert-field chips
+/// usability review follow-up, 2026-08-18: the TX Image Editor's own DIST/BEARING insert-field chips
 /// were a stub with no `Command` at all, blocked on "no current-QSO concept" per an earlier session's
 /// wiring survey -- resolved by combining <see cref="OperatorSettings.Grid"/> (MY grid, already a
 /// real settings-tier value) with the <c>{his_grid}</c> fill-bar VARIABLE the operator types in
 /// per-QSO, not a new "current QSO" model). No legacy YONIQ/MMSSTV precedent exists for this feature
-/// (confirmed via a real grep across the whole legacy tree -- zero DIST/BEAM/Distance/Bearing
+/// (confirmed via a real grep across the whole legacy tree -- zero DIST/BEARING/Distance/Bearing
 /// references anywhere) -- this is new functionality inspired by a common ham-radio logging
 /// convention, not a port, matching this project's own "UI/editing work should be improved on, not
 /// replicated" standing rule.</summary>
