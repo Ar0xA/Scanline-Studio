@@ -195,47 +195,68 @@ public sealed class StrokedTextBlock : Control
             return;
         }
 
-        // Stack draws FIRST (furthest back), behind stroke/fill -- same draw-order convention as the
-        // real pipeline's own stack-then-shadow-then-stroke-then-fill pass (see
-        // TransmitImagePreparer.DrawGlyphs's own doc comment; the shadow copy itself is a separate
-        // sibling TextBlock in the DataTemplate, not part of this control).
-        if (StackFill is not null && (StackStepXPixels != 0 || StackStepYPixels != 0))
+        // Canvas-preview WYSIWYG fix (user-reported, 2026-09-20): the real render pipeline
+        // (TransmitImagePreparer.DrawTemplateText) unconditionally clips ALL overflowing text to the
+        // element's own box (BuildPixelSnappedClip(bounds) -- "clipping unconditionally is both
+        // simpler and correct," stated policy since Phase 0) regardless of fill type. This control's
+        // own MeasureOverride sizes to the FULL formatted-text extent, so Bounds can be larger than
+        // FillWidth/FillHeight when the text doesn't fit its box -- until now only the gradient/
+        // pattern branch below happened to clip as an incidental side effect of its own
+        // fillBounds-rectangle trick (built for a DIFFERENT reason -- keeping the gradient from
+        // stretching into unused space when text is SMALLER than its box, see that branch's own
+        // comment), while stack copies, stroke, and a plain solid fill all drew the unclipped glyph
+        // geometry directly. Solid-color overflow therefore looked fine in the editor but was
+        // silently cut off the moment the template was actually transmitted -- this one explicit
+        // rectangular clip, sized and centered exactly like the gradient branch's own fillBounds,
+        // now covers every fill type uniformly, matching the real pipeline.
+        var clipBounds = FillWidth > 0 && FillHeight > 0
+            ? new Rect((Bounds.Width - FillWidth) / 2, (Bounds.Height - FillHeight) / 2, FillWidth, FillHeight)
+            : new Rect(Bounds.Size);
+        using (context.PushClip(clipBounds))
         {
-            var copies = Math.Min(MaxStackCopies, (int)Math.Round(Math.Max(Math.Abs(StackStepXPixels), Math.Abs(StackStepYPixels))));
-            for (var f = copies; f >= 1; f--)
+            // Stack draws FIRST (furthest back), behind stroke/fill -- same draw-order convention as
+            // the real pipeline's own stack-then-shadow-then-stroke-then-fill pass (see
+            // TransmitImagePreparer.DrawGlyphs's own doc comment; the shadow copy itself is a
+            // separate sibling TextBlock in the DataTemplate, not part of this control).
+            if (StackFill is not null && (StackStepXPixels != 0 || StackStepYPixels != 0))
             {
-                using (context.PushTransform(Matrix.CreateTranslation(StackStepXPixels * f / copies, StackStepYPixels * f / copies)))
+                var copies = Math.Min(MaxStackCopies, (int)Math.Round(Math.Max(Math.Abs(StackStepXPixels), Math.Abs(StackStepYPixels))));
+                for (var f = copies; f >= 1; f--)
                 {
-                    context.DrawGeometry(StackFill, null, geometry);
+                    using (context.PushTransform(Matrix.CreateTranslation(StackStepXPixels * f / copies, StackStepYPixels * f / copies)))
+                    {
+                        context.DrawGeometry(StackFill, null, geometry);
+                    }
                 }
             }
-        }
 
-        if (Stroke is not null && StrokeThickness > 0)
-        {
-            // User-reported 2026-09-19: Avalonia's Pen defaults to a MITER join (limit 10), which at
-            // any glyph vertex sharper than ~11.5 degrees (the apex of "A", the diagonal junction in
-            // "N", etc.) shoots the outer corner out to up to 10x the stroke width -- a long spike,
-            // worse at wider outline widths. The real render pipeline this control mirrors
-            // (TransmitImagePreparer.DrawGlyphs, confirmed via SixLabors.ImageSharp.Drawing's own
-            // PenOptions source) uses JointStyle.Square instead, which never produces this spike --
-            // Bevel is Avalonia's closest equivalent (a flat-cut corner, no unbounded point).
-            context.DrawGeometry(null, new Pen(Stroke, StrokeThickness, lineJoin: PenLineJoin.Bevel), geometry);
-        }
-
-        if (Fill is IGradientBrush or DrawingBrush && FillWidth > 0 && FillHeight > 0)
-        {
-            // The text control is centered inside the element. Paint the full element's brush
-            // rectangle through its glyph clip so unused bounds do not rescale the gradient.
-            var fillBounds = new Rect((Bounds.Width - FillWidth) / 2, (Bounds.Height - FillHeight) / 2, FillWidth, FillHeight);
-            using (context.PushGeometryClip(geometry))
+            if (Stroke is not null && StrokeThickness > 0)
             {
-                context.DrawRectangle(Fill, null, fillBounds);
+                // User-reported 2026-09-19: Avalonia's Pen defaults to a MITER join (limit 10), which
+                // at any glyph vertex sharper than ~11.5 degrees (the apex of "A", the diagonal
+                // junction in "N", etc.) shoots the outer corner out to up to 10x the stroke width --
+                // a long spike, worse at wider outline widths. The real render pipeline this control
+                // mirrors (TransmitImagePreparer.DrawGlyphs, confirmed via SixLabors.ImageSharp.Drawing's
+                // own PenOptions source) uses JointStyle.Square instead, which never produces this
+                // spike -- Bevel is Avalonia's closest equivalent (a flat-cut corner, no unbounded
+                // point).
+                context.DrawGeometry(null, new Pen(Stroke, StrokeThickness, lineJoin: PenLineJoin.Bevel), geometry);
             }
-        }
-        else
-        {
-            context.DrawGeometry(Fill, null, geometry);
+
+            if (Fill is IGradientBrush or DrawingBrush && FillWidth > 0 && FillHeight > 0)
+            {
+                // The text control is centered inside the element. Paint the full element's brush
+                // rectangle through its glyph clip so unused bounds do not rescale the gradient.
+                var fillBounds = new Rect((Bounds.Width - FillWidth) / 2, (Bounds.Height - FillHeight) / 2, FillWidth, FillHeight);
+                using (context.PushGeometryClip(geometry))
+                {
+                    context.DrawRectangle(Fill, null, fillBounds);
+                }
+            }
+            else
+            {
+                context.DrawGeometry(Fill, null, geometry);
+            }
         }
     }
 }
