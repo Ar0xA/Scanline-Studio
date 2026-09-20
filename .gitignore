@@ -23,6 +23,18 @@ CLAUDE.md
 PROJECT_BRIEF.md
 astra-audit.md
 
+# Audit/plan/roadmap docs — untracked and purged from remote history 2026-09-20 by explicit user
+# request (see backup-pre-second-purge-20260920 on origin for the pre-purge state). Kept locally,
+# just not version-controlled. Note: production_audit.md is one of the two files CLAUDE.md's own
+# text names as an intentional historical record, and fsk_cwid.md/decoder_quality_improvement.md
+# are cited by name+section in ~50 in-code doc comments across src/ — those citations now point at
+# a local-only file, not something a fresh clone has.
+decoder_quality_improvement.md
+fsk_cwid.md
+production_audit.md
+ultracode_review.md
+windows_tests.md
+
 # Codex CLI's equivalent local files — same reasoning as CLAUDE.md above.
 .codex/
 AGENTS.md
