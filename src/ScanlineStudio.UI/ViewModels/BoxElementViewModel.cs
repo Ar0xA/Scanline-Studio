@@ -95,6 +95,15 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     [ObservableProperty]
     private double _cornerRadius;
 
+    /// <summary>Element rotation (2026-09-20) -- in-plane (2D) rotation, clockwise-positive, same
+    /// convention as <see cref="OverlayElementViewModel.RotationDegrees"/>. Mutually exclusive with
+    /// <see cref="PerspectiveEnabled"/> (see <see cref="Abstractions.Imaging.TemplateImageElement.RotationDegrees"/>'s
+    /// doc comment for the full Perspective-wins precedence rule) -- entering perspective mode resets
+    /// this to 0 (<c>TxImageEditorPaneViewModel.TogglePerspective</c>), and <see cref="CanRotate"/>
+    /// gates the Rotate context-menu items off while perspective is active.</summary>
+    [ObservableProperty]
+    private double _rotationDegrees;
+
     /// <summary>TX editor gap-items plan (2026-09-01, box gradient fill) -- SAME simplified 2-stop
     /// shape <see cref="OverlayElementViewModel.GradientEnabled"/> already established for text, on
     /// the SAME "text gradients already shipped, boxes only had flat fill" gap Fable's comparative
@@ -152,6 +161,13 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     /// <inheritdoc cref="ImageElementViewModel.TogglePerspectiveCommand"/>
     public IRelayCommand? TogglePerspectiveCommand { get; init; }
+
+    /// <inheritdoc cref="ITemplateElementViewModel.RotateClockwise90Command"/>
+    public IRelayCommand? RotateClockwise90Command { get; init; }
+
+    public IRelayCommand? RotateCounterclockwise90Command { get; init; }
+
+    public IRelayCommand? Rotate180Command { get; init; }
 
     public Action? PushUndoSnapshotForGeometryChange { get; init; }
 
@@ -454,6 +470,16 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
 
     public double EffectiveOpacity => PerspectiveEnabled ? 1 : Opacity;
 
+    /// <inheritdoc cref="OverlayElementViewModel.RotationTransform"/>
+    public Transform? RotationTransform => RotationDegrees != 0 ? new RotateTransform(RotationDegrees) : null;
+
+    /// <summary>Element rotation (2026-09-20) -- gates the Rotate context-menu items off while
+    /// perspective is active, same Perspective-wins precedence <see cref="RotationDegrees"/>'s own
+    /// doc comment states. <see cref="Locked"/> gate matches every other geometry command's own
+    /// 3-gate convention (CanExecute + body backstop in <c>TxImageEditorPaneViewModel</c> + this
+    /// AXAML-bound property).</summary>
+    public bool CanRotate => !Locked && !PerspectiveEnabled;
+
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 
     /// <inheritdoc cref="ImageElementViewModel.ShowResizeHandles"/>
@@ -465,6 +491,7 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     {
         OnPropertyChanged(nameof(ShowResizeHandles));
         OnPropertyChanged(nameof(ShowPerspectiveCornerHandles));
+        OnPropertyChanged(nameof(CanRotate));
     }
 
     partial void OnNaturalXChanging(double value) => PushUndoSnapshotForGeometryChange?.Invoke();
@@ -547,6 +574,7 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         OnPropertyChanged(nameof(EffectiveBackground));
         OnPropertyChanged(nameof(EffectiveBorderThicknessPixels));
         OnPropertyChanged(nameof(EffectiveOpacity));
+        OnPropertyChanged(nameof(CanRotate));
         if (!value)
         {
             var old = WarpedCanvasBitmap;
@@ -680,6 +708,12 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     }
 
     partial void OnCornerRadiusChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    // Element rotation (2026-09-20) -- same PushUndoSnapshotForStyleChange convention as
+    // FillColor/BorderColor/etc. above, plus a RotationTransform re-notify for the canvas preview.
+    partial void OnRotationDegreesChanging(double value) => PushUndoSnapshotForStyleChange?.Invoke();
+
+    partial void OnRotationDegreesChanged(double value) => OnPropertyChanged(nameof(RotationTransform));
 
     // Gradient fill undo wiring -- same PushUndoSnapshotForStyleChange convention as
     // FillColor/BorderColor/etc. above, plus a FillBrush re-notify so the canvas preview updates.

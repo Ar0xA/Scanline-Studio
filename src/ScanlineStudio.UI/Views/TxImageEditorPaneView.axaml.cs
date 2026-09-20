@@ -145,11 +145,19 @@ public partial class TxImageEditorPaneView : UserControl
 
     /// <summary>See <see cref="OnOpenElementQuickStyleFlyout"/>'s own doc comment for why this
     /// exists -- <see cref="ContextMenu.PlacementTarget"/> is never populated by Avalonia itself, so
-    /// this records the most recently pressed element's own <see cref="Border"/> instead, captured
-    /// in <see cref="OnOverlayElementPointerPressed"/>. The image element's own ContextMenu has no
-    /// Quick Style/Fill &amp; Border flyout, so a press on it capturing this too is harmless -- the
-    /// value is simply never read for that element type.</summary>
-    private Border? _lastContextMenuAnchor;
+    /// this records the most recently pressed element's own hit-surface <see cref="Control"/>
+    /// instead, captured in <see cref="OnOverlayElementPointerPressed"/>. Element rotation
+    /// (2026-09-20, round-3 plan-review finding): widened from <see cref="Border"/> to
+    /// <see cref="Control"/> -- a line element's own hit surface is an Avalonia <see cref="Shapes.Line"/>,
+    /// not a <see cref="Border"/>, so the narrower type made the Rotate flyout's own
+    /// <c>sender as Border</c> cast silently return null for every line, the exact "permanently
+    /// disabled, not occasionally" failure class this field's own doc comment already documents once
+    /// for the Quick Style flyout (see <see cref="OnOpenElementQuickStyleFlyout"/>). Text/Box/Image
+    /// all hit-test via a <see cref="Border"/> (a <see cref="Control"/> too), so this widening is
+    /// source-compatible for every existing caller. Image now has its own Rotate flyout (element
+    /// rotation, 2026-09-20), so this value is genuinely read for every element type now, unlike the
+    /// Quick Style/Fill &amp; Border-only era this comment originally described.</summary>
+    private Control? _lastContextMenuAnchor;
 
     /// <summary>User-reported (2026-09-20): the canvas's own empty-area ContextMenu (Canvas.ContextMenu,
     /// TxImageEditorPaneView.axaml) needs the right-click POINT itself, in canvas display pixels, so
@@ -514,7 +522,14 @@ public partial class TxImageEditorPaneView : UserControl
     /// from the original design) -- MenuItem's own Click handler runs BEFORE the owning Popup
     /// finishes closing (confirmed against Avalonia 11.3.12's DefaultMenuInteractionHandler), so
     /// calling ShowAttachedFlyout synchronously here races the ContextMenu's own close/focus-restore
-    /// and can dismiss the flyout the instant it opens.</para></summary>
+    /// and can dismiss the flyout the instant it opens.</para>
+    /// <para>Element rotation (2026-09-20, round-3 plan-review nit): this handler was ALREADY
+    /// generic -- it has no Quick-Style-specific logic, it just shows whatever
+    /// <see cref="FlyoutBase.AttachedFlyout"/> lives on the captured anchor. Box's Fill &amp;
+    /// Border "Rotate by:" row and Image's/Line's own new dedicated Rotate flyout all reuse this
+    /// SAME handler rather than each getting a separately-named duplicate that would do the
+    /// identical two lines of work -- name kept as-is (not renamed) to avoid unrelated churn on an
+    /// already-shipped, tested method.</para></summary>
     private void OnOpenElementQuickStyleFlyout(object? sender, RoutedEventArgs e)
     {
         if (_lastContextMenuAnchor is not { } target)
@@ -926,15 +941,19 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
-        // Macros help plan session, real-UI-smoke-test finding (2026-09-01): captures the Quick
-        // Style/Fill & Border flyout anchor here, on PRESS, unconditionally (any button) -- see
+        // Macros help plan session, real-UI-smoke-test finding (2026-09-01): captures the
+        // element's own flyout anchor here, on PRESS, unconditionally (any button) -- see
         // OnOpenElementQuickStyleFlyout's own doc comment for why. An earlier version of this fix
         // captured via a SEPARATE ContextRequested handler subscribed on the same Border -- that
         // shape turned out to empirically depend on whether ContextMenu was assigned before or
         // after AddHandler ran (confirmed by a real headless test: reversing that order broke
         // capture entirely). PointerPressed always fires before the subsequent pointer release
         // that opens a context menu, for any button, so capturing here has no such ordering risk.
-        _lastContextMenuAnchor = sender as Border;
+        // Element rotation (2026-09-20): `sender as Control`, not `sender as Border` -- a line
+        // element's own hit surface is a Shapes.Line, not a Border, and `sender` is already
+        // confirmed to be a Control by the pattern match above, so this is a widening, not a
+        // behavior change, for every existing (Border-hit-surfaced) element type.
+        _lastContextMenuAnchor = sender as Control;
 
         var isLeft = e.GetCurrentPoint(sender as Visual).Properties.IsLeftButtonPressed;
 

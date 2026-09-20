@@ -104,7 +104,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
         double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
         // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
-        bool FillEnabled = true)
+        bool FillEnabled = true,
+        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as RotationDegrees on
+        // RawTextElementSnapshot; without this, the first Undo after rotating a box would silently
+        // revert it, same reasoning as this record's own Perspective fields above.
+        double RotationDegrees = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Line element (TX editor gap-items plan, 2026-09-01) -- base <paramref name="X"/>/
@@ -150,7 +154,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // comment.
         bool PerspectiveEnabled = false,
         double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
-        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
+        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
+        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as RawBoxElementSnapshot's
+        // own identical addition.
+        double RotationDegrees = 0)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -1122,9 +1129,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     /// <summary>Design-fidelity Phase E (#15, mockups/Editwindow line 108) -- a small mono readout
     /// above the selected element on the interactive canvas: type/z-order + pixel geometry, plus
-    /// rotation for text elements only (the only kind that has any). All-existing properties
-    /// (LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels/Z/RotationDegrees), reused rather
-    /// than duplicated. Raised on selection change (<see cref="OnSelectedOverlayElementChanged"/>)
+    /// rotation for whichever element kinds have a persisted <c>RotationDegrees</c> (Text/Box/Image
+    /// -- element rotation, 2026-09-20, generalized from the original text-only readout; Line has no
+    /// persisted angle to show, see <c>TemplateLineElement</c>'s own doc comment for why). All-existing
+    /// properties (LeftPixels/TopPixels/CanvasWidthPixels/CanvasHeightPixels/Z/RotationDegrees), reused
+    /// rather than duplicated. Raised on selection change (<see cref="OnSelectedOverlayElementChanged"/>)
     /// and on every geometry-driving PropertyChanged of the CURRENTLY selected element (see
     /// <see cref="OnOverlayElementPropertyChanged"/>'s own end-of-method raise).</summary>
     public string SelectionReadoutText
@@ -1145,11 +1154,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
             };
 
-            return element is OverlayElementViewModel text
+            double? rotationDegrees = element switch
+            {
+                OverlayElementViewModel text => text.RotationDegrees,
+                BoxElementViewModel box => box.RotationDegrees,
+                ImageElementViewModel image => image.RotationDegrees,
+                _ => null,
+            };
+
+            return rotationDegrees is { } rotation
                 ? _localization.GetString(
                     "Panes.TxImageEditor.SelectionReadoutWithRotationFormat",
                     typeLabel, element.Z, (int)Math.Round(element.LeftPixels), (int)Math.Round(element.TopPixels),
-                    (int)Math.Round(element.CanvasWidthPixels), (int)Math.Round(element.CanvasHeightPixels), (int)Math.Round(text.RotationDegrees))
+                    (int)Math.Round(element.CanvasWidthPixels), (int)Math.Round(element.CanvasHeightPixels), (int)Math.Round(rotation))
                 : _localization.GetString(
                     "Panes.TxImageEditor.SelectionReadoutFormat",
                     typeLabel, element.Z, (int)Math.Round(element.LeftPixels), (int)Math.Round(element.TopPixels),
@@ -1499,12 +1516,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
             box.PerspectiveEnabled,
             box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-            box.FillEnabled),
+            box.FillEnabled, box.RotationDegrees),
         ImageElementViewModel image => new RawImageElementSnapshot(
             image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight,
             image.PerspectiveEnabled,
-            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
+            image.RotationDegrees),
         LineElementViewModel line => new RawLineElementSnapshot(
             line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
             line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity),
@@ -3024,6 +3042,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             switch (element)
             {
                 case ImageElementViewModel { PerspectiveEnabled: false } image:
+                    // Element rotation (2026-09-20): Rotation/Perspective are mutually exclusive
+                    // (TemplateImageElement.RotationDegrees's own doc comment) -- reset here, inside
+                    // THIS suspend window, so it collapses into the same one undo step as the
+                    // corner-seed below rather than pushing a second one.
+                    image.RotationDegrees = 0;
                     SeedPerspectiveCorners(image);
                     image.PerspectiveEnabled = true;
                     break;
@@ -3031,6 +3054,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     DisablePerspective(image);
                     break;
                 case BoxElementViewModel { PerspectiveEnabled: false } box:
+                    box.RotationDegrees = 0;
                     SeedPerspectiveCorners(box);
                     box.PerspectiveEnabled = true;
                     break;
@@ -3095,6 +3119,81 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         element.NaturalWidth = element.Width;
         element.NaturalHeight = element.Height;
         element.PerspectiveEnabled = false;
+    }
+
+    /// <summary>Element rotation (2026-09-20) -- shared Rotate 90°/180° commands for all 4 element
+    /// types (<see cref="ITemplateElementViewModel.RotateClockwise90Command"/>'s own doc comment).
+    /// Text/Box/Image add to their own persisted <c>RotationDegrees</c> (each element's own
+    /// <c>OnRotationDegreesChanging</c> hook already pushes its own undo step -- no explicit
+    /// <see cref="PushUndoSnapshot"/> needed here, same as every other single-property style/geometry
+    /// edit in this class). Line has no persisted angle -- it rotates its own endpoints directly, in
+    /// canvas/working-copy PIXEL space via <see cref="TemplateLineGeometry.RotateEndpoints"/> (see
+    /// that helper's own doc comment for why normalized-space rotation would be aspect-wrong), wrapped
+    /// in an explicit <see cref="PushUndoSnapshot"/>/<see cref="_suspendPreview"/> pair so 4 endpoint
+    /// writes collapse into ONE undo step instead of 4 separately-coalesced ones. Same 3-gate Locked
+    /// pattern as <see cref="CanFitSelectedImageToSafeArea"/>/<see cref="FitSelectedImageToSafeArea"/> --
+    /// <see cref="CanRotateSelectedElement"/> here, the body backstop inside
+    /// <see cref="RotateSelectedElement"/>, AXAML <c>IsEnabled</c> bound to each element's own
+    /// <see cref="ITemplateElementViewModel.CanRotate"/>.</summary>
+    private bool CanRotateSelectedElement() => SelectedOverlayElement?.CanRotate == true;
+
+    [RelayCommand(CanExecute = nameof(CanRotateSelectedElement))]
+    private void RotateClockwise90() => RotateSelectedElement(90);
+
+    [RelayCommand(CanExecute = nameof(CanRotateSelectedElement))]
+    private void RotateCounterclockwise90() => RotateSelectedElement(-90);
+
+    [RelayCommand(CanExecute = nameof(CanRotateSelectedElement))]
+    private void Rotate180() => RotateSelectedElement(180);
+
+    /// <summary>Clockwise-positive, same convention as <see cref="TemplateTextElement.RotationDegrees"/>
+    /// -- wraps into <c>[0, 360)</c> so repeated rotation never accumulates an unbounded value.</summary>
+    private static double NormalizeDegrees(double degrees) => ((degrees % 360) + 360) % 360;
+
+    private void RotateSelectedElement(double clockwiseDegrees)
+    {
+        if (SelectedOverlayElement is not { CanRotate: true } element)
+        {
+            return;
+        }
+
+        switch (element)
+        {
+            case OverlayElementViewModel text:
+                text.RotationDegrees = NormalizeDegrees(text.RotationDegrees + clockwiseDegrees);
+                break;
+            case BoxElementViewModel box:
+                box.RotationDegrees = NormalizeDegrees(box.RotationDegrees + clockwiseDegrees);
+                break;
+            case ImageElementViewModel image:
+                image.RotationDegrees = NormalizeDegrees(image.RotationDegrees + clockwiseDegrees);
+                break;
+            case LineElementViewModel line:
+                RotateLineEndpoints(line, clockwiseDegrees);
+                break;
+        }
+
+        RecomputePreview();
+    }
+
+    private void RotateLineEndpoints(LineElementViewModel line, double clockwiseDegrees)
+    {
+        var (newX1, newY1, newX2, newY2) = TemplateLineGeometry.RotateEndpoints(
+            line.X1, line.Y1, line.X2, line.Y2, clockwiseDegrees, line.ImageWidth, line.ImageHeight);
+
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            line.X1 = newX1;
+            line.Y1 = newY1;
+            line.X2 = newX2;
+            line.Y2 = newY2;
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
     }
 
     /// <summary>TX editor gap-items plan, item 3 -- see <see cref="Rotate"/>'s own call-site comment
@@ -3214,6 +3313,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             FlattenCommand = FlattenElementCommand,
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
+            RotateClockwise90Command = RotateClockwise90Command,
+            RotateCounterclockwise90Command = RotateCounterclockwise90Command,
+            Rotate180Command = Rotate180Command,
             AddPlateCommand = AddPlateBehindTextCommand,
             ClearTextBitmapFillCommand = ClearTextBitmapFillCommand,
             InsertFieldCommand = InsertFieldCommand,
@@ -3255,7 +3357,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
         double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0,
         // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
-        bool fillEnabled = true)
+        bool fillEnabled = true,
+        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as every other
+        // Phase-N addition to this factory.
+        double rotationDegrees = 0)
     {
         var element = new BoxElementViewModel
         {
@@ -3292,6 +3397,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Corner3X = corner3X,
             Corner3Y = corner3Y,
             PerspectiveEnabled = perspectiveEnabled,
+            RotationDegrees = rotationDegrees,
             Z = z,
             Locked = locked,
             ImageWidth = CanvasDisplayWidth,
@@ -3311,6 +3417,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
             TogglePerspectiveCommand = TogglePerspectiveCommand,
+            RotateClockwise90Command = RotateClockwise90Command,
+            RotateCounterclockwise90Command = RotateCounterclockwise90Command,
+            Rotate180Command = Rotate180Command,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
             // Set LAST, after FillColor/BorderColor/BorderThickness/Opacity/CornerRadius above --
             // an object initializer assigns in listed order, so their own construction-time
@@ -3344,10 +3453,19 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     {
         TemplateElement templateElement = element switch
         {
+            // Element rotation (2026-09-20): RotationDegrees is threaded through here for a
+            // faithful round-trip (Flatten's stale-result guard, plan §6/round-2 fix) even though
+            // this composer only ever runs while PerspectiveEnabled is true (see the two callers,
+            // ImageElementViewModel.RebuildWarpedPreview/BoxElementViewModel.RebuildWarpedPreview),
+            // which under the Rotation-vs-Perspective mutual-exclusivity rule means it's always 0
+            // here in practice. Deliberately NOT consumed by a rotation branch below -- the canvas
+            // already gets its rotation from the AXAML RenderTransform, and a rotation branch here
+            // would double-rotate if this composer's PerspectiveEnabled-only invariant ever changed.
             ImageElementViewModel image => new TemplateImageElement(
                 new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y).ToBoundingBox(),
                 Z: 0, image.Source, image.Fit,
-                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y)),
+                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+                image.RotationDegrees),
             BoxElementViewModel box => new TemplateBoxElement(
                 new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y).ToBoundingBox(),
                 Z: 0, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
@@ -3355,7 +3473,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
                     : null,
                 new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
-                box.FillEnabled),
+                box.FillEnabled, box.RotationDegrees),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
         var scaleY = ComputeTargetToCanvasScaleY();
@@ -3406,6 +3524,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             FlattenCommand = FlattenElementCommand,
             CopyStyleCommand = CopySelectedElementStyleCommand,
             PasteStyleCommand = PasteSelectedElementStyleCommand,
+            RotateClockwise90Command = RotateClockwise90Command,
+            RotateCounterclockwise90Command = RotateCounterclockwise90Command,
+            Rotate180Command = Rotate180Command,
             // Set LAST, after X1/Y1/X2/Y2/StrokeColor/StrokeThickness/Opacity above -- same
             // "avoid a spurious undo push from element creation itself" ordering trick
             // CreateBoxElement's own identical comment documents.
@@ -3413,6 +3534,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             PushUndoSnapshotForStyleChange = () => PushUndoSnapshotCoalesced("LineStyle"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
+        // Assigned post-construction, same reasoning as ImageElementViewModel.RenderWarpedPreview's
+        // own identical pattern -- must close over the constructed element itself, not in scope
+        // inside its own object initializer.
+        element.ApplyRotationDelta = delta =>
+        {
+            RotateLineEndpoints(element, delta);
+            RecomputePreview();
+        };
         RefreshElementPreviewMetrics(element);
         return element;
     }
@@ -3427,7 +3556,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // order (corners before PerspectiveEnabled, PerspectiveEnabled before the undo delegate).
         bool perspectiveEnabled = false,
         double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
-        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0)
+        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0,
+        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as CreateBoxElement's
+        // own identical addition.
+        double rotationDegrees = 0)
     {
         var element = new ImageElementViewModel(source)
         {
@@ -3446,6 +3578,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             Corner3X = corner3X,
             Corner3Y = corner3Y,
             PerspectiveEnabled = perspectiveEnabled,
+            RotationDegrees = rotationDegrees,
             Z = z,
             Locked = locked,
             IsBackground = isBackground,
@@ -3470,6 +3603,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             FitToSafeAreaCommand = FitSelectedImageToSafeAreaCommand,
             ResetToOriginalSizeCommand = ResetImageElementToOriginalSizeCommand,
             TogglePerspectiveCommand = TogglePerspectiveCommand,
+            RotateClockwise90Command = RotateClockwise90Command,
+            RotateCounterclockwise90Command = RotateCounterclockwise90Command,
+            Rotate180Command = Rotate180Command,
             PushUndoSnapshotForGeometryChange = () => PushUndoSnapshotCoalesced("OverlayGeometry"),
         };
         element.PropertyChanged += OnOverlayElementPropertyChanged;
@@ -3498,12 +3634,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
             box.PerspectiveEnabled,
             box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-            box.FillEnabled),
+            box.FillEnabled, box.RotationDegrees),
         RawImageElementSnapshot image => CreateImageElement(
             image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
             image.NaturalPixelWidth, image.NaturalPixelHeight,
             image.PerspectiveEnabled,
-            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
+            image.RotationDegrees),
         // Endpoints (X1/Y1/X2/Y2), NOT the base X/Y/Width/Height -- RawLineElementSnapshot's own
         // doc comment: the base fields are derived-for-uniformity-on-write only, endpoints are the
         // sole truth on read.
@@ -3710,7 +3847,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
                     box.PerspectiveEnabled,
                     box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-                    box.FillEnabled);
+                    box.FillEnabled, box.RotationDegrees);
             case RawImageElementSnapshot image:
                 // GUID-based, never index-derived (plan-review finding -- see PersistedImageElement's
                 // own doc comment): safe against any reordering/filtering between here and the manifest
@@ -3743,7 +3880,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     assetFileName, image.Fit, originKind, originPayload, image.IsBackground,
                     image.NaturalPixelWidth, image.NaturalPixelHeight,
                     image.PerspectiveEnabled,
-                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y);
+                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
+                    image.RotationDegrees);
             case RawLineElementSnapshot line:
                 return new PersistedLineElement(
                     line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
@@ -3862,7 +4000,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
                     box.PerspectiveEnabled,
                     box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-                    box.FillEnabled);
+                    box.FillEnabled, box.RotationDegrees);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -3881,7 +4019,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
                     image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height,
                     image.PerspectiveEnabled,
-                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y);
+                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
+                    image.RotationDegrees);
             case PersistedLineElement line:
                 return new RawLineElementSnapshot(
                     line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
@@ -4084,6 +4223,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         CutSelectedElementCommand.NotifyCanExecuteChanged();
         CopySelectedElementStyleCommand.NotifyCanExecuteChanged();
         PasteSelectedElementStyleCommand.NotifyCanExecuteChanged();
+        // Element rotation (2026-09-20, code-review finding) -- CanRotateSelectedElement depends on
+        // SelectedOverlayElement, same as DuplicateCommand/CopySelectedElementCommand above; without
+        // this, these 3 would render stale-disabled on any future entry point that isn't a
+        // freshly-opened context menu (Avalonia re-queries CanExecute on popup attach today, which
+        // is why this had no visible symptom yet).
+        RotateClockwise90Command.NotifyCanExecuteChanged();
+        RotateCounterclockwise90Command.NotifyCanExecuteChanged();
+        Rotate180Command.NotifyCanExecuteChanged();
         // TX editor gap-items plan, item 4b -- same "gated on a text element being selected" shape
         // as InsertFieldCommand above, needs the same refresh.
         PickTextBitmapFillFromFileCommand.NotifyCanExecuteChanged();
@@ -5454,6 +5601,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                     box.GradientKind = style.GradientKind;
                     box.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
                     box.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
+                    // Element rotation (2026-09-20) -- same "carries with style" treatment as text's
+                    // own RotationDegrees above (§9's own threading checklist: Box's is included in
+                    // Copy/Paste Style, matching Text's precedent).
+                    box.RotationDegrees = style.RotationDegrees;
                     break;
                 case (RawLineElementSnapshot style, LineElementViewModel line):
                     line.StrokeColor = style.StrokeColor;
@@ -7269,13 +7420,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             : null;
         return new TemplateBoxElement(
             corners?.ToBoundingBox() ?? naturalBounds, box.Z, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius, gradient, corners,
-            box.FillEnabled);
+            box.FillEnabled, box.RotationDegrees);
     }
 
     private TemplateImageElement BuildImageTemplateElement(ImageElementViewModel image, NormalizedRect naturalBounds)
     {
         var corners = TryProjectPerspectiveCorners(image);
-        return new TemplateImageElement(corners?.ToBoundingBox() ?? naturalBounds, image.Z, image.Source, image.Fit, corners);
+        return new TemplateImageElement(corners?.ToBoundingBox() ?? naturalBounds, image.Z, image.Source, image.Fit, corners, image.RotationDegrees);
     }
 
     private TemplateLineElement BuildTemplateLineElement(LineElementViewModel line)

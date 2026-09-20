@@ -771,12 +771,21 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // edge case this session didn't find.
         var centerX = bounds.X + (bounds.Width / 2f);
         var centerY = bounds.Y + (bounds.Height / 2f);
-        var compositeLocation = new Point(
-            (int)MathF.Round(centerX - (subBitmap.Width / 2f)),
-            (int)MathF.Round(centerY - (subBitmap.Height / 2f)));
+        var compositeLocation = ComputeRecenteredCompositeLocation(centerX, centerY, subBitmap.Width, subBitmap.Height);
         var boundsClip = BuildPixelSnappedClip(bounds);
         image.Mutate(ctx => ctx.Clip(boundsClip, innerCtx => innerCtx.DrawImage(subBitmap, compositeLocation, 1f)));
     }
+
+    /// <summary>Element rotation (2026-09-20) -- the one genuinely shared piece across every
+    /// offscreen-rotate-composite path in this file (text's own rotation branch above, plus the new
+    /// Box/Image ones below): given the ORIGINAL content's center and a rotated bitmap's own
+    /// POST-rotate <c>Width</c>/<c>Height</c> (ImageSharp's <c>ctx.Rotate</c> auto-expands the canvas
+    /// to the rotated content's own bounding box), returns the composite location that keeps the
+    /// visual center anchored at the original center. Extracted here (round-1 plan-review finding:
+    /// the original plan assumed this was already a larger, reusable helper -- it wasn't, this ~4-line
+    /// recenter is the only part that actually generalizes) rather than duplicated three times.</summary>
+    private static Point ComputeRecenteredCompositeLocation(float centerX, float centerY, int rotatedWidth, int rotatedHeight) =>
+        new Point((int)MathF.Round(centerX - (rotatedWidth / 2f)), (int)MathF.Round(centerY - (rotatedHeight / 2f)));
 
     // User-reported 2026-09-18: a faint hairline seam along the BOTTOM/RIGHT edge of a text
     // element's box, visible in the mode-exact PREVIEW panel against certain backgrounds --
@@ -894,11 +903,47 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return;
         }
 
+        // Element rotation (2026-09-20) -- Perspective already returned above when set, so this only
+        // runs when the two are NOT both non-null/non-zero (TemplateImageElement.RotationDegrees's
+        // own Perspective-wins precedence). Same `% 360`/NaN/Infinity handling as DrawTemplateText's
+        // own isUnrotated check.
+        var isUnrotated = element.RotationDegrees % 360 == 0 || double.IsNaN(element.RotationDegrees) || double.IsInfinity(element.RotationDegrees);
+        if (!isUnrotated)
+        {
+            RotateElementContent(image, element, bounds, targetWidth, targetHeight, (float)element.RotationDegrees);
+            return;
+        }
+
         var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
 
         using var resizedImage = ToImageSharp(resized);
         var location = new Point((int)MathF.Round(bounds.X), (int)MathF.Round(bounds.Y));
         image.Mutate(ctx => ctx.DrawImage(resizedImage, location, 1f));
+    }
+
+    /// <summary>Element rotation (2026-09-20) -- deliberately does NOT mirror
+    /// <see cref="TryWarpElementContent"/>'s shape: that path clones the RAW source and lets the
+    /// homography <c>Transform</c> itself be the render, which its own comment states is deliberate
+    /// ("warp to fill", ignores <see cref="TemplateImageElement.Fit"/>) -- a straight copy here would
+    /// silently convert every rotated Contain/Cover image to Stretch (round-1 plan-review finding).
+    /// Instead: resize via <see cref="GetOrCreateResizedImage"/> with the element's own
+    /// <see cref="TemplateImageElement.Fit"/> (the SAME call the plain non-rotated path below uses,
+    /// with the SAME already-ceiling-clamped <paramref name="targetWidth"/>/<paramref name="targetHeight"/>
+    /// the caller computed), THEN convert via <see cref="ToImageSharpRgba32"/> -- NOT the plain
+    /// <see cref="ToImageSharp"/>, which returns <c>Image&lt;Rgb24&gt;</c> and would fill the rotated
+    /// AABB's expanded corners with opaque black (same reason <c>DrawTemplateText</c>'s own rotation
+    /// sub-bitmap must be Rgba32). No clip to <paramref name="bounds"/> -- same no-clip/overflow
+    /// policy as <see cref="RotateBoxContent"/>'s own doc comment.</summary>
+    private void RotateElementContent(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds, int targetWidth, int targetHeight, float rotationDegrees)
+    {
+        var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
+        using var subBitmap = ToImageSharpRgba32(resized);
+        subBitmap.Mutate(ctx => ctx.Rotate(rotationDegrees));
+
+        var centerX = bounds.X + (bounds.Width / 2f);
+        var centerY = bounds.Y + (bounds.Height / 2f);
+        var location = ComputeRecenteredCompositeLocation(centerX, centerY, subBitmap.Width, subBitmap.Height);
+        image.Mutate(ctx => ctx.DrawImage(subBitmap, location, 1f));
     }
 
     /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- warps
@@ -1080,7 +1125,50 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return;
         }
 
+        // Element rotation (2026-09-20) -- Perspective already returned above when set, so this only
+        // runs when the two are NOT both non-null/non-zero (TemplateBoxElement.RotationDegrees's own
+        // Perspective-wins precedence). Same `% 360`/NaN/Infinity handling as DrawTemplateText's own
+        // isUnrotated check, for the same reasons (visual no-op at a full turn, no undefined
+        // ctx.Rotate(NaN) call).
+        var isUnrotated = element.RotationDegrees % 360 == 0 || double.IsNaN(element.RotationDegrees) || double.IsInfinity(element.RotationDegrees);
+        if (!isUnrotated)
+        {
+            RotateBoxContent(image, element, bounds, imageHeightPx, (float)element.RotationDegrees);
+            return;
+        }
+
         image.Mutate(ctx => DrawBoxContent(ctx, element, bounds, imageHeightPx));
+    }
+
+    /// <summary>Element rotation (2026-09-20) -- mirrors <see cref="TryWarpBoxContent"/>'s SHAPE (own
+    /// ceiling, offscreen Rgba32 sub-bitmap via the same <see cref="DrawBoxContent"/>) but NOT its
+    /// geometry: <c>ctx.Rotate(angle)</c> (auto-expands the sub-bitmap canvas to the rotated AABB)
+    /// instead of <see cref="TryComputeWarpGeometry"/>'s homography-specific sizing, which is not
+    /// reusable here (round-1/round-2 plan-review findings). Deliberately does NOT clip to
+    /// <paramref name="bounds"/>, unlike <see cref="DrawTemplateText"/>'s own rotation path -- a
+    /// rotated box has no "shrink the content" analogue (a 90°-rotated 100×50 box should present as
+    /// 50×100, not a shrunken inscribed quad), so the rotated AABB is left to overflow, matching the
+    /// warp path's own no-clip-beyond-canvas behavior. <paramref name="imageHeightPx"/> stays the
+    /// DESTINATION image's own height (not the sub-bitmap's) -- <see cref="DrawBoxContent"/>'s own
+    /// <c>BorderThickness</c>/<c>CornerRadius</c> are height-relative and must not scale off a
+    /// (possibly safety-clamped) sub-bitmap size.</summary>
+    private static void RotateBoxContent(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateBoxElement element, PixelBounds bounds, int imageHeightPx, float rotationDegrees)
+    {
+        var ceiling = MathF.Min(MaxElementResizeDimensionPxCeiling, MaxElementResizeDestinationMultiplier * MathF.Max(image.Width, image.Height));
+        var rawWidthPx = MathF.Max(1f, MathF.Round(bounds.Width));
+        var rawHeightPx = MathF.Max(1f, MathF.Round(bounds.Height));
+        var safetyScale = MathF.Min(1f, ceiling / MathF.Max(rawWidthPx, rawHeightPx));
+        var subBitmapWidth = Math.Max(1, (int)MathF.Round(rawWidthPx * safetyScale));
+        var subBitmapHeight = Math.Max(1, (int)MathF.Round(rawHeightPx * safetyScale));
+
+        using var contentBitmap = new Image<Rgba32>(subBitmapWidth, subBitmapHeight);
+        contentBitmap.Mutate(ctx => DrawBoxContent(ctx, element, new PixelBounds(0, 0, subBitmapWidth, subBitmapHeight), imageHeightPx));
+        contentBitmap.Mutate(ctx => ctx.Rotate(rotationDegrees));
+
+        var centerX = bounds.X + (bounds.Width / 2f);
+        var centerY = bounds.Y + (bounds.Height / 2f);
+        var location = ComputeRecenteredCompositeLocation(centerX, centerY, contentBitmap.Width, contentBitmap.Height);
+        image.Mutate(ctx => ctx.DrawImage(contentBitmap, location, 1f));
     }
 
     /// <summary>Extracted so <see cref="TryWarpBoxContent"/> can draw the SAME fill/border/corner-

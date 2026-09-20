@@ -3255,6 +3255,36 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void TogglePerspective_OnARotatedBox_ResetsRotationDegreesToZeroAsPartOfTheSameUndoStep()
+    {
+        // Element rotation (2026-09-20, code-review finding) -- the prior test above never set a
+        // non-zero rotation first, so it never actually exercised the RotationDegrees=0 reset
+        // TogglePerspective's own comment describes. Rotation and Perspective are mutually exclusive
+        // (TemplateBoxElement.RotationDegrees's own doc comment): entering perspective mode must
+        // reset the rotation, AND the reset must collapse into TogglePerspective's own single
+        // explicit undo push, not add a second one.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.RotationDegrees = 45;
+
+        vm.TogglePerspectiveCommand.Execute(box);
+
+        Assert.True(box.PerspectiveEnabled);
+        Assert.Equal(0, box.RotationDegrees);
+
+        // AddBoxElement (1), setting box.RotationDegrees = 45 above -- a real, unsuspended write --
+        // pushes its own separate coalesced step (2), then TogglePerspective itself (should be
+        // exactly 1 more, not 2, even though it both reset RotationDegrees AND seeded the corners)
+        // (3). 3 Undos must leave nothing.
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
     public void TogglePerspective_OnThenOff_RestoresTheOriginalBboxAndPushesExactlyTwoUndoSteps()
     {
         var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
@@ -3276,6 +3306,128 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.UndoCommand.Execute(null);
         Assert.False(vm.UndoCommand.CanExecute(null));
         Assert.Empty(vm.OverlayElements);
+    }
+
+    // Element rotation (2026-09-20) -- same 3-gate Locked pattern as
+    // FitSelectedImageToSafeAreaCommand's own tests above (CanExecute + body backstop).
+
+    [AvaloniaFact]
+    public void RotateClockwise90Command_ForALockedElement_IsRefusedAsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.Locked = true;
+        var rotationBefore = box.RotationDegrees;
+
+        Assert.False(vm.RotateClockwise90Command.CanExecute(null));
+        // Direct Execute bypasses CanExecute -- must still be a safe no-op, same "body-level check is
+        // the real backstop" reasoning FitSelectedImageToSafeAreaCommand's own test documents.
+        vm.RotateClockwise90Command.Execute(null);
+
+        Assert.Equal(rotationBefore, box.RotationDegrees);
+    }
+
+    [AvaloniaFact]
+    public void RotateClockwise90Command_ForABoxWithPerspectiveEnabled_IsRefusedAsANoOp()
+    {
+        // Rotation and Perspective are mutually exclusive (TemplateBoxElement.RotationDegrees's own
+        // doc comment) -- CanRotate (and so the command's own CanExecute) must be false while a
+        // warp is active, same as the Locked case above.
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        vm.TogglePerspectiveCommand.Execute(box);
+        Assert.True(box.PerspectiveEnabled);
+
+        Assert.False(box.CanRotate);
+        Assert.False(vm.RotateClockwise90Command.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public void RotateClockwise90Command_WrapsPastThreeSixtyBackToZero()
+    {
+        // NormalizeDegrees wrap-around: 350 + 90 = 440, which must normalize to 80, not stay at 440
+        // (an unbounded value would eventually lose float precision over many rotations).
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.RotationDegrees = 350;
+
+        vm.RotateClockwise90Command.Execute(null);
+
+        AssertClose(80, box.RotationDegrees);
+    }
+
+    [AvaloniaFact]
+    public void RotateCounterclockwise90Command_WrapsBelowZeroBackToward360()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddBoxElementCommand.Execute(null);
+        var box = Assert.IsType<BoxElementViewModel>(vm.SelectedOverlayElement);
+        box.RotationDegrees = 10;
+
+        vm.RotateCounterclockwise90Command.Execute(null);
+
+        // 10 - 90 = -80, normalized into [0, 360) is 280.
+        AssertClose(280, box.RotationDegrees);
+    }
+
+    [AvaloniaFact]
+    public void Rotate180Command_ForText_AddsOneEightyToRotationDegrees()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = Assert.IsType<OverlayElementViewModel>(vm.SelectedOverlayElement);
+        text.RotationDegrees = 45;
+
+        vm.Rotate180Command.Execute(null);
+
+        AssertClose(225, text.RotationDegrees);
+    }
+
+    [AvaloniaFact]
+    public void RotateClockwise90Command_Line_RotatesEndpointsInPlaceAsExactlyOneUndoStep()
+    {
+        // Line has no persisted RotationDegrees (TemplateLineElement's own doc comment) -- rotation
+        // mutates X1/Y1/X2/Y2 directly, via TemplateLineGeometry.RotateEndpoints. All 4 writes must
+        // collapse into ONE undo step (round-1/round-2 plan-review finding: a naive write fires 4
+        // separately-coalesced pushes), same "count total undo depth" idiom as
+        // TogglePerspective_On_SeedsCornersFromTheCurrentBboxAndPushesExactlyOneUndoStep above --
+        // AddLineElement (1) then RotateClockwise90 (should be exactly 1 more); 2 Undos must leave
+        // nothing.
+        var vm = CreateEditor(CreateSource(200, 100), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = Assert.IsType<LineElementViewModel>(vm.SelectedOverlayElement);
+        var (x1Before, y1Before, x2Before, y2Before) = (line.X1, line.Y1, line.X2, line.Y2);
+
+        vm.RotateClockwise90Command.Execute(null);
+
+        // At least one endpoint actually moved -- rules out a no-op that would make the undo-count
+        // assertion below vacuously true.
+        Assert.True(line.X1 != x1Before || line.Y1 != y1Before || line.X2 != x2Before || line.Y2 != y2Before);
+
+        vm.UndoCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        Assert.False(vm.UndoCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+    }
+
+    [AvaloniaFact]
+    public void PendingRotationDelta_OnALine_AppliesOnceThenResetsToZero()
+    {
+        // The arbitrary-angle flyout's own field (LineElementViewModel.PendingRotationDelta's own
+        // doc comment): a line has no absolute angle to show, so this is a one-shot delta that must
+        // reset to 0 immediately after applying, not linger as a stale non-zero value.
+        var vm = CreateEditor(CreateSource(200, 100), SmallMode, new FakeTransmitImagePreparer());
+        vm.AddLineElementCommand.Execute(null);
+        var line = Assert.IsType<LineElementViewModel>(vm.SelectedOverlayElement);
+        var (x1Before, y1Before) = (line.X1, line.Y1);
+
+        line.PendingRotationDelta = 90;
+
+        Assert.Equal(0, line.PendingRotationDelta);
+        Assert.True(line.X1 != x1Before || line.Y1 != y1Before);
     }
 
     [AvaloniaFact]
@@ -4719,8 +4871,12 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
-    public void SelectionReadoutText_BoxElementSelected_UsesFormatWithoutRotation()
+    public void SelectionReadoutText_BoxElementSelected_UsesFormatWithRotation()
     {
+        // Element rotation (2026-09-20): generalized from the original text-only rotation readout --
+        // box now has a persisted RotationDegrees too, so it uses the WithRotation format, same as
+        // text. Renamed from ...UsesFormatWithoutRotation, whose old expectation this test used to
+        // pin (pre-dates this feature).
         var localization = new FakeLocalizationService();
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new MacroTextResolver(), new OperatorSettings(),
@@ -4731,7 +4887,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
         _ = vm.SelectionReadoutText;
 
-        Assert.Equal("Panes.TxImageEditor.SelectionReadoutFormat", localization.LastKey);
+        Assert.Equal("Panes.TxImageEditor.SelectionReadoutWithRotationFormat", localization.LastKey);
     }
 
     [AvaloniaFact]

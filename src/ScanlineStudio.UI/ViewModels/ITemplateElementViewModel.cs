@@ -144,4 +144,25 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
     /// assignment) for all four geometry properties. Null only in tests/design-time contexts that
     /// don't care about undo.</summary>
     Action? PushUndoSnapshotForGeometryChange { get; init; }
+
+    /// <summary>Element rotation (2026-09-20) -- parent-pushed the SAME parameterless
+    /// <c>TxImageEditorPaneViewModel.RotateClockwise90Command</c>/<c>RotateCounterclockwise90Command</c>/
+    /// <c>Rotate180Command</c> instances every element gets, same "reads via SelectedOverlayElement,
+    /// no CommandParameter" shape as <see cref="DuplicateCommand"/>'s own doc comment. On the shared
+    /// interface since all four element types' context menus offer Rotate -- text maps to
+    /// <c>RotationDegrees += &#177;90/180</c> the same as box/image; line rotates its own endpoints
+    /// (no persisted angle, see <c>TemplateLineElement</c>'s own doc comment).</summary>
+    IRelayCommand? RotateClockwise90Command { get; init; }
+
+    IRelayCommand? RotateCounterclockwise90Command { get; init; }
+
+    IRelayCommand? Rotate180Command { get; init; }
+
+    /// <summary>Element rotation (2026-09-20) -- Locked-gate for the 3 rotate commands above, same
+    /// 3-gate convention (CanExecute + body backstop in <c>TxImageEditorPaneViewModel</c> + this
+    /// AXAML-bound property) as every other geometry command. Box/Image additionally gate on "no
+    /// active Perspective warp" (mutually exclusive with rotation); Text/Line are Locked-only.
+    /// On the shared interface so the parent VM's CanExecute can check it type-agnostically instead
+    /// of pattern-matching all four concrete element types.</summary>
+    bool CanRotate { get; }
 }

@@ -91,7 +91,11 @@ public sealed record PersistedBoxElement(
     // Legacy `.mtm` import -- same trailing/defaulted-true convention as every other additive field
     // in this record; see TemplateBoxElement.FillEnabled's own doc comment for why (nullable
     // FillColor vs. this flag) and TxImageEditorPaneViewModel/TemplateStore for the threading.
-    bool FillEnabled = true)
+    bool FillEnabled = true,
+    // Element rotation (2026-09-20) -- same trailing/defaulted-0 convention as PersistedTextElement's
+    // own RotationDegrees; see TemplateBoxElement.RotationDegrees's doc comment for the
+    // Perspective-wins precedence rule.
+    double RotationDegrees = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>TX editor gap-items plan, line element (2026-09-01) -- a 4th persisted element kind. Base
@@ -148,7 +152,11 @@ public sealed record PersistedImageElement(
     // convention as PersistedBoxElement's own Perspective fields; see that record's own doc comment.
     bool PerspectiveEnabled = false,
     double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
-    double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0)
+    double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
+    // Element rotation (2026-09-20) -- same trailing/defaulted-0 convention as PersistedTextElement's
+    // own RotationDegrees; see TemplateImageElement.RotationDegrees's doc comment for the
+    // Perspective-wins precedence rule.
+    double RotationDegrees = 0)
     : PersistedTemplateElement(X, Y, Width, Height, Z, Locked);
 
 /// <summary>What <see cref="ITemplateStore.SaveAsync"/> accepts and <see cref="ITemplateStore.LoadAsync"/>
