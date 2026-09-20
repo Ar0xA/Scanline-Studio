@@ -1959,21 +1959,41 @@
                      scaffolding cards below (Insert field/Text style/Saved templates) — each a nested
                      (non-blueprint) group box, same "gb inside gb blueprint" nesting as the Receive
                      tab's Incoming-frame/Previous-frames pair. -->
-                <!-- design-fidelity Phase E (#6): outer ScrollViewer+StackPanel replaced with a
-                     Grid RowDefinitions="Auto,Auto,*" — PREVIEW/ELEMENTS stay Auto-height, INSPECTOR
-                     fills whatever height remains (mock's own right-column proportions leave
-                     INSPECTOR filling the card's bottom, not ~450px of dead space below a
-                     short-content ScrollViewer). Same rail-column restructuring pattern as design-
-                     fidelity Phase D's READY RACK/TEMPLATE LIBRARY split — INSPECTOR now owns its
-                     own internal ScrollViewer (below) instead of the whole column sharing one. -->
-                <Grid Grid.Column="2" RowDefinitions="Auto,Auto,*" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,12,0">
+                <!-- Reworked (user-reported, right column got too small an INSPECTOR area once a
+                     template had more than a couple of text elements): the Phase E "Auto,Auto,*"
+                     shape below let ELEMENTS' natural growth eat INSPECTOR's *-row space, so more
+                     text elements meant a shorter and shorter Inspector rather than a scrollbar —
+                     an unbounded ItemsControl fighting a flex sibling for the same fixed column
+                     height. The whole column is now ONE ScrollViewer over a plain Grid, so PREVIEW/
+                     ELEMENTS/INSPECTOR each just take their natural height and the column scrolls
+                     as a unit instead of compressing, matching the rail column's own independent
+                     ScrollViewer (Grid.Column="0", TEMPLATES/TEMPLATE LIBRARY) rather than being
+                     coupled to the centre canvas's scroll.
+                     Deliberately NOT a pinned explicit Height on this inner Grid, unlike
+                     MainWindow.axaml's Receive-tab columns: those pin height to stabilize a real "*"
+                     row's size (so it doesn't shrink when the window does) — this Grid has no "*"
+                     row at all now (all three are plain Auto), and an explicit Height on it would
+                     CLAMP it to that number instead of letting it scroll (confirmed empirically —
+                     first attempt used Height="564" here, which silently clipped ELEMENTS/INSPECTOR
+                     past that point with no scrollbar, because HeaderedContentControl's
+                     ClipToBounds="False" painted the overflow without the ScrollViewer ever seeing
+                     it as real extent). Plain Auto rows measure their true natural size even under
+                     a ScrollViewer's infinite probe — only "*" rows collapse that way — so leaving
+                     Height unset here is what makes the ScrollViewer's Extent honest and scrolling
+                     actually work. INSPECTOR's own internal ScrollViewer (previously wrapping its
+                     StackPanel, see the Phase E comment this replaces) is removed — nested scrollers
+                     fighting over the same wheel input is worse than one shared bar. -->
+                <ScrollViewer Grid.Column="2">
+                <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="{StaticResource IndustrySpacingGroup}" Margin="0,6,12,0">
 
-                    <!-- Margin right of 12 (outer Grid, above) clears Fluent's overlay vertical
-                         scrollbar (it floats over content rather than reserving a column) —
-                         confirmed via real-window testing that without this, the scrollbar thumb
-                         visually overlaps and silently eats clicks on the right-edge Save button
-                         (Phase 5). Margin top=6 (Phase A design-fidelity fix): same first-card
-                         title-notch clip fix as the rail column above. -->
+                    <!-- Margin right of 12 (inner Grid, above — moving it to the ScrollViewer itself
+                         does NOT work, confirmed empirically elsewhere in this file, see the rail
+                         column's own identical comment) clears Fluent's overlay vertical scrollbar
+                         (it floats over content rather than reserving a column) — confirmed via
+                         real-window testing that without this, the scrollbar thumb visually overlaps
+                         and silently eats clicks on the right-edge Save button (Phase 5). Margin
+                         top=6 (Phase A design-fidelity fix): same first-card title-notch clip fix as
+                         the rail column above. -->
                     <HeaderedContentControl Grid.Row="0" Classes="Industry" Theme="{StaticResource IndustryGroupBoxTheme}" Padding="{StaticResource IndustryGbPaddingNested}" ClipToBounds="False">
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.PreviewLabel}" />
@@ -2385,7 +2405,6 @@
                         <HeaderedContentControl.Header>
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.InspectorHeader}" />
                         </HeaderedContentControl.Header>
-                        <ScrollViewer VerticalScrollBarVisibility="Auto">
                         <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                             <!-- design-fidelity Phase E (#4): converted from a plain Button strip
                                  (no active-state feedback at all) to RadioButton.IndustrySeg — an
@@ -2899,10 +2918,10 @@
                                    Text="{loc:Translate Panes.TxImageEditor.AdjustmentsNonDestructiveNote}" />
                     </StackPanel>
                         </StackPanel>
-                        </ScrollViewer>
                     </HeaderedContentControl>
 
                 </Grid>
+                </ScrollViewer>
 
             </Grid>
 
