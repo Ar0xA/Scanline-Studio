@@ -199,6 +199,16 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     [ObservableProperty]
     private double _rotationDegrees;
 
+    /// <summary>User-reported (2026-09-20): purely transient view state, never persisted -- which of
+    /// the two panels this element's own Quick Style flyout currently shows. A single
+    /// <c>FlyoutBase.AttachedFlyout</c> can't hold two independent popups (single-valued), so the
+    /// "Rotate…" context-menu item (<c>OnOpenElementRotateFlyout</c>, code-behind) sets this true
+    /// before showing the SAME flyout, and "Quick Style…" (<c>OnOpenElementQuickStyleFlyout</c>)
+    /// sets it false -- replaces an earlier design where the rotate field was just bolted onto the
+    /// bottom of the font/color panel, which read as nonsensical from the "Rotate…" menu label.</summary>
+    [ObservableProperty]
+    private bool _showRotateFlyoutContent;
+
     /// <summary>Phase 8: simplified 2-stop gradient (start/end color + axis) rather than exposing
     /// <see cref="Abstractions.Imaging.TextGradient"/>'s own full arbitrary-stop-list shape directly
     /// on this VM -- a real, deliberate scope cut for the style panel's own UI (a 2-color picker
