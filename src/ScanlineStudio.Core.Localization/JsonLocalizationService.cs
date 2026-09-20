@@ -72,7 +72,34 @@ public sealed partial class JsonLocalizationService : ILocalizationService
         }
 
         CurrentCulture = culture;
-        CultureChanged?.Invoke();
+        RaiseCultureChanged();
+    }
+
+    /// <summary>A bare multicast <c>CultureChanged?.Invoke()</c> stops dead at the first subscriber
+    /// that throws, silently skipping every subscriber registered after it -- the only production
+    /// caller, <c>OptionsWindowViewModel.SaveCoreAsync</c>, catches and only logs, so this can happen
+    /// with no visible trace. One subscriber's own bug must not mute every other bound control in the
+    /// app for the rest of the session -- same "one field's failure must not abort the other unrelated
+    /// writes" convention this codebase already applies elsewhere (e.g. that same Save method's own
+    /// per-field try/catch blocks).</summary>
+    private void RaiseCultureChanged()
+    {
+        if (CultureChanged is not { } handlers)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action)handler)();
+            }
+            catch (Exception ex)
+            {
+                Log.CultureChangedSubscriberThrew(_logger, ex);
+            }
+        }
     }
 
     public string GetString(string key, params object[] args)
@@ -252,6 +279,9 @@ public sealed partial class JsonLocalizationService : ILocalizationService
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Localization key '{Key}' has an invalid format for culture '{Culture}'; using fallback.")]
         public static partial void InvalidTranslationFormat(ILogger logger, string key, string culture, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A CultureChanged subscriber threw; other subscribers still ran.")]
+        public static partial void CultureChangedSubscriberThrew(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Localization key '{Key}' missing for culture '{Culture}'; falling back to English.")]
         public static partial void KeyMissingFallingBackToEnglish(ILogger logger, string key, string culture);

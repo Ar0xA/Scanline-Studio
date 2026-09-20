@@ -776,7 +776,28 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         RecomputePreview();
+
+        // Live-locale-switch review (2026-09-20): every stored GetString-backed member here is the
+        // transient StatusMessage (self-heals on the next failure or accepted stale in the
+        // meantime, same convention as every other VM in this pass); every other GetString-backed
+        // member is a computed getter, so the blanket refresh alone is enough. ReadyRack
+        // deliberately does NOT get its own subscription -- it has no computed GetString members at
+        // all (only its own transient StatusMessage), so a refresh call would be a no-op, and
+        // subscribing it directly to this long-lived singleton would reintroduce exactly the leak
+        // this fix removes elsewhere (see its "both die together" doc comment just below -- only
+        // THIS class may subscribe to anything outside its own and ReadyRack's lifetime).
+        //
+        // Absolute last statement in the constructor, deliberately: this constructor CAN throw
+        // (BuildWorkingCopy above, an oversized source image) -- TxControlsPaneViewModel's
+        // construction call sites catch that and dispose the PREVIOUS editor, not this
+        // never-fully-constructed one, so a subscription added before a throw would orphan itself
+        // in ILocalizationService's invocation list forever. Subscribing only after every
+        // throwing statement has already succeeded means Dispose() below is always reachable for
+        // any instance that got this far.
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     // T0-11 follow-up (production_audit.md): releases _workingCopyPool/_previewPool and every
     // live OverlayElements entry's own bitmap resources. Wired into TxControlsPaneViewModel's own
@@ -807,6 +828,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             return;
         }
+
+        // Live-locale-switch review (2026-09-20): pairs with the CultureChanged subscription at the
+        // end of the constructor -- this instance is genuinely recreated (mode switch/New Template),
+        // unlike this codebase's other DI-singleton panes, so unsubscribing here is load-bearing,
+        // not defensive hygiene: every discarded editor that skipped this would leak forever in the
+        // long-lived ILocalizationService's own invocation list.
+        _localization.CultureChanged -= OnCultureChanged;
 
         // T0-12: _disposed guards RecomputePreviewCoalesced's deferred Dispatcher.UIThread.Post
         // continuation, and (auditor code-review finding, Tier-0 audit follow-up) RecomputePreview's/
@@ -1985,10 +2013,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <para>Mid-decode insert is intentionally ALLOWED (not gated on
     /// <see cref="IReceivedImageBuffer.Progress"/> being null/complete) -- a live CanExecute gate
     /// would need this VM to subscribe to <see cref="IReceivedImageBuffer.Updated"/>, a long-lived DI
-    /// singleton event this VM has no <c>IDisposable</c>/lifecycle hook to ever unsubscribe from
-    /// (every other event this VM raises, it owns and disposes with itself). A user who inserts a
-    /// still-decoding (partially black) frame can simply Undo/Remove it -- an acceptable, low-severity
-    /// v1 tradeoff documented here rather than left unspecified.</para></summary>
+    /// singleton event. Correction (live-locale-switch review, 2026-09-20): this class IS
+    /// <c>IDisposable</c> (its own <c>Dispose()</c> now also unsubscribes from
+    /// <see cref="ScanlineStudio.Abstractions.Localization.ILocalizationService.CultureChanged"/>,
+    /// which is the exact same class of subscription this comment used to claim was impossible to
+    /// unsubscribe here) -- <see cref="IReceivedImageBuffer.Updated"/> specifically was just never
+    /// wired to it, not genuinely unwireable. Left unwired: a user who inserts a still-decoding
+    /// (partially black) frame can simply Undo/Remove it -- an acceptable, low-severity v1 tradeoff
+    /// documented here rather than left unspecified.</para></summary>
     [RelayCommand]
     private void AddLastRxImage()
     {
@@ -1996,10 +2028,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // this method's own class doc comment already covers -- IReceivedImageBuffer.Current
         // defaults to (and resets to, on decode restart) a 1x1 black placeholder, never null. A
         // click here with nothing ever received would otherwise silently insert that black square
-        // with no visible feedback. No live subscription needed to guard this (checked at click
-        // time, not reactively) -- same "no lifecycle hook to unsubscribe" reasoning as this
-        // method's own class-level doc comment, just applied as a body-level no-op instead of a
-        // CanExecute gate that would go stale anyway without a subscription.
+        // with no visible feedback. No live subscription needed to guard this -- checked at click
+        // time instead, a body-level no-op rather than a CanExecute gate that would need its own
+        // live subscription to IReceivedImageBuffer.Updated to stay non-stale (see this method's
+        // own doc comment, just above, for why that specific subscription stays unwired).
         //
         // Code-review finding (T0-10 pass): read exactly ONCE into a local, not twice -- a second,
         // separate Current read here could race a concurrent decode-restart swapping in a fresh

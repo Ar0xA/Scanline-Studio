@@ -528,7 +528,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _ = LoadSafetySettingsAsync();
         _ = LoadOutputDeviceNameAsync();
         _ = LoadIdentificationSummaryAsync();
+
+        // Live-locale-switch review (2026-09-20): every stored GetString-backed member here is
+        // ErrorMessage (transient, self-heals on the next failure or accepted stale in the
+        // meantime -- same convention as everywhere else in this codebase); every other
+        // GetString-backed member is a computed getter, so the blanket refresh alone is enough.
+        // DI-singleton pane -- this class IS IDisposable, but only via app-shutdown ServiceProvider
+        // disposal (never recreated mid-session), so the Dispose()-side unsubscribe below is
+        // defensive hygiene, not load-bearing. Last statement, deliberately (see MainViewModel's
+        // own identical reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     /// <summary>Fired when a picked source's original image has loaded and a
     /// <see cref="TxImageEditorPaneViewModel"/> is ready to be shown -- the host (<c>AppDockFactory</c>)
@@ -2316,6 +2328,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// only here, at the pane's own end of life.</summary>
     public void Dispose()
     {
+        _localization.CultureChanged -= OnCultureChanged;
         _transmitCts?.Cancel();
         foreach (var entry in SentFrames)
         {

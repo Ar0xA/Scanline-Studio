@@ -17,6 +17,17 @@
     throw new Error("The help search engine was not loaded.");
   }
 
+  // Per-guide chrome strings (docs/help/README.md's "Updating the guide"): each index.html
+  // declares window.ScanlineHelpStrings before loading this script. These English defaults are a
+  // safety net only, in case that block is ever missing.
+  const chromeStrings = Object.assign(
+    {
+      noResultsTemplate: "No help topics found for “{query}”. Try fewer or different words.",
+      unversioned: "unversioned"
+    },
+    globalThis.ScanlineHelpStrings
+  );
+
   const { normalized, performSearch } = searchEngine;
 
   function topicTitle(topic) {
@@ -163,7 +174,7 @@
     if (matches.length === 0) {
       const empty = document.createElement("p");
       empty.className = "search-empty";
-      empty.textContent = `No help topics found for “${query.trim()}”. Try fewer or different words.`;
+      empty.textContent = chromeStrings.noResultsTemplate.replace("{query}", query.trim());
       fragment.appendChild(empty);
     } else {
       matches.forEach((match, index) => {
@@ -324,7 +335,7 @@
 
   const helpVersion = document.querySelector('meta[name="help-version"]')?.content;
   document.querySelectorAll("[data-help-version]").forEach((element) => {
-    element.textContent = helpVersion || "unversioned";
+    element.textContent = helpVersion || chromeStrings.unversioned;
   });
 
   // Hover/focus tooltips for hard terms (e.g. <a class="term" href="#glossary-cat">CAT</a>).

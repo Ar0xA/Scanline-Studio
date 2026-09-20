@@ -61,8 +61,13 @@ public partial class MainViewModel : ViewModelBase
     /// <summary>The Host project copies the dependency-free HTML guide to this stable location
     /// beside the executable for both build and publish output. Keeping this relative to
     /// <see cref="AppContext.BaseDirectory"/> makes the same command work for framework-dependent,
-    /// self-contained, and relocated installations.</summary>
-    private static string UserGuidePath => Path.Combine(AppContext.BaseDirectory, "help", "index.html");
+    /// self-contained, and relocated installations. Resolved per <see cref="ILocalizationService.CurrentCulture"/>
+    /// on every access (BACKLOG.md R7), so a mid-session language switch is honored without a
+    /// <see cref="ILocalizationService.CultureChanged"/> subscription -- see
+    /// <see cref="HelpGuidePathResolver"/> for the English-fallback rule.</summary>
+    private string UserGuidePath => HelpGuidePathResolver.Resolve(
+        Path.Combine(AppContext.BaseDirectory, "help"),
+        _localization.CurrentCulture.TwoLetterISOLanguageName);
 
     [ObservableProperty]
     private TxImageEditorPaneViewModel? _activeEditor;
@@ -194,7 +199,17 @@ public partial class MainViewModel : ViewModelBase
 
         _ = LoadOperatorSettingsAsync();
         _ = LoadActiveConfigurationNameAsync();
+
+        // Live-locale-switch review (2026-09-20): WindowTitle is the only GetString-backed member
+        // here, and it's a computed getter (see just above), so a blanket "everything may have
+        // changed" refresh is all this VM needs -- no stored field to re-derive. Last statement in
+        // the constructor, deliberately: ILocalizationService is a long-lived singleton and this VM
+        // is a DI singleton too, so this subscription is never unsubscribed, and a throw anywhere
+        // earlier in this constructor must not leave a half-constructed instance subscribed.
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     // Tier B audit finding: OpenBlankEditorCommand.ExecuteAsync's own try/catch (inside
     // TxControlsPaneViewModel.OpenEditorWithLoadedSourceAsync) does not cover every statement this

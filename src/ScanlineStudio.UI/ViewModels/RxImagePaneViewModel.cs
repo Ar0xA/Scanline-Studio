@@ -763,13 +763,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // boundary when the fix is one ternary.
         _senseLevel = sstvSession.SenseLevel is >= 0 and <= 3 ? sstvSession.SenseLevel : 0;
         _lastValidSenseLevel = _senseLevel;
-        SenseLevelOptions =
-        [
-            _localization.GetString("Options.Decode.SenseLevel.VeryLow"),
-            _localization.GetString("Options.Decode.SenseLevel.Low"),
-            _localization.GetString("Options.Decode.SenseLevel.High"),
-            _localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
-        ];
+        SenseLevelOptions = BuildSenseLevelOptions(_localization);
         // Direct field assignment, NOT the generated property setter -- same reasoning as
         // _autoSlantEnabled above used to have BEFORE this row became live (restart-required-settings
         // backlog item 6, 2026-08-28) -- the setter now has a real side effect (OnRxBpfPresetChanged
@@ -779,13 +773,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // window's own real "Options.Decode.RxBpf.*" locale keys, in RxBpfPreset's own enum order
         // (Off=0, Wide=1, Narrow=2, VeryNarrow=3) -- matches the Options window's own radio button
         // order too.
-        RxBpfPresetOptions =
-        [
-            _localization.GetString("Options.Decode.RxBpf.Normal"),
-            _localization.GetString("Options.Decode.RxBpf.Wide"),
-            _localization.GetString("Options.Decode.RxBpf.Sharp"),
-            _localization.GetString("Options.Decode.RxBpf.VerySharp"),
-        ];
+        RxBpfPresetOptions = BuildRxBpfPresetOptions(_localization);
 
         _receivedImage.Updated += OnUpdated;
         _receivedImage.Saved += OnSaved;
@@ -814,7 +802,53 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         _ = LoadCaptureDeviceNameAsync();
         _ = LoadOperatorGridAsync();
         _ = LoadQrzLookupConfiguredAsync();
+
+        // Live-locale-switch review (2026-09-20): most stored GetString-backed members here are a
+        // transient *ErrorMessage (self-heals on the next failure or accepted stale in the
+        // meantime); every other GetString-backed member is a computed getter, covered by the
+        // blanket refresh alone. yoniq-auditor code-review correction: SenseLevelOptions and
+        // RxBpfPresetOptions are the two exceptions -- always-visible ComboBox item-label lists
+        // (Sync & Slant's Squelch level, Input Chain's BPF), built once at construction, that the
+        // blanket refresh does NOT reach (it's a list of strings, not a property value). DI-singleton
+        // pane -- this class IS IDisposable, but only via app-shutdown ServiceProvider disposal
+        // (never recreated mid-session), so the Dispose()-side unsubscribe below is defensive
+        // hygiene, not load-bearing. Last statement, deliberately (see MainViewModel's own identical
+        // reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    /// <summary>SenseLevel/RxBpfPresetIndex are re-notified by the blanket refresh, not reassigned
+    /// here -- their SelectedIndex-facing setters (see each one's own doc comment) already guard
+    /// against a transient -1 a ComboBox's SelectedIndex can push back through a TwoWay binding when
+    /// its ItemsSource is replaced (a real, previously-encountered Avalonia quirk, not new to this
+    /// fix), so no extra defensive capture/restore is needed around the two list rebuilds below.</summary>
+    private void OnCultureChanged()
+    {
+        // Reassign BEFORE the blanket refresh, not after: these two are plain properties (not
+        // [ObservableProperty]-backed), so nothing signals a bound ItemsSource to re-read them
+        // except OnPropertyChanged(string.Empty) itself -- calling it first would have every
+        // binding re-read the OLD list a moment before the new one lands, with nothing telling it
+        // to look again afterward.
+        SenseLevelOptions = BuildSenseLevelOptions(_localization);
+        RxBpfPresetOptions = BuildRxBpfPresetOptions(_localization);
+        OnPropertyChanged(string.Empty);
+    }
+
+    private static string[] BuildSenseLevelOptions(ILocalizationService localization) =>
+    [
+        localization.GetString("Options.Decode.SenseLevel.VeryLow"),
+        localization.GetString("Options.Decode.SenseLevel.Low"),
+        localization.GetString("Options.Decode.SenseLevel.High"),
+        localization.GetString("Options.Decode.SenseLevel.VeryHigh"),
+    ];
+
+    private static string[] BuildRxBpfPresetOptions(ILocalizationService localization) =>
+    [
+        localization.GetString("Options.Decode.RxBpf.Normal"),
+        localization.GetString("Options.Decode.RxBpf.Wide"),
+        localization.GetString("Options.Decode.RxBpf.Sharp"),
+        localization.GetString("Options.Decode.RxBpf.VerySharp"),
+    ];
 
     // T0-11: satisfies CA1001 (owns a disposable field, _imagePool). This VM IS a DI singleton, so
     // ServiceProvider disposal on app shutdown DOES call this, off the UI thread (Program.cs runs
@@ -823,6 +857,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     // (including the audio engine). Swallow rather than risk that on an exit-only path.
     public void Dispose()
     {
+        _localization.CultureChanged -= OnCultureChanged;
         try
         {
             _imagePool.Dispose();
@@ -1022,7 +1057,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// reuses the Options window's own real "Options.Decode.SenseLevel.*" locale keys for the same
     /// underlying setting, rather than a second duplicate copy of the same 4 strings under a
     /// Panes.* key. Built once at construction; the 4 options themselves never change.</summary>
-    public IReadOnlyList<string> SenseLevelOptions { get; }
+    public IReadOnlyList<string> SenseLevelOptions { get; private set; }
 
     /// <summary>Fires on every <see cref="SenseLevel"/> PROPERTY assignment -- NOT the constructor's
     /// own direct field write above (a real ComboBox selection, or <see cref="RefreshSenseLevelFromSession"/>
@@ -1128,7 +1163,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// exact enum order (Off=0..VeryNarrow=3) -- same shape as <see cref="SenseLevelOptions"/> above,
     /// reusing the Options window's own real "Options.Decode.RxBpf.*" locale keys for the same
     /// underlying setting. Built once at construction; the 4 options themselves never change.</summary>
-    public IReadOnlyList<string> RxBpfPresetOptions { get; }
+    public IReadOnlyList<string> RxBpfPresetOptions { get; private set; }
 
     /// <summary>Same ordering-safety shape as <see cref="_pendingSenseLevelPersist"/> above.</summary>
     private Task _pendingRxBpfPresetPersist = Task.CompletedTask;

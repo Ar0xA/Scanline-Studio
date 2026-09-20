@@ -498,6 +498,24 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         _ = LoadImagesDirectoryAsync();
         _ = LoadAudioStorageInfoAsync();
         _ = LoadFramesTodayCountAsync();
+
+        // Live-locale-switch review (2026-09-20): DI-singleton pane, never disposed -- permanent
+        // subscription, last statement (see MainViewModel's own identical reasoning). Most
+        // GetString-backed members are computed getters (FramesTodayDisplay/DiskFree/AudioStorage
+        // etc.), fixed by the blanket refresh alone; EntryCountText is the one ALWAYS-VISIBLE
+        // stored exception, reusing the existing UpdateEntryCountText() helper rather than
+        // duplicating its switch. yoniq-auditor code-review correction: LinkedQsoSummary (stored,
+        // surfaced via LinkedQsoDisplay) is a second stored exception, deliberately left unfixed --
+        // it only shows for the currently-selected entry and refreshes on the next selection
+        // change, the same accepted-stale class as every transient status/error message elsewhere
+        // in this codebase, not an always-visible value like EntryCountText.
+        localization.CultureChanged += OnCultureChanged;
+    }
+
+    private void OnCultureChanged()
+    {
+        OnPropertyChanged(string.Empty);
+        UpdateEntryCountText();
     }
 
     public ObservableCollection<RxHistoryEntryViewModel> Entries { get; } = [];

@@ -127,7 +127,14 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
         sstvSession.ModeDetected += OnModeDetected;
 
         _ = LoadGainZeroSettingsAsync();
+
+        // Live-locale-switch review (2026-09-20): every GetString-backed member here is a computed
+        // getter, so the blanket refresh alone is enough. DI-singleton pane, never disposed --
+        // permanent subscription, last statement (see MainViewModel's own identical reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
 
     /// <summary>Read-modify-write against whatever is currently persisted for
     /// <see cref="RxPaneUiSettings.SectionKey"/> -- <see cref="RxImagePaneViewModel"/> also writes
