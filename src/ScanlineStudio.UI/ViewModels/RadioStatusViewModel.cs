@@ -945,6 +945,43 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         {
             Dispatcher.UIThread.Post(() => IsReceiving = true);
         }
+
+        // Live-locale-switch review (2026-09-20): this VM never unsubscribes from ANY of its many
+        // event subscriptions above (StateChanges/ConnectionEvents/appearance/sstvSession) -- it's a
+        // DI-singleton pane resolved exactly once (RadioStatusViewModel.cs's own sole `new` site is
+        // MainViewModel.cs), so a permanent subscription here is consistent with the rest of this
+        // constructor, not a new leak risk. Last statement, deliberately -- see MainViewModel's own
+        // identical reasoning for why (a throw earlier in this constructor must not leave a
+        // half-constructed instance subscribed).
+        localization.CultureChanged += OnCultureChanged;
+    }
+
+    /// <summary>Most of this VM's ~30 GetString-backed members are computed get-only properties
+    /// (e.g. <see cref="ReceivingButtonLabel"/>, <see cref="RxStatusBarText"/>), which
+    /// <c>OnPropertyChanged(string.Empty)</c> alone re-evaluates correctly. A handful are STORED
+    /// strings, only ever (re)computed inside <see cref="OnStateChanged"/> from raw state this VM
+    /// already caches (<see cref="_currentFrequencyHz"/>/<see cref="_currentBandwidthHz"/>) -- those
+    /// need explicit re-derivation here, using the SAME branch conditions <see cref="OnStateChanged"/>
+    /// itself uses, so a disconnected rig doesn't get a stale connected-looking value re-painted in
+    /// the new language. <see cref="MaintenanceMessage"/>/error-style stored strings are accepted as
+    /// known-stale until their next triggering event, same as everywhere else in this codebase.</summary>
+    private void OnCultureChanged()
+    {
+        OnPropertyChanged(string.Empty);
+
+        FrequencyDisplay = _currentFrequencyHz > 0
+            ? _localization.GetString("RadioStatus.FrequencyDisplayFormat", $"{_currentFrequencyHz / 1_000_000.0:0.000000}")
+            : _localization.GetString("RadioStatus.NoFrequency");
+
+        // Mirrors OnStateChanged's own !CatLinked reset: a stale _currentBandwidthHz from before a
+        // disconnect must not repaint as if still live (that reset exists precisely to avoid the
+        // "BW pill shows its last live reading against a dead connection" bug this would otherwise
+        // reintroduce).
+        BandwidthDisplay = CanReadBandwidth && _currentBandwidthHz is { } bandwidthHz
+            ? _localization.GetString("RadioStatus.BandwidthDisplayFormat", bandwidthHz)
+            : _localization.GetString("RadioStatus.BandwidthUnavailable");
+
+        UpdateUtcClock();
     }
 
     private void UpdateUtcClock() => UtcClockDisplay = _localization.GetString("RadioStatus.UtcValueFormat", DateTimeOffset.UtcNow);

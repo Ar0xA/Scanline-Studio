@@ -14,9 +14,14 @@ namespace ScanlineStudio.Abstractions.Localization;
 /// speculatively now.
 ///
 /// <b>Concurrency</b>: <see cref="CultureChanged"/> fires synchronously, on whatever thread called
-/// <see cref="SetCultureAsync"/> — expected to always be the UI thread in practice (culture is
-/// switched from a settings dialog), so no marshaling contract is stated here; this is not a
-/// high-frequency stream like <c>IAudioEngine.SamplesCaptured</c>.</summary>
+/// <see cref="SetCultureAsync"/>. Every caller is REQUIRED to invoke <see cref="SetCultureAsync"/>
+/// from the UI thread (marshal there first if the calling continuation isn't guaranteed to be on
+/// it — e.g. after an <c>await</c> through a <c>ConfigureAwait(false)</c> chain) -- a subscriber is
+/// entitled to update bound view-model state directly with no further marshaling of its own. This
+/// is a stated contract, not just an observed default; a live-locale-switch review (2026-09-20)
+/// found and fixed one caller that violated it (<see cref="ScanlineStudio.UI.ViewModels.ConfigurationsManagerWindowViewModel"/>'s
+/// own culture-apply path, reached through <c>IConfigurationPresetService</c>'s <c>ConfigureAwait(false)</c>
+/// chain). This is not a high-frequency stream like <c>IAudioEngine.SamplesCaptured</c>.</summary>
 public interface ILocalizationService
 {
     IReadOnlyList<CultureInfo> AvailableCultures { get; }

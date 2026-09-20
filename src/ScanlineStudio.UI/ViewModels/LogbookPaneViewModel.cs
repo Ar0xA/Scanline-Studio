@@ -246,11 +246,7 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         // maps Unknown to the same null-on-export behavior as an actual null Mode
         // (AdifRadioModeMapping.ToAdif), so offering both would be identical-behavior UI noise, not
         // a real distinction.
-        AvailableModes = new[] { new RadioModeOption(null, localization.GetString("Panes.Logbook.Form.NoModeOption")) }
-            .Concat(Enum.GetValues<RadioMode>()
-                .Where(m => m != RadioMode.Unknown)
-                .Select(m => new RadioModeOption(m, localization.GetString($"RadioMode.{m}"))))
-            .ToArray();
+        AvailableModes = BuildAvailableModes(localization);
         AvailableSstvModes = sstvSession.AvailableModes;
 
         // Cheap insurance against the facade's own unbounded-query paging gap (spec/14-roadmap.md) --
@@ -259,11 +255,42 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
 
         _ = RefreshAsync();
         _ = LoadTotalLoggedCountAsync();
+
+        // Live-locale-switch review (2026-09-20): DI-singleton pane, never disposed -- permanent
+        // subscription, last statement (see MainViewModel's own identical reasoning).
+        localization.CultureChanged += OnCultureChanged;
     }
+
+    /// <summary>yoniq-auditor code-review finding: <see cref="AvailableModes"/> is a plain property
+    /// (not <c>[ObservableProperty]</c>-backed), so reassigning it raises no notification of its
+    /// own -- the reassignment must happen BEFORE the blanket <c>OnPropertyChanged(string.Empty)</c>
+    /// below, not after, or the bound ComboBox re-reads the OLD list at the moment of the signal
+    /// with nothing telling it to look again. <see cref="FormMode"/> is TwoWay-bound via
+    /// <c>SelectedValueBinding</c> (`MainWindow.axaml`), and unlike
+    /// <see cref="RxImagePaneViewModel.SenseLevel"/>/<c>RxBpfPresetIndex</c> it has no existing
+    /// revert guard against a transient selection-clear a replaced <c>ItemsSource</c> can push back
+    /// through that binding -- capture/restore around the swap makes this correct without depending
+    /// on whatever Avalonia's `SelectingItemsControl` does internally when `ItemsSource` is
+    /// replaced (unverified from source, per that same review).</summary>
+    private void OnCultureChanged()
+    {
+        var selectedMode = FormMode;
+        AvailableModes = BuildAvailableModes(_localization);
+        FormMode = selectedMode;
+        EntryCountDisplay = _localization.GetString("Panes.Logbook.EntryCountFormat", Entries.Count);
+        OnPropertyChanged(string.Empty);
+    }
+
+    private static RadioModeOption[] BuildAvailableModes(ILocalizationService localization) =>
+        new[] { new RadioModeOption(null, localization.GetString("Panes.Logbook.Form.NoModeOption")) }
+            .Concat(Enum.GetValues<RadioMode>()
+                .Where(m => m != RadioMode.Unknown)
+                .Select(m => new RadioModeOption(m, localization.GetString($"RadioMode.{m}"))))
+            .ToArray();
 
     public ObservableCollection<QsoRecord> Entries { get; } = [];
 
-    public IReadOnlyList<RadioModeOption> AvailableModes { get; }
+    public IReadOnlyList<RadioModeOption> AvailableModes { get; private set; }
 
     public IReadOnlyList<SstvModeDefinition> AvailableSstvModes { get; }
 

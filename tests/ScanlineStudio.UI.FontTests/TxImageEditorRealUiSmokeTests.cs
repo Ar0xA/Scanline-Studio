@@ -75,6 +75,11 @@ public sealed class TxImageEditorRealUiSmokeTests
         "Panes.TxImageEditor.FitSafeArea",
         "Panes.TxImageEditor.FitWidth",
         "Panes.TxImageEditor.FitHeight",
+        // yoniq-principal review (live-locale-switch fix): confirmed pre-existing, unrelated to
+        // localization -- TxImageEditorPaneView.axaml's own "Save Template" context-menu item is
+        // Click-based by design (OnSaveTemplateContextMenuClick), like the other entries above, and
+        // was just missing from this allow-list.
+        "Panes.TxImageEditor.SaveTemplate",
     ];
 
     [AvaloniaFact]

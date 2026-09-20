@@ -80,13 +80,14 @@
   </ItemGroup>
 
   <!-- Offline user guide: plain static files copied beside the executable so Help > User guide
-       can hand help/index.html to the OS default browser. Keep the maintainer README and Node
-       structural check in the repository only; they are not application runtime assets. -->
+       can hand help/index.html to the OS default browser. The recursive glob also picks up any
+       translated help/<languageCode>/index.html (BACKLOG.md R7, HelpGuidePathResolver); it only
+       matches .html/.css/.js, so the maintainer README and Node structural check (.md/.mjs) stay
+       repository-only, not application runtime assets. -->
   <ItemGroup>
-    <None Include="..\..\docs\help\index.html" Link="help\index.html" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\docs\help\styles.css" Link="help\styles.css" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\docs\help\help-search.js" Link="help\help-search.js" CopyToOutputDirectory="PreserveNewest" />
-    <None Include="..\..\docs\help\help.js" Link="help\help.js" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="..\..\docs\help\**\*.html;..\..\docs\help\**\*.css;..\..\docs\help\**\*.js"
+          Link="help\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <!-- spec/18-path-to-1.0.md High item 5: previously not shipped with the app at all. A binary
