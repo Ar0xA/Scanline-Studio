@@ -113,23 +113,14 @@
     margin-bottom: 26px;
   }
 
-  /* waterfall strip: a nod to the SSTV waterfall, kept quiet */
+  /* waterfall strip: a real crop of the app's Spectrum & Waterfall panel */
   .waterfall {
-    height: 34px;
+    display: block;
+    width: 100%;
+    height: auto;
     margin-bottom: 26px;
     border: 1px solid var(--line);
     border-radius: 4px;
-    background: repeating-linear-gradient(
-      90deg,
-      #e4e2d6 0px, #e4e2d6 3px,
-      #d7d4c2 3px, #d7d4c2 6px,
-      #c7d6cf 6px, #c7d6cf 9px,
-      #a9c4b8 9px, #a9c4b8 12px,
-      #d7d4c2 12px, #d7d4c2 15px,
-      #e4e2d6 15px, #e4e2d6 22px
-    );
-    background-size: 220px 100%;
-    opacity: 0.8;
   }
 
   .buttons {
@@ -541,7 +532,7 @@
           rebuilt: a real QSL-style layout editor, a searchable receive history, and rig control
           through Hamlib instead of a hard-coded list of six radios.
         </p>
-        <div class="waterfall" role="presentation" aria-hidden="true"></div>
+        <img class="waterfall" src="images/waterfall.jpg" alt="Scanline Studio's live spectrum and waterfall display">
         <div class="buttons">
           <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
           <a class="btn btn-secondary" href="https://github.com/Ar0xA/Scanline-Studio">View on GitHub</a>
