@@ -784,10 +784,11 @@
                                  per-element ones). Avalonia's normal hit-testing means a right-click
                                  landing ON an element still opens that element's own ContextMenu
                                  first — this one only fires when the click lands on empty canvas
-                                 area, so it doesn't shadow the per-element menus. "Add Text/Box/
-                                 Image Here" at the click point is deliberately NOT here yet — it
-                                 needs Phase 3a's target-rect parameter on AddOverlayElement/
-                                 AddBoxElement, not built yet; add it once that lands. -->
+                                 area, so it doesn't shadow the per-element menus. User-reported
+                                 (2026-09-20): Add Text/Box/Line/Image now has its own section here (see
+                                 that group's own doc comment, just below) — still the crop-centered
+                                 default position, not the click point; "Add X Here" at the exact
+                                 right-click point is a real follow-up, not implemented yet. -->
                             <Canvas.ContextMenu>
                                 <!-- User-reported gap (2026-09-14): the canvas had no "Save Template"
                                      entry anywhere except the small always-visible name field + button
@@ -803,6 +804,27 @@
                                      gate gets called first — a typed name saves immediately, matching
                                      the existing Save button). -->
                                 <ContextMenu Classes="Industry" Opened="OnCanvasContextMenuOpened">
+                                    <!-- User-reported (2026-09-20): the toolbar's own Add Text/Box/Line/
+                                         Image buttons had no right-click equivalent — the doc comment this
+                                         replaced deferred it on a target-rect parameter that Phase 3a
+                                         (AddOverlayElementAt/AddBoxElementAt/AddLineElementAt) has since
+                                         landed for. Text/Box/Line place the new element with its TOP-LEFT
+                                         corner at the right-click point (see OnAddTextHereClick's own doc
+                                         comment, code-behind) — falls back to the plain crop-centered
+                                         command when the menu was reached without a captured click point
+                                         (e.g. the keyboard Menu key). Image intentionally excludes "From
+                                         RX History" — that source is a live-refreshed picker list
+                                         (RefreshRxHistoryPickerCommand + RxHistoryPickerEntries) whose own
+                                         Flyout has nowhere to anchor from a MenuItem's click. -->
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddText}" Click="OnAddTextHereClick" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.ToolBox}" Click="OnAddBoxHereClick" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.ToolLine}" Click="OnAddLineHereClick" />
+                                    <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddImage}">
+                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddImageFromFile}" Command="{Binding AddImageFromFileCommand}" />
+                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddImageFromClipboard}" Command="{Binding AddImageFromClipboardCommand}" />
+                                        <MenuItem Header="{loc:Translate Panes.TxImageEditor.AddImageFromLastRx}" Command="{Binding AddLastRxImageCommand}" />
+                                    </MenuItem>
+                                    <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.Paste}" InputGesture="Ctrl+V" Command="{Binding PasteElementCommand}" />
                                     <Separator />
                                     <MenuItem Header="{loc:Translate Panes.TxImageEditor.FitSafeArea}" Click="OnFitSafeAreaClick" />
