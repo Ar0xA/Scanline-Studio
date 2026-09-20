@@ -7423,6 +7423,24 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(0.02, height);
     }
 
+    // User-reported (2026-09-20), with the user's own explicit correction: the canvas context menu's
+    // Add Text/Box place their new element with the right-click point as its TOP-LEFT corner, not its
+    // center -- ComputeCenterFromTopLeft's own doc comment records that an earlier version of this
+    // feature got this backward (centered on the click point) before the correction.
+    [Fact]
+    public void ComputeCenterFromTopLeft_ReturnsACenterOffsetByHalfTheGivenSize_NotTheTopLeftItself()
+    {
+        var (centerX, centerY) = TxImageEditorPaneView.ComputeCenterFromTopLeft(
+            topLeft: new Avalonia.Point(0.2, 0.3), width: 0.1, height: 0.06);
+
+        // The TOP-LEFT corner of the resulting rect must land exactly on the given point -- not its
+        // center, which is what an earlier (incorrect) version of this feature did instead.
+        AssertClose(0.2, centerX - (0.1 / 2));
+        AssertClose(0.3, centerY - (0.06 / 2));
+        AssertClose(0.25, centerX);
+        AssertClose(0.33, centerY);
+    }
+
     // TX editor gap-items plan, line element: line-drag geometry math.
 
     [Fact]
