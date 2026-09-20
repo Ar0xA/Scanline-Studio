@@ -1236,10 +1236,102 @@ measured negative, not by neglect.
 - **`production_audit.md`'s "Accepted residuals"** under "Fixing 00d-00h". The user accepted those
   explicitly after verification. Do not reopen them as bugs.
 - **`ASTRA-036`, `ASTRA-037`** (accepted) and **`ASTRA-007`** (withdrawn). Not active bugs.
+- **VOX tone-burst preamble (TX).** Parked, yoniq-compatibility-only, not built. Needs an
+  audio-level-triggered PTT path `IRadioSessionService` does not have. Revisit only if raised again.
+  Source: `spec/18-path-to-1.0.md` Parked section; see `docs/plans/options-advanced-stub-backlog-plan.md`.
+  Distinct from the no-CAT/VOX-operating core loop, which already shipped.
+- **`MacroTextResolver`'s remaining tokens** (his-callsign/name/QTH/RST). Parked, blocked on a
+  "current QSO" context concept that does not exist and is not needed for 1.0. Source:
+  `spec/18-path-to-1.0.md` Parked section.
+- **Auto-start** (arm/disarm-the-decoder workflow convenience). Parked, yoniq-compatibility-only,
+  not needed for 1.0. Source: `spec/18-path-to-1.0.md` Parked section.
 
 ---
 
-## 9. Verified done during this sweep — do not re-derive
+## 9. Found during the 2026-09-20 doc-cleanup sweep
+
+A sweep of every non-core `.md` file in the repo root, `docs/`, and `spec/` (deletion candidates)
+surfaced these real, previously untracked items. Each cites its source document; re-verify the
+citation before acting on it, per this file's own rule.
+
+- **Waterfall averaging/peak-hold.** Decide whether the RX waterfall should expose inter-frame
+  averaging/peak-hold, matching legacy's two user-selectable (default off/1) smoothing settings.
+  Pure product/UX decision, not a correctness defect. `WaterfallSource.cs:70-91`;
+  `ultracode_review.md` #20.
+- **Decoder pixel-buffer overrun detection.** If a slow subscriber is ever added to the decoder's
+  pixel-buffer publish stream, replace the current unsynchronized-overwrite contract (matches
+  legacy's *contract*, not legacy's flawed *mechanism*) with a bounded drop-oldest buffer that has
+  real overrun detection and hands subscribers a copy. `AnalogFmSstvDecoder.cs:751-785,1250,1294,
+  2086,2133,2266`; `ultracode_review.md` #35.
+- **Hilbert demodulator golden-vector tolerance window.** If a legacy golden vector is ever
+  captured for `HilbertFmDemodulator`'s atan2+phase-lag+IIR composition, exclude the first
+  ~tap+IIR-settling samples (~1.1ms) after each sync acquisition from the tolerance check, or the
+  test fails for reasons unrelated to correctness. Tolerance can otherwise be tight (~1e-9).
+  `HilbertFmDemodulator.cs`; `ultracode_review.md` #16, tied to #14.
+- **`PollingStrategy.OnDemand` is a no-op.** `RadioConnectionSpec` declares it, but `RadioController`'s
+  poll loop never reads `Strategy` — `OnDemand` silently behaves like `Continuous` (only `Scan` is
+  rejected at connect time). `spec/02-radio-layer.md`, "Polling" section.
+- **Audio device selection has no name-fallback after reboot.** Persist the selected audio
+  input/output device by name as a fallback match when the stored device id no longer resolves —
+  not all `miniaudio` backends guarantee id stability across restarts. `spec/05-audio-engine.md`,
+  "Core abstractions" section / Phase 3 settings work.
+- **Audio hot-unplug behavior unverified on Windows/macOS.** WASAPI/CoreAudio hot-unplug
+  notification behavior and a possible `Dispose` hang on close after the device vanished are
+  confirmed only on PulseAudio/Linux. Distinct from H2 above (general Windows-audio-works
+  confirmation). `spec/05-audio-engine.md`, "Device hot-plug" section.
+- **Decoder real-time throughput is unmeasured.** Benchmark and document that `ISstvDecoder`
+  sustains real-time throughput on a defined reference machine spec, ideally asserted in CI.
+  `spec/06-sstv-dsp.md` Definition of done.
+- **`StockImageLibrary` has no legacy `History.bin` migration path.** Today it is a live
+  `Directory.EnumerateFiles` scan with no index and no import path; "old folder left untouched" is
+  de facto behavior, not a recorded decision. Decide and document, or build the migration.
+  `spec/07-image-pipeline.md` Definition of done, last bullet.
+- **No real-world ADIF fixture round-trip test.** Add real-world third-party ADIF export
+  fixture(s) under `tests/ScanlineStudio.Core.Logbook.Tests/Fixtures/` (does not exist yet) and
+  round-trip `AdifImporter`/`AdifExporter` against them — current tests only round-trip synthetic
+  in-code `QsoRecord`s. `spec/08-logging.md` and `spec/13-testing.md` Definition of done / fixtures.
+- **`ja.json` was never populated.** Only `en.json` exists (~890 keys, hand-authored). Populate
+  `ja.json` using the documented per-dialog `.dfm` caption/hint extraction +
+  `sys.m_MsgEng`-branch source-mining workflow (CP932-decoded) from `yoniq-old`.
+  `spec/10-localization.md` Definition of done.
+- **Live language-switch-with-no-restart is unverified across all open windows.** Manually confirm
+  that switching language via `OptionsWindowViewModel.SelectedCulture` updates every currently-open
+  window live. `spec/10-localization.md` Definition of done, last bullet.
+- **`ISettingsMigration` chain has never run.** Implement the migration-chain mechanism and
+  exercise it against at least one real schema version bump before v1.0 ships — only
+  `SchemaVersion=1` exists today. `spec/12-settings.md` Definition of done.
+- **`QrzLookupSettings.Password` is stored in plaintext.** Implement `ICredentialStore` (Windows
+  Credential Manager/libsecret/Keychain per OS) so credential-shaped settings stop living in plain
+  `settings.json`, per the spec's own "Secrets" design. `spec/12-settings.md`.
+- **CI coverage gate does not enforce the stated 80% floor.** `coverage-thresholds.json` pins each
+  `ScanlineStudio.Core.*`/`ScanlineStudio.Application` project a few points above its own current
+  baseline (36%-97% per project), which catches regressions but does not enforce the spec's stated
+  80% target. `spec/13-testing.md` Definition of done / Coverage target.
+- **CAT and legacy-settings test fixture directories do not exist.** `tests/ScanlineStudio.Core.Radio.Tests/Fixtures/`
+  is missing; legacy-settings fixtures are blocked on the parked `.ini` importer (§8 above).
+  `spec/13-testing.md`, Test data / fixtures section.
+- **Repeater-scoped squelch (`m_RepSQ`) has no Scanline Studio equivalent.** Decide whether/how to
+  generalize legacy's narrow repeater-scoped squelch into the Input-chain card's general "Squelch"
+  readout before building it — legacy gates it on `m_Repeater && !m_Sync`
+  (`sstv.cpp:1860`), so it is not a drop-in general RX squelch. Distinct from the already-shipped
+  Sync-and-Slant card's unrelated "Squelch level" row (VIS-decode sensitivity threshold,
+  `RxImagePaneViewModel.SenseLevel`) — do not conflate the two. Full citations in
+  `spec/17-rx-telemetry-feasibility.md`.
+- **Windows re-run owed for the TX PTT cancellation-gate fix.** Re-run the full Windows test suite
+  (or at minimum `SstvSessionServiceTests.TuneAsync_TokenCancelledMidTone_*`) on a real Windows
+  machine to confirm commit `c9d9b1b`'s deterministic-cancellation-gate fix actually resolves
+  `windows_tests.md` Item C — never re-verified on Windows after the fix landed.
+- **Audio round-trip test never runs on Windows.** Move `MiniAudioEngineSstvRoundTripTests.
+  EncodeThenDecode_ThroughRealMiniAudioEngine_RoundTripsWithinTolerance` off the
+  `[RequiresPipeWireFact]` gate and onto the now-working WASAPI loopback primitive
+  (`WasapiLoopbackCaptureTests`), so it runs on Windows instead of always skipping. More broadly,
+  replace `[RequiresPipeWireFact]` with a capability gate (e.g. `RequiresRealAudioFact`) that
+  probes `pactl` on Linux and WASAPI loopback on Windows. `windows_tests.md`, "The real gap: no
+  round-trip coverage on Windows"; overlaps W2 above, but W2 does not name this concrete next step.
+
+---
+
+## 10. Verified done during this sweep — do not re-derive
 
 Each of these was listed as open somewhere and is not.
 
