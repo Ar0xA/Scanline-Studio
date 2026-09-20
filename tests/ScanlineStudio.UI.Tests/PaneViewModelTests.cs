@@ -5758,6 +5758,48 @@ public sealed class PaneViewModelTests
         Assert.NotNull(entry.Thumbnail);
     }
 
+    [AvaloniaFact]
+    public void RxHistoryPaneViewModel_Constructed_SetsIsLoadingTrueUntilTheInitialQueryCompletes()
+    {
+        // User-reported (2026-09-20): switching Today/All (or the initial startup load) can be
+        // noticeably slow against a large SQLite history -- IsLoading must be true for the WHOLE
+        // duration of the constructor's own fire-and-forget initial RefreshAsync call, not just a
+        // manually-triggered RefreshCommand, since that's the exact case the user asked about.
+        var gate = new TaskCompletionSource<IReadOnlyList<ReceiveHistoryEntry>>();
+        var historyStore = new FakeReceiveHistoryStore { QueryGate = gate };
+
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+
+        Assert.True(vm.IsLoading);
+        // Entries is still empty (the gated query hasn't resolved yet) -- the "No history yet"
+        // empty-state message must stay hidden while IsLoading, not flash on before the real
+        // result lands.
+        Assert.False(vm.ShowNoHistoryMessage);
+
+        gate.SetResult([]);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsLoading);
+        Assert.True(vm.ShowNoHistoryMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task RxHistoryPaneViewModel_RefreshCommand_ClearsIsLoadingEvenWhenTheQueryThrows()
+    {
+        var historyStore = new FakeReceiveHistoryStore();
+        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsLoading);
+
+        historyStore.ThrowOnQuery = new InvalidOperationException("simulated DB failure");
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(vm.IsLoading);
+        Assert.NotNull(vm.ErrorMessage);
+    }
+
     /// <summary>ui_transition_plan.md step 9 (T2-7): the Storage card's folder path was previously
     /// read-only text -- this makes the already-auto-archived location actually reachable.</summary>
     [AvaloniaFact]
