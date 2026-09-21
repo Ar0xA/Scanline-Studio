@@ -149,7 +149,11 @@ public sealed partial class HamlibProtocolFactory : IRadioProtocolFactory, IHaml
         var candidate = new HamlibRuntime(_loader, overridePath, _nativeFactory, _runtimeLogger);
         if (!candidate.IsAvailable)
         {
-            Log.LibraryReloadRejected(_logger, overridePath ?? "(auto-detect)", string.Join("; ", candidate.Attempts));
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                Log.LibraryReloadRejected(_logger, overridePath ?? "(auto-detect)", string.Join("; ", candidate.Attempts));
+            }
+
             return new HamlibLibraryReloadResult(false, candidate.ResolvedPath, candidate.Version, candidate.Attempts);
         }
 

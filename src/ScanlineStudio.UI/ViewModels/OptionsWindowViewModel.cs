@@ -3757,7 +3757,10 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                         _hamlibLibraryReloadFailed = true;
                         HamlibLibraryReloadFailedMessage = _localization.GetString(
                             "Options.HamlibLibraryReloadFailedDialog.Message", string.Join("; ", rejected.Attempts));
-                        Log.HamlibLibraryPathRejected(_logger, string.Join("; ", rejected.Attempts));
+                        if (_logger.IsEnabled(LogLevel.Warning))
+                        {
+                            Log.HamlibLibraryPathRejected(_logger, string.Join("; ", rejected.Attempts));
+                        }
                     }
 
                     // reloadResult is null when the registered IRadioProtocolFactory doesn't

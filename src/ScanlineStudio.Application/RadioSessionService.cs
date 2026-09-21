@@ -524,7 +524,7 @@ public sealed partial class RadioSessionService : IRadioSessionService, IPttTest
         {
             Log.HamlibLibraryReloaded(_logger, result.ResolvedPath ?? "(unknown)");
         }
-        else
+        else if (_logger.IsEnabled(LogLevel.Warning))
         {
             Log.HamlibLibraryReloadRejected(_logger, string.Join("; ", result.Attempts));
         }

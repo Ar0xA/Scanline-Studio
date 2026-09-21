@@ -549,7 +549,7 @@ public partial class MainWindow : Window
                         var window = new OptionsWindowView { DataContext = optionsViewModel };
                         window.Opened += (_, _) =>
                         {
-                            if (logger is not null)
+                            if (logger is not null && logger.IsEnabled(LogLevel.Debug))
                             {
                                 Log.OptionsWindowOpened(logger, window.Position.ToString(), Screens.ScreenFromWindow(window)?.Bounds.ToString() ?? "(none)");
                             }

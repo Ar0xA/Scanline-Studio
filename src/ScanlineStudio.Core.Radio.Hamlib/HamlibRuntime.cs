@@ -68,7 +68,10 @@ internal sealed partial class HamlibRuntime : IHamlibRuntime
         catch (HamlibUnavailableException ex)
         {
             _unavailableAttempts = ex.Attempts;
-            Log.Unavailable(_logger, string.Join("; ", ex.Attempts));
+            if (_logger.IsEnabled(LogLevel.Warning))
+            {
+                Log.Unavailable(_logger, string.Join("; ", ex.Attempts));
+            }
         }
     }
 

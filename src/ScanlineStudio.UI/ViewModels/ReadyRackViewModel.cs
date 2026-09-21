@@ -885,7 +885,11 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
         if (result.Notes.Count > 0)
         {
-            Log.ImportLegacyMtmNotes(_logger, result.TemplateId, string.Join(" | ", result.Notes));
+            if (_logger.IsEnabled(LogLevel.Information))
+            {
+                Log.ImportLegacyMtmNotes(_logger, result.TemplateId, string.Join(" | ", result.Notes));
+            }
+
             StatusMessage = _localization.GetString("Panes.TxImageEditor.ImportLegacyMtmTemplatePartial", result.Notes.Count);
         }
     }

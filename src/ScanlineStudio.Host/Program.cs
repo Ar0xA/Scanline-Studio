@@ -293,7 +293,10 @@ internal static partial class Program
                     AppTheme.System => ThemeVariant.Default,
                     _ => null,
                 };
-                Log.AppThemeRestored(logger, theme.ToString());
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    Log.AppThemeRestored(logger, theme.ToString());
+                }
             }
             catch (Exception ex)
             {
@@ -306,7 +309,10 @@ internal static partial class Program
             try
             {
                 App.StartupFontScale = fontScale;
-                Log.FontScaleRestored(logger, fontScale.ToString());
+                if (logger.IsEnabled(LogLevel.Information))
+                {
+                    Log.FontScaleRestored(logger, fontScale.ToString());
+                }
             }
             catch (Exception ex)
             {
