@@ -5,11 +5,6 @@ Website: [scanlinestudio.app](https://scanlinestudio.app)
 A ground-up rewrite of [YONIQ](https://github.com/w0eeemst/YONIQ) (a fork of MMSSTV) into a modern,
 cross-platform amateur radio SSTV application — .NET 8 + Avalonia UI, targeting Windows, Linux, and macOS.
 
-Design is written down in full before implementation, one document per concern (`spec/`), so the
-build proceeds step by step against an agreed plan rather than as one giant undifferentiated effort.
-Like `CLAUDE.md` below, `spec/` and `docs/` are kept locally during development and are gitignored —
-they won't resolve for anyone browsing this repo on GitHub.
-
 ## Status
 
 **Core loop working end-to-end**: receive an SSTV picture over a real audio device, send one (with
@@ -18,8 +13,7 @@ OmniRig (Windows-only) for frequency and PTT. Also built: RX history + logbook (
 ADIF UDP forwarding to GridTracker2/N1MM/Log4OM), QRZ lookup, a waterfall/spectrum display, and an
 Options dialog covering audio devices, CAT backends, and station identification (CW-ID/FSK, NR/RST).
 
-Only English ships as a locale today — the runtime language-switching infrastructure is in place but
-no second translation has been written yet.
+English and German locales ship today (`assets/locale/en.json`, `assets/locale/de.json`).
 
 1.0 and the confirmed 1.1 target (the TX Template Editor redesign) are both complete. No milestone
 past 1.1 is open yet — [BACKLOG.md](BACKLOG.md) tracks current work, and the commit history tracks
@@ -35,9 +29,6 @@ what has shipped since.
 - [LICENSES.md](LICENSES.md) — why this project is LGPL-3.0-or-later, and what legacy assets were
   deliberately excluded from the port.
 - [scanlinestudio.app](https://scanlinestudio.app) — end-user docs and downloads.
-
-Project rules/agent instructions live in `CLAUDE.md` at the repo root — not linked above since it's
-gitignored (project-local, not checked in) and won't resolve for anyone browsing a clone on GitHub.
 
 ## Building
 
@@ -60,9 +51,7 @@ dotnet run --project src/ScanlineStudio.Host
 ## Legacy source
 
 The original C++Builder/VCL codebase this project is modernizing lives upstream at
-[w0eeemst/YONIQ](https://github.com/w0eeemst/YONIQ) — it is intentionally not vendored into this
-repository (see `.gitignore`); spec documents reference it by relative path (e.g. `cradio.cpp`) on the
-assumption of a local clone at `yoniq-old/YONIQ-main/` for convenience during development.
+[w0eeemst/YONIQ](https://github.com/w0eeemst/YONIQ). It is not vendored into this repository.
 
 ## License
 
