@@ -1,0 +1,60 @@
+name: Release macOS build
+
+# Manual only -- never runs on push/PR. Trigger by hand (Actions tab, or
+# `gh workflow run release-macos.yml -f tag=<tag>`) when a macOS asset is needed for a release.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the macOS build(s) to (e.g. v0.9.0-beta)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos:
+    name: Publish (${{ matrix.rid }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # osx-x64 deliberately excluded: ScanlineStudio.Core.Audio.MiniAudio's BuildNativeShimMacOS
+        # target invokes clang with no -arch flag, so it always compiles for the runner's own
+        # architecture (arm64 on macos-latest). A cross-published osx-x64 build would ship that
+        # arm64 .dylib next to x64 managed assemblies -- a native-load failure on real Intel
+        # hardware, not a working artifact. Revisit if the native shim target adds -arch x86_64.
+        rid: [osx-arm64]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      - name: Setup .NET 8 SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      # Self-contained + single-file are opt-in in ScanlineStudio.Host.csproj, gated on
+      # RuntimeIdentifier being set -- same publish shape as the verified linux-x64 release build.
+      - name: Publish
+        run: dotnet publish src/ScanlineStudio.Host -c Release -r ${{ matrix.rid }} -o publish/${{ matrix.rid }}
+
+      - name: Package
+        run: |
+          set -e
+          VERSION="${{ github.event.inputs.tag }}"
+          VERSION="${VERSION#v}"
+          NAME="ScanlineStudio-${VERSION}-${{ matrix.rid }}"
+          chmod +x "publish/${{ matrix.rid }}/ScanlineStudio.Host"
+          mkdir -p "dist/${NAME}"
+          cp -r publish/${{ matrix.rid }}/* "dist/${NAME}/"
+          tar -czf "${NAME}.tar.gz" -C dist "${NAME}"
+          echo "ASSET=${NAME}.tar.gz" >> "$GITHUB_ENV"
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.inputs.tag }}" "${{ env.ASSET }}" --clobber
