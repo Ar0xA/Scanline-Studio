@@ -5,9 +5,10 @@ Website: [scanlinestudio.app](https://scanlinestudio.app)
 A ground-up rewrite of [YONIQ](https://github.com/w0eeemst/YONIQ) (a fork of MMSSTV) into a modern,
 cross-platform amateur radio SSTV application — .NET 8 + Avalonia UI, targeting Windows, Linux, and macOS.
 
-Design is written down in full before implementation, one document per concern
-(`spec/`), so the build proceeds step by step against an agreed plan rather than as one giant
-undifferentiated effort — the spec docs remain the design reference as implementation continues.
+Design is written down in full before implementation, one document per concern (`spec/`), so the
+build proceeds step by step against an agreed plan rather than as one giant undifferentiated effort.
+Like `CLAUDE.md` below, `spec/` and `docs/` are kept locally during development and are gitignored —
+they won't resolve for anyone browsing this repo on GitHub.
 
 ## Status
 
@@ -17,27 +18,23 @@ OmniRig (Windows-only) for frequency and PTT. Also built: RX history + logbook (
 ADIF UDP forwarding to GridTracker2/N1MM/Log4OM), QRZ lookup, a waterfall/spectrum display, and an
 Options dialog covering audio devices, CAT backends, and station identification (CW-ID/FSK, NR/RST).
 
-Only English ships as a locale today — the runtime language-switching infrastructure is in place
-(see [spec/10-localization.md](spec/10-localization.md)) but no second translation has been written
-yet.
+Only English ships as a locale today — the runtime language-switching infrastructure is in place but
+no second translation has been written yet.
 
-1.0 and the confirmed 1.1 target (the TX Template Editor redesign, [spec/15-template-designer.md](spec/15-template-designer.md))
-are both complete — see [spec/19-path-to-1.1.md](spec/19-path-to-1.1.md)'s own status banner. No
-milestone doc past 1.1 is open yet; the commit history tracks what has shipped since.
+1.0 and the confirmed 1.1 target (the TX Template Editor redesign) are both complete. No milestone
+past 1.1 is open yet — [BACKLOG.md](BACKLOG.md) tracks current work, and the commit history tracks
+what has shipped since.
 
 ## Start here
 
-- [spec/00-project-overview.md](spec/00-project-overview.md) — vision, goals, non-goals, license.
-- [spec/01-architecture.md](spec/01-architecture.md) through [spec/15-template-designer.md](spec/15-template-designer.md) — one document per subsystem (radio/CAT layer, rigctld, audio, SSTV DSP, imaging, logbook, UI, localization, plugins, settings, testing).
-- [spec/16-gui-wiring-survey.md](spec/16-gui-wiring-survey.md), [spec/17-rx-telemetry-feasibility.md](spec/17-rx-telemetry-feasibility.md) — supporting surveys referenced by the milestone docs below.
-- [spec/18-path-to-1.0.md](spec/18-path-to-1.0.md), [spec/19-path-to-1.1.md](spec/19-path-to-1.1.md) —
-  the two milestone docs, both complete (see each one's own status banner).
-  [spec/14-roadmap.md](spec/14-roadmap.md) is the older phased delivery plan tying every spec
-  document together; superseded by 18/19 for status, still useful as a spec-document index.
-- [docs/removed-features.md](docs/removed-features.md) — legacy capabilities dropped or only partially
-  replaced in the rewrite, and why.
+- [BACKLOG.md](BACKLOG.md) — the current work list: what's in progress, what's next.
+- [build_linux.md](build_linux.md), [build_osx.md](build_osx.md), [build_windows.md](build_windows.md)
+  — per-OS build prerequisites and troubleshooting.
+- The offline in-app user guide lives in `assets/help/`, reachable from Help > User guide inside the
+  running app.
 - [LICENSES.md](LICENSES.md) — why this project is LGPL-3.0-or-later, and what legacy assets were
   deliberately excluded from the port.
+- [scanlinestudio.app](https://scanlinestudio.app) — end-user docs and downloads.
 
 Project rules/agent instructions live in `CLAUDE.md` at the repo root — not linked above since it's
 gitignored (project-local, not checked in) and won't resolve for anyone browsing a clone on GitHub.
