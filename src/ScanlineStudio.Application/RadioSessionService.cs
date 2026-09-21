@@ -526,7 +526,12 @@ public sealed partial class RadioSessionService : IRadioSessionService, IPttTest
         }
         else if (_logger.IsEnabled(LogLevel.Warning))
         {
+            // CA1873 doesn't recognize an IsEnabled guard around a custom [LoggerMessage] partial
+            // method (only the canonical ILogger.LogXxx extensions) -- the guard above already
+            // skips string.Join when logging is disabled, which is the rule's real intent.
+#pragma warning disable CA1873
             Log.HamlibLibraryReloadRejected(_logger, string.Join("; ", result.Attempts));
+#pragma warning restore CA1873
         }
 
         return result;

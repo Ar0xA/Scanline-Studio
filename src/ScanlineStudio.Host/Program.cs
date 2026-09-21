@@ -295,7 +295,12 @@ internal static partial class Program
                 };
                 if (logger.IsEnabled(LogLevel.Information))
                 {
+                    // CA1873 doesn't recognize an IsEnabled guard around a custom [LoggerMessage]
+                    // partial method (only the canonical ILogger.LogXxx extensions) -- the guard
+                    // above already skips ToString() when logging is disabled, the rule's real intent.
+#pragma warning disable CA1873
                     Log.AppThemeRestored(logger, theme.ToString());
+#pragma warning restore CA1873
                 }
             }
             catch (Exception ex)
@@ -311,7 +316,12 @@ internal static partial class Program
                 App.StartupFontScale = fontScale;
                 if (logger.IsEnabled(LogLevel.Information))
                 {
+                    // CA1873 doesn't recognize an IsEnabled guard around a custom [LoggerMessage]
+                    // partial method (only the canonical ILogger.LogXxx extensions) -- the guard
+                    // above already skips ToString() when logging is disabled, the rule's real intent.
+#pragma warning disable CA1873
                     Log.FontScaleRestored(logger, fontScale.ToString());
+#pragma warning restore CA1873
                 }
             }
             catch (Exception ex)

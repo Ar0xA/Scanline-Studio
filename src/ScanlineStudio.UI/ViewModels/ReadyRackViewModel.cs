@@ -887,7 +887,12 @@ public sealed partial class ReadyRackViewModel : ObservableObject
         {
             if (_logger.IsEnabled(LogLevel.Information))
             {
+                // CA1873 doesn't recognize an IsEnabled guard around a custom [LoggerMessage]
+                // partial method (only the canonical ILogger.LogXxx extensions) -- the guard above
+                // already skips string.Join when logging is disabled, which is the rule's real intent.
+#pragma warning disable CA1873
                 Log.ImportLegacyMtmNotes(_logger, result.TemplateId, string.Join(" | ", result.Notes));
+#pragma warning restore CA1873
             }
 
             StatusMessage = _localization.GetString("Panes.TxImageEditor.ImportLegacyMtmTemplatePartial", result.Notes.Count);

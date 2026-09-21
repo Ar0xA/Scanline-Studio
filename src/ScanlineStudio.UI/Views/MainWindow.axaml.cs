@@ -551,7 +551,12 @@ public partial class MainWindow : Window
                         {
                             if (logger is not null && logger.IsEnabled(LogLevel.Debug))
                             {
+                                // CA1873 doesn't recognize a guard around a custom [LoggerMessage]
+                                // partial method -- the IsEnabled check above already skips both
+                                // ToString() calls when logging is disabled.
+#pragma warning disable CA1873
                                 Log.OptionsWindowOpened(logger, window.Position.ToString(), Screens.ScreenFromWindow(window)?.Bounds.ToString() ?? "(none)");
+#pragma warning restore CA1873
                             }
                         };
                         // User-reported bug (2026-08-23): the header-row callsign chip only ever

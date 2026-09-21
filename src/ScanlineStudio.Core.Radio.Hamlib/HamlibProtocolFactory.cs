@@ -151,7 +151,12 @@ public sealed partial class HamlibProtocolFactory : IRadioProtocolFactory, IHaml
         {
             if (_logger.IsEnabled(LogLevel.Warning))
             {
+                // CA1873 doesn't recognize an IsEnabled guard around a custom [LoggerMessage]
+                // partial method (only the canonical ILogger.LogXxx extensions) -- the guard above
+                // already skips string.Join when logging is disabled, which is the rule's real intent.
+#pragma warning disable CA1873
                 Log.LibraryReloadRejected(_logger, overridePath ?? "(auto-detect)", string.Join("; ", candidate.Attempts));
+#pragma warning restore CA1873
             }
 
             return new HamlibLibraryReloadResult(false, candidate.ResolvedPath, candidate.Version, candidate.Attempts);

@@ -3759,7 +3759,13 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
                             "Options.HamlibLibraryReloadFailedDialog.Message", string.Join("; ", rejected.Attempts));
                         if (_logger.IsEnabled(LogLevel.Warning))
                         {
+                            // CA1873 doesn't recognize an IsEnabled guard around a custom
+                            // [LoggerMessage] partial method (only the canonical ILogger.LogXxx
+                            // extensions) -- the guard above already skips string.Join when logging
+                            // is disabled, which is the rule's real intent.
+#pragma warning disable CA1873
                             Log.HamlibLibraryPathRejected(_logger, string.Join("; ", rejected.Attempts));
+#pragma warning restore CA1873
                         }
                     }
 
