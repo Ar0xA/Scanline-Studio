@@ -176,9 +176,9 @@ public sealed class ClassicalCwDecoder : ICwIdDecoder
         return Math.Sqrt(real * real + imag * imag);
     }
 
-    private static double Median(IReadOnlyList<double> values)
+    private static double Median(double[] values)
     {
-        if (values.Count == 0)
+        if (values.Length == 0)
         {
             return 0;
         }
