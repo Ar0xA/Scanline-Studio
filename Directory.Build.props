@@ -32,7 +32,7 @@
       target below, not the SDK's own full 40-char default. See ScanlineStudio.Host.csproj's own doc
       comment for a dead-end hand-rolled stamping target that predates and is superseded by this.
     -->
-    <Version>0.9.0</Version>
+    <Version>0.9.0-beta</Version>
     <Product>Scanline Studio</Product>
     <!-- A literal year, not $([System.DateTime]::Now.Year) (code-review finding): the latter makes
          two builds of the identical commit produce different assembly content depending on what
