@@ -3501,6 +3501,27 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _bufferBase = watermark;
     }
 
+    /// <summary>Test-only observer: (transmission line index, raw-timeline sync start sample) for every
+    /// line the SNR hook places a window for. Step-0 placement probe only; read-only, no decode state.</summary>
+    internal Action<int, double>? SyncWindowObservedForTests { get; set; }
+
+    private void MeasureLineSyncSnr(SstvModeDefinition mode, int lineAnchor, int effectiveSampleRate, int transmissionLine)
+    {
+        if (SyncWindowObservedForTests is null || mode == SstvModeRegistry.Avt)
+        {
+            return;
+        }
+
+        var rawSyncStart = SyncSnrPlacement.RawSyncStartSample(
+            lineAnchor,
+            SstvModeRegistry.GetSyncSegmentOffsetMs(mode),
+            effectiveSampleRate,
+            _searchBandpassFilter?.Tap ?? 0,
+            _demodType == DemodType.Hilbert ? _demodulator.HalfTap / 4 : 0,
+            SyncSnrPlacement.GetResidualMs(mode));
+        SyncWindowObservedForTests?.Invoke(transmissionLine, rawSyncStart);
+    }
+
     // Outer loop added for piece 6a (end-of-image reset, sstv.cpp's Stop()/cases 512-513): once an
     // image completes, EndOfImage() clears _mode and this loops back to try detecting a *subsequent*
     // transmission already sitting in the same pushed buffer, rather than requiring a separate
@@ -3628,10 +3649,12 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     mode.LuminanceMinHz,
                     SstvModeRegistry.NeverPeakPicks(mode) || _rxBufferMode == RxBufferMode.Extended);
 
+                var lineAnchor = _consumedSamples;
                 lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, reader, pixels);
                 _idealLineStartSample += _effectiveSamplesPerLine;
                 _consumedSamples = nextLineStartSample;
 
+                MeasureLineSyncSnr(mode, lineAnchor, effectiveSampleRate, _nextLine / lineDecoder.RowsPerTransmissionLine);
                 RaiseSubscribers(LineDecoded, new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
                 _nextLine += lineDecoder.RowsPerTransmissionLine;
 

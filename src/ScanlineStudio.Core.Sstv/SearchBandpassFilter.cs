@@ -193,6 +193,9 @@ internal sealed class SearchBandpassFilter
     /// throwing.</summary>
     internal double[] H1ForTests => _h1;
 
+    /// <summary>The live FIR order; its group delay is <c>Tap / 2</c> samples (symmetric taps).</summary>
+    internal int Tap => _tap;
+
     /// <summary>Diagnostic-only: exposes <see cref="_h3"/> (null until the first narrow-mode lock) so a
     /// test can assert the exact coefficients <see cref="BuildNarrowLockedFilter"/> produced, the same
     /// way <see cref="H1ForTests"/> exposes H1's.</summary>
