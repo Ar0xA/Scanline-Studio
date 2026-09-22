@@ -7,10 +7,11 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
 /// Step 0 of the sync-pulse SNR plan: for every mode with a sync segment × every RxBpfPreset × every
-/// DemodType × {8000, 11025, 22050, 44100, 48000} Hz, noiseless, compares where
-/// <see cref="SyncSnrPlacement"/> places each line's sync start against the encoder's exact onset.
-/// Reports the per-mode residual r(mode) and the worst |error| once r is applied. Gated: it takes
-/// minutes and always reports through its failure message.
+/// DemodType × {8000, 11025, 22050, 44100, 48000} Hz, noiseless, compares the chain-delay formula
+/// (<see cref="SyncSnrPlacement"/>'s search centre minus its bias) against the encoder's exact sync onset.
+/// Reports formula − true start per mode (positive: the formula is late) and how far one value per mode misses. This
+/// is the measurement that ruled out formula placement. Gated: it takes minutes and always reports
+/// through its failure message.
 /// </summary>
 public class SyncSnrPlacementProbe
 {
@@ -46,7 +47,7 @@ public class SyncSnrPlacementProbe
         });
 
         var report = new StringBuilder();
-        report.AppendLine("mode | r(mode) ms (median over configs) | config median spread ms | max |err-r| ms | worst config | lines");
+        report.AppendLine("mode | formula − true start, ms (median over configs) | config median spread ms | max |err − median| ms | worst config | lines");
         var worstOverall = 0.0;
         foreach (var group in results.GroupBy(r => r.ModeId).OrderBy(g => g.Key, StringComparer.Ordinal))
         {
@@ -92,7 +93,7 @@ public class SyncSnrPlacementProbe
         {
             if (line < truth.Length)
             {
-                var placed = rawStart - (SyncSnrPlacement.GetResidualMs(mode) / 1000.0 * rate) + (residualMs / 1000.0 * rate);
+                var placed = rawStart - (SyncSnrPlacement.CentreBiasMs / 1000.0 * rate) + (residualMs / 1000.0 * rate);
                 errors.Add((placed - truth[line]) / rate * 1000.0);
             }
         };

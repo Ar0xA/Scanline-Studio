@@ -3501,8 +3501,8 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         _bufferBase = watermark;
     }
 
-    /// <summary>Test-only observer: (transmission line index, raw-timeline sync start sample) for every
-    /// line the SNR hook places a window for. Step-0 placement probe only; read-only, no decode state.</summary>
+    /// <summary>Test-only observer: (transmission line index, raw-timeline search centre sample) for every
+    /// line the SNR hook searches. Step-0 placement probe only; read-only, no decode state.</summary>
     internal Action<int, double>? SyncWindowObservedForTests { get; set; }
 
     private void MeasureLineSyncSnr(SstvModeDefinition mode, int lineAnchor, int effectiveSampleRate, int transmissionLine)
@@ -3512,14 +3512,13 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             return;
         }
 
-        var rawSyncStart = SyncSnrPlacement.RawSyncStartSample(
+        var searchCentre = SyncSnrPlacement.SearchCentreSample(
             lineAnchor,
             SstvModeRegistry.GetSyncSegmentOffsetMs(mode),
             effectiveSampleRate,
             _searchBandpassFilter?.Tap ?? 0,
-            _demodType == DemodType.Hilbert ? _demodulator.HalfTap / 4 : 0,
-            SyncSnrPlacement.GetResidualMs(mode));
-        SyncWindowObservedForTests?.Invoke(transmissionLine, rawSyncStart);
+            _demodType == DemodType.Hilbert ? _demodulator.HalfTap / 4 : 0);
+        SyncWindowObservedForTests?.Invoke(transmissionLine, searchCentre);
     }
 
     // Outer loop added for piece 6a (end-of-image reset, sstv.cpp's Stop()/cases 512-513): once an
