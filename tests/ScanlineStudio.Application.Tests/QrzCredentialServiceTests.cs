@@ -380,6 +380,81 @@ public sealed class QrzCredentialServiceTests
     }
 
     /// <summary>A keyring daemon that accepted the call and never answers.</summary>
+    [Fact]
+    public async Task TimedOutWrite_StillRunning_BlocksLaterWrites_AndIsNeverRetriedWithAPrompt()
+    {
+        var settings = new FakeSettingsStore { Settings = new AppSettings() };
+        var store = new GatedCredentialStore();
+        var options = new QrzCredentialServiceOptions { StoreCallTimeout = TimeSpan.FromMilliseconds(100), PromptCallTimeout = TimeSpan.FromMilliseconds(100) };
+        var service = new QrzCredentialService(settings, CredentialStoreResolver.ForStore(store), NullLogger<QrzCredentialService>.Instance, options);
+        var bound = TimeSpan.FromSeconds(10);
+
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringUnavailable, await service.WriteAsync("p1", null).WaitAsync(bound));
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringUnavailable, await service.WriteAsync("p2", null).WaitAsync(bound));
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringUnavailable, await service.WriteAsync(null, "p1").WaitAsync(bound));
+
+        // While the abandoned write runs, nothing else reaches the store, and nothing retries with a prompt.
+        Assert.Equal(1, store.SetCalls);
+        Assert.Equal(0, store.DeleteCalls);
+        Assert.False(store.AnyPromptingCall);
+
+        // The abandoned write lands late; only after it has finished may a new save start — and it wins.
+        store.Release();
+        var deadline = DateTime.UtcNow + bound;
+        while (store.Stored != "p1" && DateTime.UtcNow < deadline)
+        {
+            await Task.Delay(10);
+        }
+
+        Assert.Equal("p1", store.Stored);
+        await Task.Delay(50);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await service.WriteAsync("p2", null).WaitAsync(bound));
+        Assert.Equal("p2", store.Stored);
+    }
+
+    /// <summary>The first SetAsync blocks until <see cref="Release"/>, then every call completes at once.</summary>
+    private sealed class GatedCredentialStore : ICredentialStore
+    {
+        private readonly TaskCompletionSource _gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private int _setCalls;
+
+        public bool IsSecure => true;
+
+        public string BackendName => "gated";
+
+        public string? Stored { get; private set; }
+
+        public int SetCalls => Volatile.Read(ref _setCalls);
+
+        public int DeleteCalls { get; private set; }
+
+        public bool AnyPromptingCall { get; private set; }
+
+        public void Release() => _gate.TrySetResult();
+
+        public Task<CredentialRead> GetAsync(string key, bool allowPrompt, CancellationToken ct = default) =>
+            Task.FromResult(Stored is null ? CredentialRead.Absent : CredentialRead.Found(Stored));
+
+        public async Task<CredentialWrite> SetAsync(string key, string secret, bool allowPrompt, CancellationToken ct = default)
+        {
+            AnyPromptingCall |= allowPrompt;
+            Interlocked.Increment(ref _setCalls);
+            await _gate.Task.ConfigureAwait(false);
+            Stored = secret;
+            return CredentialWrite.Success;
+        }
+
+        public Task<CredentialWrite> DeleteAsync(string key, bool allowPrompt, CancellationToken ct = default)
+        {
+            AnyPromptingCall |= allowPrompt;
+            DeleteCalls++;
+            Stored = null;
+            return Task.FromResult(CredentialWrite.Success);
+        }
+
+        public Task<bool> ExistsAsync(string key, CancellationToken ct = default) => Task.FromResult(Stored is not null);
+    }
+
     private sealed class NeverCompletingCredentialStore : ICredentialStore
     {
         private readonly TaskCompletionSource _never = new();

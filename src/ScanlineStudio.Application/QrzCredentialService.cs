@@ -67,7 +67,7 @@ public sealed partial class QrzCredentialService : IDisposable
                     : CredentialRead.Absent;
             }
 
-            var read = await BoundedAsync(store.GetAsync(Key, allowPrompt, ct), allowPrompt, CredentialRead.Unavailable("keyring call timed out"), "read", ct).ConfigureAwait(false);
+            var read = await BoundedAsync(store.GetAsync(Key, allowPrompt, ct), allowPrompt, CredentialRead.Unavailable(CredentialReasons.TimedOut), "read", ct).ConfigureAwait(false);
             if (read.Status == CredentialReadStatus.Unavailable)
             {
                 Log.StoreReadUnavailable(_logger, store.BackendName, read.Reason);
@@ -152,7 +152,13 @@ public sealed partial class QrzCredentialService : IDisposable
                     return;
                 }
 
-                var set = await BoundedAsync(store.SetAsync(Key, plaintext, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "migrate", ct).ConfigureAwait(false);
+                if (AbandonedMutationStillRunning)
+                {
+                    Log.MutationBlockedByAbandonedCall(_logger, store.BackendName);
+                    return;
+                }
+
+                var set = await BoundedAsync(store.SetAsync(Key, plaintext, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "migrate", ct, mutating: true).ConfigureAwait(false);
                 if (!set.IsSuccess)
                 {
                     Log.MigrationSkipped(_logger, store.BackendName, set.Status, set.Reason);
@@ -198,7 +204,19 @@ public sealed partial class QrzCredentialService : IDisposable
         }
     }
 
-    private static CredentialWrite TimedOutWrite { get; } = CredentialWrite.Unavailable("keyring call timed out");
+    private static CredentialWrite TimedOutWrite { get; } = CredentialWrite.Unavailable(CredentialReasons.TimedOut);
+
+    // A timed-out keyring write/delete can still complete later and overwrite a newer save, so no new
+    // mutation starts until it has finished. Written from any thread, hence Volatile.
+    private Task? _abandonedMutation;
+
+    private bool AbandonedMutationStillRunning => Volatile.Read(ref _abandonedMutation) is { IsCompleted: false };
+
+    private QrzPasswordWriteOutcome RefuseWhileAbandonedMutationRuns(string backend)
+    {
+        Log.MutationBlockedByAbandonedCall(_logger, backend);
+        return QrzPasswordWriteOutcome.KeyringUnavailable;
+    }
 
     private async Task<QrzPasswordWriteOutcome> WritePlaintextAsync(string? newPassword, CancellationToken ct)
     {
@@ -227,7 +245,12 @@ public sealed partial class QrzCredentialService : IDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var set = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "write", ct).ConfigureAwait(false);
+            if (AbandonedMutationStillRunning)
+            {
+                return RefuseWhileAbandonedMutationRuns(store.BackendName);
+            }
+
+            var set = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "write", ct, mutating: true).ConfigureAwait(false);
             if (set.IsSuccess)
             {
                 return await FinishSetAsync(store, newPassword, replacedPassword, ct).ConfigureAwait(false);
@@ -246,7 +269,12 @@ public sealed partial class QrzCredentialService : IDisposable
         }
 
         // Keyring locked: prompt outside the gate, then re-enter it to verify and clear.
-        var prompted = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "write", ct).ConfigureAwait(false);
+        if (AbandonedMutationStillRunning)
+        {
+            return RefuseWhileAbandonedMutationRuns(store.BackendName);
+        }
+
+        var prompted = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "write", ct, mutating: true).ConfigureAwait(false);
         if (!prompted.IsSuccess)
         {
             Log.StoreWriteFailed(_logger, store.BackendName, prompted.Status, prompted.Reason);
@@ -295,7 +323,12 @@ public sealed partial class QrzCredentialService : IDisposable
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var deleted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "delete", ct).ConfigureAwait(false);
+            if (AbandonedMutationStillRunning)
+            {
+                return RefuseWhileAbandonedMutationRuns(store.BackendName);
+            }
+
+            var deleted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "delete", ct, mutating: true).ConfigureAwait(false);
             if (deleted.IsSuccess)
             {
                 return await FinishDeleteAsync(store, replacedPassword, ct).ConfigureAwait(false);
@@ -312,7 +345,12 @@ public sealed partial class QrzCredentialService : IDisposable
             _gate.Release();
         }
 
-        var prompted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "delete", ct).ConfigureAwait(false);
+        if (AbandonedMutationStillRunning)
+        {
+            return RefuseWhileAbandonedMutationRuns(store.BackendName);
+        }
+
+        var prompted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "delete", ct, mutating: true).ConfigureAwait(false);
         if (!prompted.IsSuccess)
         {
             Log.StoreDeleteFailed(_logger, store.BackendName, prompted.Status, prompted.Reason);
@@ -351,13 +389,13 @@ public sealed partial class QrzCredentialService : IDisposable
 
     private async Task<bool> VerifyAsync(ICredentialStore store, string expected, CancellationToken ct)
     {
-        var read = await BoundedAsync(store.GetAsync(Key, allowPrompt: false, ct), allowPrompt: false, CredentialRead.Unavailable("keyring call timed out"), "verify", ct).ConfigureAwait(false);
+        var read = await BoundedAsync(store.GetAsync(Key, allowPrompt: false, ct), allowPrompt: false, CredentialRead.Unavailable(CredentialReasons.TimedOut), "verify", ct).ConfigureAwait(false);
         return read.Status == CredentialReadStatus.Found && string.Equals(read.Secret, expected, StringComparison.Ordinal);
     }
 
     /// <summary>Awaits a store call for at most the configured timeout; on timeout returns
     /// <paramref name="onTimeout"/>. The abandoned call keeps running but no longer holds anyone up.</summary>
-    private async Task<T> BoundedAsync<T>(Task<T> call, bool allowPrompt, T onTimeout, string operation, CancellationToken ct)
+    private async Task<T> BoundedAsync<T>(Task<T> call, bool allowPrompt, T onTimeout, string operation, CancellationToken ct, bool mutating = false)
     {
         var timeout = allowPrompt ? _options.PromptCallTimeout : _options.StoreCallTimeout;
         try
@@ -367,6 +405,11 @@ public sealed partial class QrzCredentialService : IDisposable
         catch (TimeoutException)
         {
             Log.StoreCallTimedOut(_logger, operation, timeout.TotalSeconds);
+            if (mutating)
+            {
+                Volatile.Write(ref _abandonedMutation, call);
+            }
+
             return onTimeout;
         }
     }
@@ -429,6 +472,9 @@ public sealed partial class QrzCredentialService : IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password write failed")]
         public static partial void WriteFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password change refused: an earlier timed-out {Backend} write/delete is still running")]
+        public static partial void MutationBlockedByAbandonedCall(ILogger logger, string backend);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credential store {Operation} timed out after {Seconds} s")]
         public static partial void StoreCallTimedOut(ILogger logger, string operation, double seconds);

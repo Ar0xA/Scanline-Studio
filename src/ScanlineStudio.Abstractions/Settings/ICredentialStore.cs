@@ -60,6 +60,13 @@ public enum CredentialWriteStatus
     Failed,
 }
 
+/// <summary>Shared <see cref="CredentialRead.Reason"/>/<see cref="CredentialWrite.Reason"/> values callers compare on.</summary>
+public static class CredentialReasons
+{
+    /// <summary>The store or its caller gave up waiting; the backend may still complete the call later.</summary>
+    public const string TimedOut = "keyring call timed out";
+}
+
 /// <summary>Result of <see cref="ICredentialStore.SetAsync"/>/<see cref="ICredentialStore.DeleteAsync"/>.</summary>
 public readonly record struct CredentialWrite(CredentialWriteStatus Status, string? Reason)
 {

@@ -140,7 +140,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         catch (TimeoutException)
         {
             Log.CallTimedOut(_logger, "read", CallTimeout.TotalSeconds);
-            return CredentialRead.Unavailable("D-Bus call timed out");
+            return CredentialRead.Unavailable(CredentialReasons.TimedOut);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -212,7 +212,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         catch (TimeoutException)
         {
             Log.CallTimedOut(_logger, "write", CallTimeout.TotalSeconds);
-            return CredentialWrite.Unavailable("D-Bus call timed out");
+            return CredentialWrite.Unavailable(CredentialReasons.TimedOut);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -276,7 +276,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         catch (TimeoutException)
         {
             Log.CallTimedOut(_logger, "delete", CallTimeout.TotalSeconds);
-            return CredentialWrite.Unavailable("D-Bus call timed out");
+            return CredentialWrite.Unavailable(CredentialReasons.TimedOut);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
