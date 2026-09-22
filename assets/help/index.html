@@ -533,7 +533,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="qrz.com lookup callsign credentials username password forwarding udp wsjt-x loggedadif gridtracker n1mm log4om port privacy">
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="qrz.com lookup callsign credentials username password keyring credential manager forwarding udp wsjt-x loggedadif gridtracker n1mm log4om port privacy">
         <p class="topic-category">Images and logging</p>
         <h2>QRZ.com lookup and UDP forwarding</h2>
         <p>Both integrations are optional. Configure them in Options only if they are part of your logging workflow.</p>
@@ -545,7 +545,8 @@
           <li>On the Receive tab's Frame metadata card, select <strong>Lookup QRZ</strong> next to a received callsign to pull name, QTH, and grid. See <a href="#receive-controls">Reception controls and telemetry</a>.</li>
         </ul>
         <p>This screen configures callsign lookup only. The current application does not provide an Options control for QRZ Logbook uploads.</p>
-        <div class="warning"><strong>Credential storage.</strong> The current application stores the QRZ.com password locally in its settings file without encryption. Use a unique password rather than one reused for other accounts.</div>
+        <div class="warning"><strong>Credential storage.</strong> On Windows the QRZ.com password is kept in Windows Credential Manager, and on Linux in the system keyring (Secret Service, for example GNOME Keyring or KWallet). A password saved by an earlier version is moved there automatically at startup. If no system keyring is available (always on macOS), the password stays in the settings file without encryption and the QRZ.com tab shows a warning. Use a unique password rather than one reused for other accounts.</div>
+        <p>If the keyring is locked, the password field shows <strong>Keyring locked</strong> and an <strong>Unlock keyring</strong> button. Select it to unlock the keyring and show the password. Leaving the field untouched and saving does not change or delete the stored password. If the keyring cannot store the password, <strong>Save</strong> shows an error and nothing is saved.</p>
 
         <h3>ADIF over UDP</h3>
         <p>Under <strong>Options → Forwarding</strong>, add each destination's name, host, and port. Every newly logged QSO is sent to enabled destinations as a WSJT-X protocol <code>LoggedADIF</code> message. Common local ports include 2237 for GridTracker and 2333 for some N1MM Logger+ or Log4OM arrangements. Check the receiving application's documentation for its port.</p>
@@ -904,7 +905,8 @@
         <ul>
           <li>Scanline Studio does not require product telemetry or a cloud account for core use.</li>
           <li>QRZ.com and configured UDP forwarding send data only when you enable and use those integrations.</li>
-          <li>The current QRZ.com password is stored locally without encryption in settings.</li>
+          <li>The QRZ.com password is kept in the system keyring (Windows Credential Manager or the Linux Secret Service) when one is available, so a copy of <code>settings.json</code> does not include it and a restored backup needs the password entered again. Without a system keyring (always on macOS) it is stored without encryption in <code>settings.json</code>.</li>
+          <li>An older Scanline Studio build started after the password moved to the keyring shows an empty QRZ.com password. Enter it again there, or keep using the newer build.</li>
           <li><strong>Help → Open application log</strong> opens the current diagnostic log location. Review a log before sharing it because paths, callsigns, hosts, or operating details may be present.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>

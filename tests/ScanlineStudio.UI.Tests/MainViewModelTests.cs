@@ -116,7 +116,7 @@ public sealed class MainViewModelTests
             new FakeRadioSessionService(),
             sstvSession,
             new FakeLocalizationService(),
-            new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+            TestOptionsSettings.Create(settingsStore),
             settingsStore,
             urlLauncher,
             new FakeAppearanceSettingsService(),

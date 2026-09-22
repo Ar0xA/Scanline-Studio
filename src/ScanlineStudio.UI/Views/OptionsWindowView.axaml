@@ -1132,13 +1132,19 @@
                                     <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Qrz.QrzLookupUsernameWatermark}"
                                              Text="{Binding QrzLookupUsername}" />
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Qrz.PasswordLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Qrz.QrzLookupPasswordWatermark}"
-                                             Text="{Binding QrzLookupPassword}" PasswordChar="•" />
-                                    <!-- A real QRZ account password (not a scoped/revocable API key like the
-                                         separate QRZ Logbook upload feature) is stored in plaintext local
-                                         settings: no scoped-credential mode exists for this API, so a hint
-                                         is the mitigation, not a fix. -->
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Qrz.QrzLookupPasswordHint}" TextWrapping="Wrap" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Grid.Column="0" Classes="Industry IndustryInput" Watermark="{Binding QrzLookupPasswordWatermark}"
+                                                 Text="{Binding QrzLookupPassword}" PasswordChar="•" />
+                                        <!-- The only Options control allowed to show a keyring unlock prompt. -->
+                                        <Button Grid.Column="1" Margin="6,0,0,0" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                Content="{loc:Translate Options.Qrz.UnlockKeyringButton}"
+                                                IsVisible="{Binding IsQrzKeyringLocked}"
+                                                Command="{Binding UnlockQrzKeyringCommand}" />
+                                    </Grid>
+                                    <!-- Hint text depends on where the password is stored: system keyring or plaintext settings.json. -->
+                                    <TextBlock Classes="IndustryRowLabel" Text="{Binding QrzLookupPasswordHint}" TextWrapping="Wrap" />
+                                    <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{loc:Translate Options.Qrz.PlaintextWarning}"
+                                               TextWrapping="Wrap" IsVisible="{Binding ShowQrzPlaintextWarning}" />
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Qrz.TestButton}"
                                                 Command="{Binding TestQrzLookupCommand}" />

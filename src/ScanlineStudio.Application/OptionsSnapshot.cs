@@ -60,7 +60,6 @@ public sealed record OptionsSnapshot(
     bool AutoSlantEnabled,
     bool QrzLookupEnabled,
     string? QrzLookupUsername,
-    string? QrzLookupPassword,
     bool AutoStopEnabled,
     bool SyncRestartEnabled,
     int SenseLevel,

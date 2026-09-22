@@ -13,6 +13,7 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
@@ -27,6 +28,8 @@ using ScanlineStudio.Core.Radio.Hamlib;
 using ScanlineStudio.Core.Radio.OmniRig;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
+using ScanlineStudio.Credentials.SecretService;
+using ScanlineStudio.Credentials.Windows;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI;
 using ScanlineStudio.UI.Services;
@@ -388,6 +391,20 @@ internal static partial class Program
             catch (Exception ex)
             {
                 Log.StartReceivingFailed(logger, ex);
+            }
+        });
+
+        // Background, never prompts: moves a plaintext QRZ password into the OS keyring if one exists.
+        // Also starts the credential-store probe early so Options never waits on it.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await host.Services.GetRequiredService<QrzCredentialService>().MigrateAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.QrzCredentialMigrationThrew(logger, ex);
             }
         });
 
@@ -1152,6 +1169,11 @@ internal static partial class Program
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
         services.AddSingleton<ISstvSessionService>(CreateSstvSessionService);
+        services.AddSingleton(sp => new CredentialStoreResolver(
+            ct => ProbeCredentialStoreAsync(sp.GetRequiredService<ILoggerFactory>(), ct),
+            CredentialStoreResolver.DefaultProbeTimeout,
+            sp.GetRequiredService<ILogger<CredentialStoreResolver>>()));
+        services.AddSingleton<QrzCredentialService>();
         services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
 
         // Configurations-preset backlog, Phase 3 (2026-08-28) -- orchestrates across both session
@@ -1309,8 +1331,29 @@ internal static partial class Program
     // Avalonia configuration, don't remove; also used by the visual designer.
     public static AppBuilder BuildAvaloniaApp() => App.BuildAvaloniaApp();
 
+    /// <summary>Linux: Secret Service; Windows: Credential Manager; anything else (macOS is unsupported) or
+    /// an unusable backend: <see langword="null"/>, which <see cref="CredentialStoreResolver"/> turns into the
+    /// plaintext settings.json fallback.</summary>
+    private static async Task<ICredentialStore?> ProbeCredentialStoreAsync(ILoggerFactory loggerFactory, CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return WindowsCredentialStore.IsAvailable() ? new WindowsCredentialStore(loggerFactory.CreateLogger<WindowsCredentialStore>()) : null;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return await SecretServiceCredentialStore.TryCreateAsync(loggerFactory.CreateLogger<SecretServiceCredentialStore>(), ct).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credential migration threw")]
+        public static partial void QrzCredentialMigrationThrew(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
         public static partial void ImagePersistenceDrainIncomplete(ILogger logger);
 

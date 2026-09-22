@@ -69,7 +69,7 @@ public sealed class OptionsWindowLiveLocaleSwitchTests
 
             var settingsStore = new FakeSettingsStore();
             var vm = new OptionsWindowViewModel(
-                new OptionsSettingsService(settingsStore, NullLogger<OptionsSettingsService>.Instance),
+                TestOptionsSettings.Create(settingsStore),
                 localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore,
                 new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(),
                 new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(),

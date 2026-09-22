@@ -81,6 +81,9 @@ with nothing to catch it.
 - **W-PTT. OPEN, needs a Windows run** — re-run `SstvSessionServiceTests.TuneAsync_TokenCancelledMidTone_*`
   (or the full suite) on Windows to confirm `c9d9b1b3`'s deterministic cancellation gate resolves
   `windows_tests.md` Item C.
+- **W-CRED. OPEN, needs a Windows run** — `WindowsCredentialStore` (QRZ password, `CredWriteW`/`CredReadW`/
+  `CredDeleteW` via `LibraryImport`) has 5 `[WindowsFact]`s in `ScanlineStudio.Credentials.Tests` that were
+  written on Linux and never run on Windows. Also check the Options QRZ tab shows the keyring hint there.
 - **W-HOTPLUG. OPEN, needs Windows** — WASAPI hot-unplug notification and a possible `Dispose` hang after
   the device vanished are confirmed only on PulseAudio (`HotplugDisposeTests.cs:25`, `:94`).
   `spec/05-audio-engine.md`, "Device hot-plug". macOS is out of scope.
@@ -163,12 +166,12 @@ No `ISettingsMigration` exists; `AppSettings.cs:22` is `CurrentSchemaVersion = 1
 says migration is not implemented. Build the chain and exercise it against one real schema bump before
 v1.0. `spec/12-settings.md`.
 
-### QRZ-PW. OPEN — QRZ password stored in plaintext
+### QRZ-APIKEY. OPEN — QRZ Logbook upload API key still in plaintext
 
-`QrzLookupSettings.Password` (`QrzLookupSettings.cs:25`) lives in plain `settings.json`. Implement
-`ICredentialStore` (Windows Credential Manager / libsecret) per the spec's "Secrets" design.
-`spec/12-settings.md`. Only partial mitigation today: `ConfigurationPresetStore.cs:347-359` strips it from
-exported presets.
+`QrzUploadSettings.ApiKey` stays in `settings.json`. It has no Options control, so moving it into the OS
+keyring (as QRZ-PW did for the lookup password via `QrzCredentialService`) would leave it unmanageable.
+Needs an Options control first, then the same store. `spec/12-settings.md` "Secrets" DoD stays unticked
+for it.
 
 ### QRZ-APIKEY. OPEN — QRZ upload API key stored in plaintext, no Options control
 

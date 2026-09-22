@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Logbook;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Settings;
 
@@ -17,8 +18,10 @@ public sealed class LogbookSessionServiceTests
         FakeQrzCallsignLookup? qrzLookup = null,
         FakeSettingsStore? settingsStore = null,
         FakeReceiveHistoryStoreForLogbook? receiveHistoryStore = null,
-        IAdifExporter? adifExporter = null)
+        IAdifExporter? adifExporter = null,
+        ICredentialStore? credentialStore = null)
     {
+        settingsStore ??= new FakeSettingsStore();
         return new LogbookSessionService(
             repository ?? new FakeLogbookRepository(),
             adifExporter ?? new AdifExporter(),
@@ -26,8 +29,9 @@ public sealed class LogbookSessionServiceTests
             adifUdpStreamer ?? new FakeAdifUdpStreamer(),
             qrzUploader ?? new FakeQrzLogbookUploader(),
             qrzLookup ?? new FakeQrzCallsignLookup(),
-            settingsStore ?? new FakeSettingsStore(),
+            settingsStore,
             receiveHistoryStore ?? new FakeReceiveHistoryStoreForLogbook(),
+            new QrzCredentialService(settingsStore, CredentialStoreResolver.ForStore(credentialStore ?? new SettingsFileCredentialStore()), NullLogger<QrzCredentialService>.Instance),
             NullLogger<LogbookSessionService>.Instance);
     }
 
@@ -478,6 +482,68 @@ public sealed class LogbookSessionServiceTests
 
         Assert.False(result.Success);
         Assert.Equal(0, qrzLookup.LookupCallCount);
+    }
+
+    [Fact]
+    public async Task LookupCallsignAsync_PasswordOnlyInKeyring_UsesIt_AndMayPromptBecauseTheUserStartedIt()
+    {
+        var qrzLookup = new FakeQrzCallsignLookup();
+        var credentialStore = new FakeCredentialStore { Locked = true };
+        credentialStore.Items[QrzCredentialService.CredentialKey] = "from-keyring";
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = "user", PasswordInCredentialStore = true },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(qrzLookup: qrzLookup, settingsStore: settingsStore, credentialStore: credentialStore);
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.True(result.Success);
+        Assert.Equal("from-keyring", qrzLookup.LastPassword);
+        Assert.Contains(("get", true), credentialStore.Calls);
+    }
+
+    [Fact]
+    public async Task LookupCallsignAsync_KeyringUnreachableThisSession_ReportsItInsteadOfCallingQrz()
+    {
+        var qrzLookup = new FakeQrzCallsignLookup();
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = "user", PasswordInCredentialStore = true },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(qrzLookup: qrzLookup, settingsStore: settingsStore);
+
+        var result = await service.LookupCallsignAsync("W1AW");
+
+        Assert.False(result.Success);
+        Assert.Contains("keyring", result.ErrorReason, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(0, qrzLookup.LookupCallCount);
+    }
+
+    // D1
+    [Fact]
+    public async Task IsQrzLookupConfiguredAsync_PasswordInLockedKeyring_TrueWithoutEverAllowingAPrompt()
+    {
+        var credentialStore = new FakeCredentialStore { Locked = true };
+        credentialStore.Items[QrzCredentialService.CredentialKey] = "from-keyring";
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                QrzLookupSettings.SectionKey,
+                new QrzLookupSettings { Enabled = true, Username = "user", PasswordInCredentialStore = true },
+                QrzLookupSettingsJsonContext.Default.QrzLookupSettings),
+        };
+        var service = CreateService(settingsStore: settingsStore, credentialStore: credentialStore);
+
+        Assert.True(await service.IsQrzLookupConfiguredAsync());
+        Assert.NotEmpty(credentialStore.Calls);
+        Assert.False(credentialStore.AnyPromptAllowed);
     }
 
     [Fact]

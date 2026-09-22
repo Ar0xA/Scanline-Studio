@@ -518,7 +518,7 @@
         <p><strong>Importieren…</strong> verwenden, um Einträge aus einer ADIF-Datei hinzuzufügen, und <strong>Exportieren…</strong>, um passende Einträge zu schreiben. Eine Warnung über einen unvollständigen Import bedeutet, dass bereits verarbeitete Einträge möglicherweise hinzugefügt wurden, bevor der fehlerhafte Eintrag erreicht wurde.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="qrz.com abfrage lookup rufzeichen zugangsdaten benutzername passwort weiterleitung udp wsjt-x loggedadif gridtracker n1mm log4om port datenschutz">
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="qrz.com abfrage lookup rufzeichen zugangsdaten benutzername passwort schlüsselbund anmeldeinformationsverwaltung weiterleitung udp wsjt-x loggedadif gridtracker n1mm log4om port datenschutz">
         <p class="topic-category">Bilder und Logbuch</p>
         <h2>QRZ.com-Abfrage und UDP-Weiterleitung</h2>
         <p>Beide Integrationen sind optional. Sie nur dann in den Optionen konfigurieren, wenn sie Teil Ihres Logbuch-Arbeitsablaufs sind.</p>
@@ -530,7 +530,8 @@
           <li>Auf der Karte <strong>BILDMETADATEN</strong> auf der Registerkarte Empfang neben einem empfangenen Rufzeichen <strong>QRZ abfragen</strong> wählen, um Name, QTH und Locator abzurufen. Siehe <a href="#receive-controls">Empfangs-Bedienelemente und Telemetrie</a>.</li>
         </ul>
         <p>Diese Seite konfiguriert nur die Rufzeichenabfrage. Die aktuelle Anwendung bietet in den Optionen keine Einstellung für Uploads in das QRZ-Logbuch.</p>
-        <div class="warning"><strong>Speicherung der Zugangsdaten.</strong> Die aktuelle Anwendung speichert das QRZ.com-Passwort lokal unverschlüsselt in ihrer Einstellungsdatei. Ein eigenes Passwort verwenden, nicht eines, das auch für andere Konten genutzt wird.</div>
+        <div class="warning"><strong>Speicherung der Zugangsdaten.</strong> Unter Windows liegt das QRZ.com-Passwort in der Windows-Anmeldeinformationsverwaltung, unter Linux im Schlüsselbund des Systems (Secret Service, zum Beispiel GNOME Keyring oder KWallet). Ein von einer früheren Version gespeichertes Passwort wird beim Start automatisch dorthin verschoben. Ist kein System-Schlüsselbund verfügbar (unter macOS immer), bleibt das Passwort unverschlüsselt in der Einstellungsdatei, und die Registerkarte QRZ.com zeigt eine Warnung. Ein eigenes Passwort verwenden, nicht eines, das auch für andere Konten genutzt wird.</div>
+        <p>Ist der Schlüsselbund gesperrt, zeigt das Passwortfeld <strong>Schlüsselbund gesperrt</strong> und eine Schaltfläche <strong>Schlüsselbund entsperren</strong>. Sie wählen, um den Schlüsselbund zu entsperren und das Passwort anzuzeigen. Wird das Feld nicht verändert und gespeichert, bleibt das gespeicherte Passwort unverändert und wird nicht gelöscht. Kann der Schlüsselbund das Passwort nicht speichern, zeigt <strong>Speichern</strong> einen Fehler, und es wird nichts gespeichert.</p>
 
         <h3>ADIF über UDP</h3>
         <p>Unter <strong>Optionen → Weiterleitung</strong> für jedes Ziel Name, Host und Port hinzufügen. Jedes neu geloggte QSO wird als <code>LoggedADIF</code>-Nachricht im WSJT-X-Protokoll an die aktivierten Ziele gesendet. Übliche lokale Ports sind 2237 für GridTracker und 2333 für manche Konfigurationen von N1MM Logger+ oder Log4OM. Den Port in der Dokumentation der empfangenden Anwendung nachschlagen.</p>
@@ -875,7 +876,8 @@
         <ul>
           <li>Scanline Studio benötigt für den normalen Betrieb weder Produkttelemetrie noch ein Cloud-Konto.</li>
           <li>QRZ.com und die konfigurierte UDP-Weiterleitung senden nur dann Daten, wenn diese Integrationen aktiviert und verwendet werden.</li>
-          <li>Das aktuelle QRZ.com-Passwort wird unverschlüsselt lokal in den Einstellungen gespeichert.</li>
+          <li>Das QRZ.com-Passwort liegt im Schlüsselbund des Systems (Windows-Anmeldeinformationsverwaltung oder Linux Secret Service), wenn einer verfügbar ist. Eine Kopie von <code>settings.json</code> enthält es dann nicht, und nach dem Wiederherstellen einer Sicherung muss das Passwort erneut eingegeben werden. Ohne System-Schlüsselbund (unter macOS immer) wird es unverschlüsselt in <code>settings.json</code> gespeichert.</li>
+          <li>Eine ältere Scanline-Studio-Version zeigt ein leeres QRZ.com-Passwort, nachdem das Passwort in den Schlüsselbund verschoben wurde. Dort das Passwort erneut eingeben oder weiter die neuere Version verwenden.</li>
           <li><strong>Hilfe → Anwendungsprotokoll öffnen</strong> öffnet den aktuellen Speicherort des Diagnoseprotokolls. Ein Protokoll vor der Weitergabe durchsehen, da es Pfade, Rufzeichen, Hostnamen oder Betriebsdetails enthalten kann.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>

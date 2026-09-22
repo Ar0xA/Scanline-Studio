@@ -12,6 +12,7 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
@@ -578,7 +579,40 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(TestQrzLookupCommand))]
+    [NotifyPropertyChangedFor(nameof(ShowQrzPlaintextWarning))]
     private string? _qrzLookupPassword;
+
+    /// <summary>What <see cref="LoadQrzPasswordFieldAsync"/> put in <see cref="QrzLookupPassword"/>. Save
+    /// writes the password only when the field differs from this, so an untouched field (including one
+    /// left empty by a locked keyring) is never written or deleted.</summary>
+    private string? _loadedQrzPassword;
+
+    /// <summary>False until the password load completed; Save never writes the password before that.</summary>
+    private bool _qrzPasswordLoaded;
+
+    /// <summary>The password exists in the system keyring but could not be read without a prompt.
+    /// Shows the "keyring locked" watermark and the Unlock button.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(QrzLookupPasswordWatermark))]
+    [NotifyCanExecuteChangedFor(nameof(UnlockQrzKeyringCommand))]
+    private bool _isQrzKeyringLocked;
+
+    /// <summary>This session stores the password in a system keyring (not plaintext settings.json).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(ShowQrzPlaintextWarning))]
+    [NotifyPropertyChangedFor(nameof(QrzLookupPasswordHint))]
+    private bool _isQrzPasswordStoreSecure;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(UnlockQrzKeyringCommand))]
+    private bool _isUnlockingQrzKeyring;
+
+    /// <summary>One-line warning row: only when a password is set and no system keyring was found.</summary>
+    public bool ShowQrzPlaintextWarning => _qrzPasswordLoaded && !IsQrzPasswordStoreSecure && !string.IsNullOrEmpty(QrzLookupPassword);
+
+    public string QrzLookupPasswordWatermark => _localization.GetString(IsQrzKeyringLocked ? "Options.Qrz.KeyringLockedWatermark" : "Options.Qrz.QrzLookupPasswordWatermark");
+
+    public string QrzLookupPasswordHint => _localization.GetString(IsQrzPasswordStoreSecure ? "Options.Qrz.QrzLookupPasswordHint.Keyring" : "Options.Qrz.QrzLookupPasswordHint");
 
     /// <summary>Testing/✓ succeeded/✗ &lt;reason&gt; -- always tests the CURRENT in-memory
     /// <see cref="QrzLookupUsername"/>/<see cref="QrzLookupPassword"/>, not yet-saved values, via
@@ -2900,6 +2934,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         {
             var snapshot = await _optionsSettingsService.LoadAsync();
             ApplyFromSnapshot(snapshot);
+            await LoadQrzPasswordFieldAsync(allowPrompt: false);
             RefreshSerialPorts();
 
             var appSettings = await _settingsStore.LoadAsync();
@@ -3304,7 +3339,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TxLpfFrequencyHz = snapshot.TxLpfFrequencyHz;
         QrzLookupEnabled = snapshot.QrzLookupEnabled;
         QrzLookupUsername = snapshot.QrzLookupUsername;
-        QrzLookupPassword = snapshot.QrzLookupPassword;
         // Clamp, not trust -- same reasoning as SenseLevel above: a hand-edited settings.json could
         // in principle carry an out-of-range enum value. Falls back to Off, matching CwIdMode's own
         // CLR/legacy default.
@@ -3516,7 +3550,6 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             ZeroCrossingSmoothingFrequencyHz: ZeroCrossingSmoothingFrequencyHz,
             QrzLookupEnabled: QrzLookupEnabled,
             QrzLookupUsername: QrzLookupUsername,
-            QrzLookupPassword: QrzLookupPassword,
             CaptureChannelSource: CaptureChannelSource,
             StereoTxEnabled: StereoTxEnabled,
             CwIdMode: CwIdMode,
@@ -3534,6 +3567,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         try
         {
+            // Keyring first: a failed keyring write aborts the whole Save before settings.json is touched.
+            if (!await SaveQrzPasswordIfChangedAsync())
+            {
+                return false;
+            }
+
             await _optionsSettingsService.SaveAsync(snapshot);
 
             // User-reported (2026-09-20): fire immediately after the persist succeeds, not after
@@ -4041,7 +4080,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         var defaults = OptionsSettingsService.Defaults;
         QrzLookupEnabled = defaults.QrzLookupEnabled;
         QrzLookupUsername = defaults.QrzLookupUsername;
-        QrzLookupPassword = defaults.QrzLookupPassword;
+        QrzLookupPassword = null;
         TestQrzLookupStatus = null;
     }
 
@@ -4096,6 +4135,72 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         AdifUdpDestinations.Remove(row);
+    }
+
+    /// <summary>Loads the password field. <paramref name="allowPrompt"/> is true only from the Unlock
+    /// button; the dialog load never prompts. A field the user already edited is left as typed.</summary>
+    private async Task LoadQrzPasswordFieldAsync(bool allowPrompt)
+    {
+        var load = await _optionsSettingsService.LoadQrzPasswordAsync(allowPrompt);
+        var fieldUntouched = !_qrzPasswordLoaded || string.Equals(NullIfEmpty(QrzLookupPassword), NullIfEmpty(_loadedQrzPassword), StringComparison.Ordinal);
+        _loadedQrzPassword = load.Password;
+        _qrzPasswordLoaded = true;
+        if (fieldUntouched)
+        {
+            QrzLookupPassword = load.Password;
+        }
+
+        IsQrzPasswordStoreSecure = load.IsSecure;
+        IsQrzKeyringLocked = load.Status == CredentialReadStatus.Unavailable;
+        OnPropertyChanged(nameof(ShowQrzPlaintextWarning));
+        Log.QrzPasswordLoaded(_logger, load.Status, load.IsSecure);
+    }
+
+    /// <summary>Returns false (with <see cref="SaveErrorMessage"/> set) when the keyring write failed.</summary>
+    private async Task<bool> SaveQrzPasswordIfChangedAsync()
+    {
+        var current = NullIfEmpty(QrzLookupPassword);
+        if (!_qrzPasswordLoaded || string.Equals(current, NullIfEmpty(_loadedQrzPassword), StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var result = await _optionsSettingsService.SaveQrzPasswordAsync(current, _loadedQrzPassword);
+        if (!result.IsSuccess)
+        {
+            Log.QrzPasswordSaveFailed(_logger, result.Status, result.Reason);
+            SaveErrorMessage = _localization.GetString(
+                result.Status == CredentialWriteStatus.Unavailable ? "Options.Qrz.Error.KeyringUnavailable" : "Options.Qrz.Error.KeyringWriteFailed",
+                result.Reason ?? string.Empty);
+            return false;
+        }
+
+        _loadedQrzPassword = current;
+        IsQrzKeyringLocked = false;
+        return true;
+    }
+
+    private static string? NullIfEmpty(string? value) => string.IsNullOrEmpty(value) ? null : value;
+
+    private bool CanUnlockQrzKeyring() => IsQrzKeyringLocked && !IsUnlockingQrzKeyring;
+
+    /// <summary>The one Options action allowed to show a keyring unlock prompt.</summary>
+    [RelayCommand(CanExecute = nameof(CanUnlockQrzKeyring))]
+    private async Task UnlockQrzKeyringAsync()
+    {
+        IsUnlockingQrzKeyring = true;
+        try
+        {
+            await LoadQrzPasswordFieldAsync(allowPrompt: true);
+        }
+        catch (Exception ex)
+        {
+            Log.QrzKeyringUnlockFailed(_logger, ex);
+        }
+        finally
+        {
+            IsUnlockingQrzKeyring = false;
+        }
     }
 
     private bool CanTestQrzLookup() => !IsTestingQrzLookup && !string.IsNullOrWhiteSpace(QrzLookupUsername) && !string.IsNullOrWhiteSpace(QrzLookupPassword);
@@ -4328,6 +4433,15 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "QRZ credentials test completed: success={Success}")]
         public static partial void TestQrzLookupCompleted(ILogger logger, bool success);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "QRZ password field loaded: status={Status}, secureStore={IsSecure}")]
+        public static partial void QrzPasswordLoaded(ILogger logger, CredentialReadStatus status, bool isSecure);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password save failed ({Status}: {Reason}); settings not saved")]
+        public static partial void QrzPasswordSaveFailed(ILogger logger, CredentialWriteStatus status, string? reason);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ keyring unlock failed")]
+        public static partial void QrzKeyringUnlockFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credentials test threw")]
         public static partial void TestQrzLookupFailed(ILogger logger, Exception ex);

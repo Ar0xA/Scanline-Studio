@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Localization;
@@ -19,13 +20,15 @@ namespace ScanlineStudio.Application;
 public sealed partial class OptionsSettingsService
 {
     private readonly ISettingsStore _settingsStore;
+    private readonly QrzCredentialService _qrzCredentials;
     private readonly ILogger<OptionsSettingsService> _logger;
 
     private AppSettings _loadedSettings = new();
 
-    public OptionsSettingsService(ISettingsStore settingsStore, ILogger<OptionsSettingsService> logger)
+    public OptionsSettingsService(ISettingsStore settingsStore, QrzCredentialService qrzCredentials, ILogger<OptionsSettingsService> logger)
     {
         _settingsStore = settingsStore;
+        _qrzCredentials = qrzCredentials;
         _logger = logger;
     }
 
@@ -113,7 +116,6 @@ public sealed partial class OptionsSettingsService
         ZeroCrossingSmoothingFrequencyHz: new SstvDecoderSettings().ZeroCrossingSmoothingFrequencyHz ?? 2200,
         QrzLookupEnabled: new QrzLookupSettings().Enabled ?? false,
         QrzLookupUsername: new QrzLookupSettings().Username,
-        QrzLookupPassword: new QrzLookupSettings().Password,
         CaptureChannelSource: new AudioDeviceSettings().CaptureChannelSource,
         StereoTxEnabled: new AudioDeviceSettings().StereoTxEnabled,
         CwIdMode: new StationIdSettings().CwIdMode,
@@ -206,7 +208,6 @@ public sealed partial class OptionsSettingsService
             ZeroCrossingSmoothingFrequencyHz: decoder.ZeroCrossingSmoothingFrequencyHz ?? 2200,
             QrzLookupEnabled: qrzLookup.Enabled ?? false,
             QrzLookupUsername: qrzLookup.Username,
-            QrzLookupPassword: qrzLookup.Password,
             CaptureChannelSource: audio.CaptureChannelSource,
             StereoTxEnabled: audio.StereoTxEnabled,
             CwIdMode: stationId.CwIdMode,
@@ -381,7 +382,7 @@ public sealed partial class OptionsSettingsService
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings)
             .WithSection(
                 QrzLookupSettings.SectionKey,
-                previousQrzLookup with { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername, Password = snapshot.QrzLookupPassword },
+                previousQrzLookup with { Enabled = snapshot.QrzLookupEnabled, Username = snapshot.QrzLookupUsername },
                 QrzLookupSettingsJsonContext.Default.QrzLookupSettings)
             .WithSection(
                 StationIdSettings.SectionKey,
@@ -424,9 +425,31 @@ public sealed partial class OptionsSettingsService
         Log.Saved(_logger, snapshot.RadioBackendId, sampleRateToPersist, snapshot.CultureCode);
     }
 
+    /// <summary>The QRZ password as Options should show it. The dialog load passes
+    /// <paramref name="allowPrompt"/> = false; only the "Unlock keyring" button passes true.</summary>
+    public async Task<QrzPasswordLoad> LoadQrzPasswordAsync(bool allowPrompt, CancellationToken ct = default)
+    {
+        var read = await _qrzCredentials.ReadAsync(allowPrompt, ct).ConfigureAwait(false);
+        var isSecure = await _qrzCredentials.IsSecureAsync(ct).ConfigureAwait(false);
+        return new QrzPasswordLoad(read.Status, read.Status == CredentialReadStatus.Found ? read.Secret : null, isSecure);
+    }
+
+    /// <summary>Called by Options Save only when the password field changed from what
+    /// <see cref="LoadQrzPasswordAsync"/> returned; <paramref name="loadedPassword"/> is that loaded value.</summary>
+    public Task<CredentialWrite> SaveQrzPasswordAsync(string? newPassword, string? loadedPassword, CancellationToken ct = default) =>
+        _qrzCredentials.WriteAsync(newPassword, loadedPassword, ct);
+
     private static partial class Log
     {
         [LoggerMessage(Level = LogLevel.Debug, Message = "Options saved: radioBackend={RadioBackendId}, sampleRate={SampleRate}, culture={CultureCode}")]
         public static partial void Saved(ILogger logger, string radioBackendId, int sampleRate, string? cultureCode);
     }
+}
+
+/// <summary>Result of <see cref="OptionsSettingsService.LoadQrzPasswordAsync"/>. <see cref="Password"/> is
+/// non-null only for <see cref="CredentialReadStatus.Found"/>; <see cref="IsSecure"/> says whether this
+/// session stores it in a system keyring.</summary>
+public sealed record QrzPasswordLoad(CredentialReadStatus Status, string? Password, bool IsSecure)
+{
+    public override string ToString() => $"QrzPasswordLoad {{ Status = {Status}, IsSecure = {IsSecure} }}";
 }
