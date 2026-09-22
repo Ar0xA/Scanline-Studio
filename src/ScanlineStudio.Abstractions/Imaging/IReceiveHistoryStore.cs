@@ -112,9 +112,10 @@ public sealed record ReceiveHistoryEntry(
     /// As a property outside the primary constructor, this does NOT participate in this record's
     /// generated positional deconstruction, but DOES still join its generated value equality -- a
     /// disk-loaded copy (<c>ReceptionId == 0</c>) never equals the originally-recorded instance
-    /// (<c>ReceptionId == n</c>) for the same row. Harmless today: every real consumer
-    /// (<c>RxHistoryPaneViewModel.UpdateEntryInPlace</c> and siblings) matches by <see cref="Id"/>,
-    /// never by record equality -- do not start relying on record equality for this type.</summary>
+    /// (<c>ReceptionId == n</c>) for the same row. One consumer relies on record equality:
+    /// <c>RxHistoryPaneViewModel.RefreshAsync</c> keeps a row's view-model instance only when the freshly
+    /// queried entry equals the previous one; both come from the DB (<c>ReceptionId == 0</c>), and a false
+    /// mismatch only costs a new instance. Every other consumer matches by <see cref="Id"/>.</summary>
     public long ReceptionId { get; init; }
 }
 

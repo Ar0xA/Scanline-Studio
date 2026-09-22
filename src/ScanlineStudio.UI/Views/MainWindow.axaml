@@ -1281,6 +1281,7 @@
                                  gap between the filter row and the thumbnail grid, on top of the
                                  filter row's own 4px bottom margin above. -->
                             <ScrollViewer Margin="0,3,0,0">
+                              <StackPanel>
                                 <!-- UniformGrid Columns=6 (mock2's own grid-template-columns:repeat(6,1fr)),
                                      not WrapPanel/fixed-Width thumbs — same fix class as the Receive
                                      tab's Previous-frames card. ListBox retained (not a bare
@@ -1355,6 +1356,13 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <!-- The grid renders only the newest DisplayPageSize matches; this pages in older ones. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,7,0"
+                                        HorizontalAlignment="Center"
+                                        Content="{loc:Translate Panes.RxHistory.ShowOlder}"
+                                        Command="{Binding ShowOlderCommand}"
+                                        IsVisible="{Binding CanShowOlder}" />
+                              </StackPanel>
                             </ScrollViewer>
                         </DockPanel>
                     </HeaderedContentControl>

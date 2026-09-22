@@ -123,18 +123,22 @@ confirm. Found by `yoniq-auditor` 2026-09-22, not reproduced in a test yet.
 loaded, unedited template reads "edited" after a mode switch. Seed from `IsDirtySinceLastCheckpoint`
 instead, keeping `HasUnsavedEdits` for its own consumers. Found by `yoniq-auditor` 2026-09-22.
 
-### UX-THUMB1. OPEN — Gallery memory growth
+### PREVFRAMES-THUMB. OPEN — Receive-tab previous-frames thumbnails are never disposed
 
-`RxHistoryPaneViewModel.RefreshAsync` re-runs the whole query and re-thumbnails every entry on every
-completed reception. On the "ALL" filter with a long history that is ~180 KB of undisposed unmanaged
-bitmap per entry (240px cap, `Bgra8888`), churned per received frame — ~180 MB at 1000 entries.
-- **a.** Dispose the previous thumbnail set on refresh. `Entries.Clear()` (`RxHistoryPaneViewModel.cs:926`)
-  just drops references; the T0-11 fix (`:195-214`) disposes only `PreviewImage`.
-- **b.** Add a row cap / pagination. `ReceiveHistoryFilter` is `(ModeId, From, To)`
-  (`IReceiveHistoryStore.cs:121`) and `SqliteReceiveHistoryStore.QueryAsync` (`:49`) emits no `LIMIT`.
-  Also fixes M1's "clearing Show today only loads the entire history".
-- **c.** Virtualize the Gallery grid — a plain `UniformGrid Columns="6"` in a `ScrollViewer` today
-  (`MainWindow.axaml:1301`).
+`RxImagePaneViewModel.PreviousFrames` (`:2206-2227`) creates its own thumbnail bitmaps and drops the trimmed
+ones without disposing them. Same leak class as the fixed Gallery thumbnails, separate owner. Found by
+`yoniq-auditor` 2026-09-22.
+
+### GALLERY-VIRT. DECISION, then OPEN — virtualize the Gallery grid
+
+Measured 2026-09-22 (UX-THUMB1 probe, `GalleryDisplayCapMeasurementProbe.cs`, gated
+`SCANLINE_RUN_GALLERY_PROBE=1`): laying out the displayed set costs ~140-360 ms at 300 tiles and ~750 ms at
+1 500, one container per tile. Avalonia 11.3 has no virtualizing wrap panel; rows-of-6 in a
+`VirtualizingStackPanel` breaks item-level `ListBox` behaviour (TwoWay `SelectedItem`, selected styling,
+keyboard navigation, right-click select). Candidate design (needs a UI plan-review first): an outer list of
+rows with a virtualizing panel, each row its own 6-column `ListBox` with `SelectedItem` bound OneWay to
+`SelectedEntry` and written back from `SelectionChanged`; arrow keys move within a row only; "Show older"
+moves outside the list. Also remove the outer `ScrollViewer` (`MainWindow.axaml` ~:1283-1358) first.
 
 ### POLL. OPEN — `PollingStrategy.OnDemand` is a no-op
 
@@ -166,15 +170,16 @@ v1.0. `spec/12-settings.md`.
 `spec/12-settings.md`. Only partial mitigation today: `ConfigurationPresetStore.cs:347-359` strips it from
 exported presets.
 
+### QRZ-APIKEY. OPEN — QRZ upload API key stored in plaintext, no Options control
+
+`QrzUploadSettings.ApiKey` lives in plain `settings.json` and can only be set by hand-editing it
+(`assets/help/index.html:546`). Split out of QRZ-PW 2026-09-22: moving it to the OS keyring without an
+Options field would make it invisible and unmanageable. Needs an Options field first, then the same
+`ICredentialStore` path as the lookup password.
+
 ---
 
 ## 4. Measure before building
-
-### M1-a. OPEN — Gallery filter latency
-
-Measure `RxHistoryPaneViewModel.UpdateFilteredEntries()` (`:564`) at N = 1 000, 5 000 and 20 000 entries.
-Above about 50 ms per keystroke, add a 150 to 250 ms debounce. `OnSearchTextChanged` (`:558`) calls it
-directly today. The row cap is UX-THUMB1-b.
 
 ### M2. DECISION — Hamlib header anchoring
 

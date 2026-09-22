@@ -19,7 +19,7 @@ public sealed class ImageViewerWindowViewModelTests
         new(id, DateTimeOffset.UtcNow, "sc1", filePath, null, ReceiveDecodeState.Completed);
 
     private static RxHistoryEntryViewModel EntryVm(string id, string filePath = "/tmp/frame.png") =>
-        new(Entry(id, filePath), Thumbnail: null);
+        new(Entry(id, filePath), thumbnail: null);
 
     private static ImageViewerWindowViewModel Create(
         IReadOnlyList<RxHistoryEntryViewModel> entries,

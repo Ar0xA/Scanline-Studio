@@ -40,12 +40,21 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // already above every real SSTV mode's own width/height (max 640x496, SstvModeRegistry), so it's
     // loaded at native resolution and only ever mildly downscaled, never stretched up. Raised to 240
     // -- large enough that the grid's own typical cell size stops being a meaningful upscale for most
-    // modes (320x256 is the common case), without going all the way to 512/native: LoadThumbnailAsync
-    // runs for EVERY history entry eagerly on each RefreshAsync (no virtualization), so this constant
-    // directly scales with a long-running operator's memory footprint -- not raised to match
-    // PreviewMaxDimension outright.
+    // modes (320x256 is the common case), without going all the way to 512/native: every displayed
+    // and cached thumbnail is a bitmap of this size (up to DisplayPageSize-per-page +
+    // ThumbnailCacheSlack held at once), so this constant directly scales the Gallery's memory
+    // footprint -- not raised to match PreviewMaxDimension outright.
     private const int ThumbnailMaxDimension = 240;
     private const int PreviewMaxDimension = 512;
+
+    /// <summary>The Gallery grid renders only the newest this-many matches (plus more per
+    /// <see cref="ShowOlderCommand"/> click) -- search/filters still run over every row in
+    /// <see cref="Entries"/>; only the rendered/thumbnailed set is capped.</summary>
+    private const int DisplayPageSize = 300;
+
+    /// <summary>How many thumbnails beyond the displayed limit the cache may keep, so paging a
+    /// search back and forth doesn't re-decode what was just on screen.</summary>
+    private const int ThumbnailCacheSlack = 100;
 
     /// <summary>Same debounce window/rationale as <c>RadioStatusViewModel.TxVolumePercentChanged</c>'s
     /// own persist debounce -- avoids one settings write per keystroke, and avoids overlapping
@@ -89,12 +98,10 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// folder every time) -- see that method's own doc comment for the full reasoning.</summary>
     private bool _hasReconciledDiskThisSession;
 
-    // Auditor-caught UX issue (batch 7): every RefreshAsync call builds brand-new
-    // RxHistoryEntryViewModel instances, so even after re-selecting the SAME logical entry by
-    // Entry.Id, OnSelectedEntryChanged still sees a different object reference and (without this
-    // field) would null PreviewImage and re-decode the same file from disk -- a visible flicker on
-    // every incoming frame while a user is just looking at an old one. Tracks which entry's preview
-    // is ACTUALLY currently loaded, independent of RxHistoryEntryViewModel's own object identity.
+    // A refresh or UpdateEntryInPlace replaces the instance of any CHANGED row, so re-selecting the
+    // same logical entry by Entry.Id can still hand OnSelectedEntryChanged a different object; without
+    // this field it would null PreviewImage and re-decode the same file (a visible flicker). Tracks
+    // which entry's preview is actually loaded, independent of RxHistoryEntryViewModel object identity.
     private string? _previewedEntryId;
 
     /// <summary>Tracks which entry's <see cref="SelectedEntryNote"/>/<see cref="SelectedEntryIsFlagged"/>
@@ -116,6 +123,35 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // OnSelectedEntryChanged a no-op for the exact case it exists to fix. Set around the
     // Clear()/repopulate/re-select block only.
     private bool _isRepopulating;
+
+    /// <summary>Set only around <see cref="RefreshAsync"/>'s bulk Clear/Add block, so the
+    /// <see cref="Entries"/>.CollectionChanged handler doesn't rebuild <see cref="FilteredEntries"/>
+    /// once per added row (O(N²)); RefreshAsync rebuilds it once afterward. Deliberately separate
+    /// from <see cref="_isRepopulating"/>: <see cref="UpdateEntryInPlace"/> sets that one and must
+    /// still rebuild (an un-flagged entry has to leave a Flagged-filtered grid).</summary>
+    private bool _deferFilteredRebuild;
+
+    /// <summary>How many filter matches <see cref="FilteredEntries"/> publishes; grows by
+    /// <see cref="DisplayPageSize"/> per <see cref="ShowOlderCommand"/>, resets when
+    /// <see cref="ShowTodayOnly"/> changes.</summary>
+    private int _displayLimit = DisplayPageSize;
+
+    /// <summary>Bumped on every <see cref="FilteredEntries"/> publish; an older
+    /// <see cref="EnsureDisplayedThumbnailsAsync"/> loop stops starting new loads once it's stale.</summary>
+    private int _displayGeneration;
+
+    /// <summary>Monotonic "last displayed" clock for the thumbnail cache's LRU eviction.</summary>
+    private long _displayStamp;
+
+    /// <summary>Set by every <see cref="Entries"/> change; tells eviction it must re-check which
+    /// cached keys no longer have an entry at all.</summary>
+    private bool _entriesChangedSinceEviction;
+
+    // UI-thread only, hence no lock: every reader/writer runs on the UI thread (RefreshAsync and
+    // EnsureDisplayedThumbnailsAsync resume there -- no ConfigureAwait(false) -- and OnRecorded /
+    // UpdateEntryInPlace callers post through the dispatcher first). Owns every Gallery thumbnail
+    // bitmap: an entry's Thumbnail is always either null or this cache's instance for its key.
+    private readonly Dictionary<ThumbnailKey, ThumbnailCacheSlot> _thumbnailCache = [];
 
     // Auditor round-2 nit (batch 7): LoadPreviewAsync has no ordering guard against overlapping
     // calls (rapid selection changes) -- bumped at the start of every LoadPreviewAsync call, checked
@@ -199,12 +235,9 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     // would predate the binding seeing the new value; Background priority also gives Avalonia's
     // compositor a chance to finish any render pass still referencing the old bitmap. Guarded on
     // WriteableBitmap specifically -- only the bitmaps this codebase itself constructs via
-    // ImageSourceBitmapConverter are safe to assume disposable here. Deliberately does NOT apply
-    // to thumbnails (RxHistoryEntryViewModel.Thumbnail) -- those are shared with
-    // ImageViewerWindowViewModel while a viewer window is open, and UpdateEntryInPlace
-    // deliberately carries an old thumbnail forward into a replacement record; see this class's
-    // own doc comment / production_audit.md's T0-11 entry for why thumbnail disposal is a
-    // separate, deliberately-deferred fix.
+    // ImageSourceBitmapConverter are safe to assume disposable here. Does NOT apply to thumbnails
+    // (RxHistoryEntryViewModel.Thumbnail) -- those are owned and disposed by _thumbnailCache's
+    // eviction, since UpdateEntryInPlace and every refresh carry one bitmap across instances.
     partial void OnPreviewImageChanged(Bitmap? oldValue, Bitmap? newValue)
     {
         if (oldValue is WriteableBitmap old)
@@ -499,7 +532,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         {
             UpdateEntryCountText();
             SelectLatestCommand.NotifyCanExecuteChanged();
-            UpdateFilteredEntries();
+            _entriesChangedSinceEviction = true;
+            if (!_deferFilteredRebuild)
+            {
+                UpdateFilteredEntries();
+            }
+
             // ShowNoHistoryMessage depends on Entries.Count too (see its own doc comment) -- same
             // "no automatic re-notify for a computed property, raise it explicitly" discipline every
             // other Entries-derived member in this block already follows.
@@ -549,13 +587,49 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// <summary>The Gallery grid's actual `ItemsSource` -- <see cref="Entries"/> narrowed by
     /// <see cref="SearchText"/>/<see cref="FilterUnloggedOnly"/>/<see cref="FilterFlaggedOnly"/>,
     /// recomputed client-side (see <see cref="UpdateFilteredEntries"/>) rather than as a new
-    /// <see cref="IReceiveHistoryStore.QueryAsync"/> parameter. Deliberately a SEPARATE collection
-    /// from <see cref="Entries"/>, not a replacement for it: the Receive tab's Previous-frames strip
-    /// binds directly to <see cref="Entries"/> and must keep showing every recent frame regardless of
-    /// whatever the Gallery tab's own filter row currently has active.</summary>
+    /// <see cref="IReceiveHistoryStore.QueryAsync"/> parameter, then capped to the newest
+    /// <c>_displayLimit</c> matches. A SEPARATE collection from <see cref="Entries"/>: search, filters
+    /// and the entry count cover every row in <see cref="Entries"/>; only the grid is capped.</summary>
     public ObservableCollection<RxHistoryEntryViewModel> FilteredEntries { get; } = [];
 
-    partial void OnSearchTextChanged(string? value) => UpdateFilteredEntries();
+    /// <summary>Measured (GalleryDisplayCapMeasurementProbe): one Gallery publish plus its layout
+    /// costs well over 50 ms, so typing re-publishes once per pause, not once per keystroke. Search only -- the
+    /// filter chips and refreshes still publish immediately.</summary>
+    private static readonly TimeSpan SearchDebounce = TimeSpan.FromMilliseconds(200);
+
+    private CancellationTokenSource? _searchDebounce;
+
+    /// <summary>True while a search keystroke is waiting out <see cref="SearchDebounce"/>. Public only so
+    /// tests can wait for the publish deterministically (this project has no InternalsVisibleTo); no UI binds it.</summary>
+    public bool IsSearchPublishPending => _searchDebounce is not null;
+
+    partial void OnSearchTextChanged(string? value) => _ = ApplySearchDebouncedAsync();
+
+    // Resumes on the UI thread (no ConfigureAwait(false)); only the newest keystroke's CTS publishes.
+    private async Task ApplySearchDebouncedAsync()
+    {
+        _searchDebounce?.Cancel();
+        _searchDebounce?.Dispose();
+        var debounce = new CancellationTokenSource();
+        _searchDebounce = debounce;
+        try
+        {
+            await Task.Delay(SearchDebounce, debounce.Token);
+        }
+        catch (TaskCanceledException)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(_searchDebounce, debounce))
+        {
+            return;
+        }
+
+        _searchDebounce = null;
+        debounce.Dispose();
+        UpdateFilteredEntries();
+    }
 
     partial void OnFilterUnloggedOnlyChanged(bool value) => UpdateFilteredEntries();
 
@@ -583,13 +657,257 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
                 e.Entry.ModeId.Contains(needle, StringComparison.OrdinalIgnoreCase));
         }
 
-        var filtered = query.ToList();
-
-        FilteredEntries.Clear();
-        foreach (var item in filtered)
+        // Stops one past the limit: enough to know older matches exist without materializing them all.
+        var displayed = new List<RxHistoryEntryViewModel>(Math.Min(_displayLimit, Entries.Count));
+        var hasMore = false;
+        foreach (var item in query)
         {
-            FilteredEntries.Add(item);
+            if (displayed.Count == _displayLimit)
+            {
+                hasMore = true;
+                break;
+            }
+
+            displayed.Add(item);
         }
+
+        SyncFilteredEntries(displayed);
+
+        CanShowOlder = hasMore;
+        OnDisplayPublished();
+    }
+
+    /// <summary>True when more filter matches exist than <see cref="FilteredEntries"/> currently
+    /// shows -- drives the Gallery's "Show older" button.</summary>
+    [ObservableProperty]
+    private bool _canShowOlder;
+
+    /// <summary>Gallery "Show older" button: publishes the next <see cref="DisplayPageSize"/> older
+    /// matches under the ones already shown.</summary>
+    [RelayCommand]
+    private void ShowOlder()
+    {
+        _displayLimit += DisplayPageSize;
+        Log.ShowOlderInvoked(_logger, _displayLimit);
+        UpdateFilteredEntries();
+    }
+
+    /// <summary>Brings <see cref="FilteredEntries"/> to <paramref name="desired"/> with the fewest
+    /// changes (by instance): remove what left, move what reordered, insert what's new. A Clear/Add
+    /// rebuild would make the Gallery ListBox recreate every container (measured ~150 ms at 300
+    /// shown), and would drop its selection even when the selected item stays listed.</summary>
+    private void SyncFilteredEntries(List<RxHistoryEntryViewModel> desired)
+    {
+        var keep = new HashSet<RxHistoryEntryViewModel>(desired, ReferenceEqualityComparer.Instance);
+        for (var i = FilteredEntries.Count - 1; i >= 0; i--)
+        {
+            if (!keep.Contains(FilteredEntries[i]))
+            {
+                FilteredEntries.RemoveAt(i);
+            }
+        }
+
+        var present = new HashSet<RxHistoryEntryViewModel>(FilteredEntries, ReferenceEqualityComparer.Instance);
+        for (var i = 0; i < desired.Count; i++)
+        {
+            var item = desired[i];
+            if (i < FilteredEntries.Count && ReferenceEquals(FilteredEntries[i], item))
+            {
+                continue;
+            }
+
+            if (present.Contains(item))
+            {
+                FilteredEntries.Move(FilteredEntries.IndexOf(item), i);
+            }
+            else
+            {
+                FilteredEntries.Insert(i, item);
+            }
+        }
+    }
+
+    private static ThumbnailKey KeyOf(ReceiveHistoryEntry entry) => new(entry.Id, entry.FilePath);
+
+    /// <summary>Runs after every <see cref="FilteredEntries"/> publish: stamps the displayed keys as
+    /// recently used, fills displayed items from the cache, evicts, then lazy-loads what's still
+    /// missing for the displayed set only.</summary>
+    private void OnDisplayPublished()
+    {
+        var generation = ++_displayGeneration;
+        var stamp = ++_displayStamp;
+        var displayedKeys = new HashSet<ThumbnailKey>(FilteredEntries.Count);
+        foreach (var item in FilteredEntries)
+        {
+            var key = KeyOf(item.Entry);
+            displayedKeys.Add(key);
+            if (_thumbnailCache.TryGetValue(key, out var slot))
+            {
+                slot.LastDisplayed = stamp;
+                item.Thumbnail = slot.Bitmap;
+            }
+        }
+
+        EvictThumbnails(displayedKeys);
+        _ = EnsureDisplayedThumbnailsAsync(generation);
+    }
+
+    /// <summary>Drops cached thumbnails whose entry left <see cref="Entries"/>, then (if still over
+    /// <c>_displayLimit + ThumbnailCacheSlack</c>) the least-recently-displayed ones NOT currently in
+    /// <see cref="FilteredEntries"/>. Every item holding an evicted bitmap is nulled first, and the
+    /// dispose itself is deferred to Background priority -- same reasoning as
+    /// <see cref="OnPreviewImageChanged"/>: the binding must see null, and any in-flight render pass
+    /// finish, before the pixels go away.</summary>
+    private void EvictThumbnails(HashSet<ThumbnailKey> displayedKeys)
+    {
+        var evicted = new HashSet<ThumbnailKey>();
+        if (_entriesChangedSinceEviction)
+        {
+            _entriesChangedSinceEviction = false;
+            var liveKeys = new HashSet<ThumbnailKey>(Entries.Count);
+            foreach (var item in Entries)
+            {
+                liveKeys.Add(KeyOf(item.Entry));
+            }
+
+            foreach (var key in _thumbnailCache.Keys)
+            {
+                if (!liveKeys.Contains(key))
+                {
+                    evicted.Add(key);
+                }
+            }
+        }
+
+        var excess = _thumbnailCache.Count - evicted.Count - (_displayLimit + ThumbnailCacheSlack);
+        if (excess > 0)
+        {
+            var leastRecent = _thumbnailCache
+                .Where(kv => !displayedKeys.Contains(kv.Key) && !evicted.Contains(kv.Key))
+                .OrderBy(kv => kv.Value.LastDisplayed)
+                .Take(excess)
+                .Select(kv => kv.Key)
+                .ToList();
+            evicted.UnionWith(leastRecent);
+        }
+
+        if (evicted.Count == 0)
+        {
+            return;
+        }
+
+        foreach (var item in Entries)
+        {
+            if (item.Thumbnail is not null && evicted.Contains(KeyOf(item.Entry)))
+            {
+                item.Thumbnail = null;
+            }
+        }
+
+        foreach (var key in evicted)
+        {
+            var bitmap = _thumbnailCache[key].Bitmap;
+            _thumbnailCache.Remove(key);
+            Dispatcher.UIThread.Post(bitmap.Dispose, DispatcherPriority.Background);
+        }
+
+        Log.ThumbnailsEvicted(_logger, evicted.Count, _thumbnailCache.Count);
+    }
+
+    /// <summary>Loads missing thumbnails for the displayed set only, one at a time, resuming on the
+    /// UI thread. A newer publish stops this loop before its next load; a load already in flight
+    /// still lands (by key, see <see cref="StoreLoadedThumbnail"/>).</summary>
+    private async Task EnsureDisplayedThumbnailsAsync(int generation)
+    {
+        var targets = FilteredEntries.Where(e => e.Thumbnail is null).ToList();
+        foreach (var item in targets)
+        {
+            if (generation != _displayGeneration)
+            {
+                return;
+            }
+
+            var key = KeyOf(item.Entry);
+            if (_thumbnailCache.TryGetValue(key, out var cached))
+            {
+                if (FindEntryByKey(key) is { } current)
+                {
+                    current.Thumbnail = cached.Bitmap;
+                }
+
+                continue;
+            }
+
+            Bitmap? loaded = null;
+            try
+            {
+                var image = await _historyStore.LoadThumbnailAsync(item.Entry, ThumbnailMaxDimension);
+                loaded = ImageSourceBitmapConverter.ToBitmap(image);
+            }
+            catch (Exception ex)
+            {
+                // One bad file must not stop the rest; failures aren't cached, so the next publish retries.
+                Log.LoadThumbnailFailed(_logger, ex);
+            }
+
+            if (loaded is not null)
+            {
+                StoreLoadedThumbnail(key, loaded);
+            }
+        }
+    }
+
+    /// <summary>Inserts a freshly-loaded bitmap into the cache -- or, if another load for the same key
+    /// won the race, disposes ours and adopts the cached one -- then assigns it to whichever CURRENT
+    /// <see cref="Entries"/> item has that key (never a captured instance: a refresh or
+    /// <see cref="UpdateEntryInPlace"/> may have replaced it while the load was in flight). A load
+    /// whose entry has left <see cref="Entries"/> entirely is disposed rather than cached.</summary>
+    private void StoreLoadedThumbnail(ThumbnailKey key, Bitmap loaded)
+    {
+        var target = FindEntryByKey(key);
+        Bitmap bitmap;
+        if (_thumbnailCache.TryGetValue(key, out var existing))
+        {
+            loaded.Dispose();
+            bitmap = existing.Bitmap;
+        }
+        else if (target is null)
+        {
+            loaded.Dispose();
+            return;
+        }
+        else
+        {
+            _thumbnailCache[key] = new ThumbnailCacheSlot(loaded) { LastDisplayed = _displayStamp };
+            bitmap = loaded;
+        }
+
+        if (target is not null)
+        {
+            target.Thumbnail = bitmap;
+        }
+    }
+
+    private RxHistoryEntryViewModel? FindEntryByKey(ThumbnailKey key)
+    {
+        foreach (var item in Entries)
+        {
+            if (item.Entry.Id == key.Id && item.Entry.FilePath == key.FilePath)
+            {
+                return item;
+            }
+        }
+
+        return null;
+    }
+
+    private readonly record struct ThumbnailKey(string Id, string FilePath);
+
+    private sealed class ThumbnailCacheSlot(Bitmap bitmap)
+    {
+        public Bitmap Bitmap { get; } = bitmap;
+
+        public long LastDisplayed { get; set; }
     }
 
     public string FramesTodayDisplay => _localization.GetString("MainWindow.StatusBar.FramesTodayValueFormat", FramesTodayCount);
@@ -637,13 +955,18 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
     }
 
-    partial void OnShowTodayOnlyChanged(bool value) => _ = RefreshAsync();
+    partial void OnShowTodayOnlyChanged(bool value)
+    {
+        _displayLimit = DisplayPageSize;
+        _ = RefreshAsync();
+    }
 
     /// <summary>Marshals to the UI thread itself -- <see cref="IReceiveHistoryStore.Recorded"/>'s own
     /// doc comment documents that it can fire from a decode-thread <c>Task.Run</c>, not the UI
     /// thread, same "subscriber's own responsibility" contract already established for
-    /// <c>RxImagePaneViewModel.OnSaved</c>. Re-runs the SAME full query+re-thumbnail pass a manual
-    /// Refresh click does (no lighter "just prepend one entry" path) -- simplest correct option, and
+    /// <c>RxImagePaneViewModel.OnSaved</c>. Re-runs the SAME full query pass a manual Refresh click
+    /// does (no lighter "just prepend one entry" path; cached thumbnails are reused, so only the new
+    /// entry's thumbnail is decoded) -- simplest correct option, and
     /// this event fires at most once per completed/abandoned image (not once per line), so the cost
     /// class matches an ordinary user-triggered refresh, not a hot per-sample path that would need
     /// coalescing the way <see cref="IReceivedImageBuffer.Updated"/> does.</summary>
@@ -837,8 +1160,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         // Captured BEFORE the query -- batch 7 made this method run far more often than before
         // (every IReceiveHistoryStore.Recorded event during an active session, not just a manual
-        // click/filter change), and every refresh below builds brand-new RxHistoryEntryViewModel
-        // instances (a record, no identity beyond reference equality) -- without re-selecting by ID
+        // click/filter change), and a refresh replaces the instance of any row whose entry changed
+        // (no identity beyond reference) -- without re-selecting by ID
         // after repopulating, a user actively browsing history would have their selection (and the
         // preview it drives) silently wiped every time a new frame lands, a real UX regression this
         // batch would otherwise introduce.
@@ -878,25 +1201,6 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return;
         }
 
-        var thumbnails = new List<RxHistoryEntryViewModel>(entries.Count);
-        foreach (var entry in entries)
-        {
-            Bitmap? thumbnail = null;
-            try
-            {
-                var image = await _historyStore.LoadThumbnailAsync(entry, ThumbnailMaxDimension);
-                thumbnail = ImageSourceBitmapConverter.ToBitmap(image);
-            }
-            catch (Exception ex)
-            {
-                // A missing/corrupt file for one entry must not blank the whole list -- that entry
-                // just renders without a thumbnail.
-                Log.LoadThumbnailFailed(_logger, ex);
-            }
-
-            thumbnails.Add(new RxHistoryEntryViewModel(entry, thumbnail));
-        }
-
         if (generation != _refreshGeneration)
         {
             // A newer RefreshAsync call has already started (and will apply ITS OWN results) since
@@ -917,20 +1221,54 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // that's still true, just checked after staleness instead of before.
         ErrorMessage = null;
 
+        // An unchanged row keeps its instance (and so its Gallery container and bitmap); a changed row
+        // gets a new instance, the same replace-on-change model UpdateEntryInPlace uses.
+        var existingById = new Dictionary<string, RxHistoryEntryViewModel>(Entries.Count);
+        foreach (var existing in Entries)
+        {
+            existingById.TryAdd(existing.Entry.Id, existing);
+        }
+
+        // No decode here: cached bitmaps only; missing ones load lazily after the publish below.
+        var items = new List<RxHistoryEntryViewModel>(entries.Count);
+        foreach (var entry in entries)
+        {
+            if (existingById.TryGetValue(entry.Id, out var existing) && existing.Entry == entry)
+            {
+                items.Add(existing);
+                continue;
+            }
+
+            var thumbnail = _thumbnailCache.TryGetValue(KeyOf(entry), out var slot) ? slot.Bitmap : null;
+            items.Add(new RxHistoryEntryViewModel(entry, thumbnail));
+        }
+
         // Guards the transient SelectedEntry = null that Entries.Clear() below pushes back through
         // the Gallery ListBox's TwoWay SelectedItem binding, before the re-select a few lines down
-        // runs -- see _isRepopulating's own doc comment.
+        // runs -- see _isRepopulating's own doc comment. Save/restore, not set/clear, so a nested
+        // caller's own guard survives.
+        var wasRepopulating = _isRepopulating;
         _isRepopulating = true;
         try
         {
-            Entries.Clear();
-            foreach (var item in thumbnails)
+            _deferFilteredRebuild = true;
+            try
             {
-                Entries.Add(item);
+                Entries.Clear();
+                foreach (var item in items)
+                {
+                    Entries.Add(item);
+                }
+            }
+            finally
+            {
+                _deferFilteredRebuild = false;
             }
 
-            // Re-select by Entry.Id, not by object reference (every item above is a freshly-constructed
-            // record) -- if the previously-selected frame no longer matches the current filter (e.g. it
+            UpdateFilteredEntries();
+
+            // Re-select by Entry.Id, not by object reference (a changed row is a fresh instance) -- if
+            // the previously-selected frame no longer matches the current filter (e.g. it
             // aged out of ShowTodayOnly's own window), SelectedEntry simply stays null, matching what
             // already happens on a manual Refresh/filter-change today; this isn't a regression, only a
             // preservation of the CASE that already worked.
@@ -941,7 +1279,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
         finally
         {
-            _isRepopulating = false;
+            _isRepopulating = wasRepopulating;
         }
 
         // The previously-selected entry genuinely didn't survive this refresh (filtered out/trimmed)
@@ -1794,6 +2132,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         // silently lost with nothing here to restore it.
         var previousSelection = SelectedEntry;
 
+        var wasRepopulating = _isRepopulating;
         _isRepopulating = true;
         try
         {
@@ -1801,7 +2140,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         }
         finally
         {
-            _isRepopulating = false;
+            _isRepopulating = wasRepopulating;
         }
 
         if (wasSelected)
@@ -1851,6 +2190,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Loading a history thumbnail failed")]
         public static partial void LoadThumbnailFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ShowOlder invoked: displayLimit={DisplayLimit}")]
+        public static partial void ShowOlderInvoked(ILogger logger, int displayLimit);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Evicted {Count} Gallery thumbnails; {Remaining} still cached")]
+        public static partial void ThumbnailsEvicted(ILogger logger, int count, int remaining);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Refresh completed: {Count} entries")]
         public static partial void RefreshCompleted(ILogger logger, int count);
@@ -1911,4 +2256,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     }
 }
 
-public sealed record RxHistoryEntryViewModel(ReceiveHistoryEntry Entry, Bitmap? Thumbnail);
+/// <summary>One Gallery row. Observable (not a record) so a lazily-loaded or evicted thumbnail can
+/// reach an already-bound grid cell; the bitmap itself is owned by
+/// <see cref="RxHistoryPaneViewModel"/>'s thumbnail cache, never disposed through this type.</summary>
+public sealed partial class RxHistoryEntryViewModel(ReceiveHistoryEntry entry, Bitmap? thumbnail) : ObservableObject
+{
+    public ReceiveHistoryEntry Entry { get; } = entry;
+
+    [ObservableProperty]
+    private Bitmap? _thumbnail = thumbnail;
+}

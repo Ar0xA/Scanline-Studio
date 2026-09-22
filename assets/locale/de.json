@@ -193,6 +193,7 @@
   "Panes.RxHistory.EntryCountFormat": "{0:N0} BILDER",
   "Panes.RxHistory.NoHistoryYet": "Noch keine empfangenen Bilder",
   "Panes.RxHistory.Loading": "Wird geladen…",
+  "Panes.RxHistory.ShowOlder": "Ältere anzeigen",
   "Panes.RxHistory.PreviousFramesHeader": "VORHERIGE BILDER",
   "Panes.RxDecodeLog.TraceHeader": "DECODER-TRACE",
   "Panes.RxDecodeLog.TraceCapture": "Erfassen",
