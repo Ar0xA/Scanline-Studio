@@ -436,7 +436,7 @@ public sealed partial class OptionsSettingsService
 
     /// <summary>Called by Options Save only when the password field changed from what
     /// <see cref="LoadQrzPasswordAsync"/> returned; <paramref name="loadedPassword"/> is that loaded value.</summary>
-    public Task<CredentialWrite> SaveQrzPasswordAsync(string? newPassword, string? loadedPassword, CancellationToken ct = default) =>
+    public Task<QrzPasswordWriteOutcome> SaveQrzPasswordAsync(string? newPassword, string? loadedPassword, CancellationToken ct = default) =>
         _qrzCredentials.WriteAsync(newPassword, loadedPassword, ct);
 
     private static partial class Log

@@ -81,12 +81,12 @@ public sealed class QrzCredentialServiceTests
         var settings = new FakeSettingsStore();
         var service = Create(settings, new SettingsFileCredentialStore());
 
-        Assert.True((await service.WriteAsync("pass", null)).IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await service.WriteAsync("pass", null));
         Assert.Equal("pass", Section(settings).Password);
         Assert.Equal("pass", (await service.ReadAsync(allowPrompt: false)).Secret);
         Assert.True(await service.IsPresentAsync());
 
-        Assert.True((await service.WriteAsync(null, "pass")).IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await service.WriteAsync(null, "pass"));
         Assert.Null(Section(settings).Password);
         Assert.Equal(CredentialReadStatus.Absent, (await service.ReadAsync(allowPrompt: false)).Status);
     }
@@ -99,7 +99,7 @@ public sealed class QrzCredentialServiceTests
 
         var result = await Create(settings, store).WriteAsync("secret", null);
 
-        Assert.True(result.IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, result);
         Assert.Equal("secret", store.Items[Key]);
         Assert.Null(Section(settings).Password);
         Assert.True(Section(settings).PasswordInCredentialStore);
@@ -116,7 +116,7 @@ public sealed class QrzCredentialServiceTests
         var result = await service.WriteAsync("new", replacedPassword: "old");
         await service.MigrateAsync();
 
-        Assert.True(result.IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, result);
         Assert.Null(Section(settings).Password);
         Assert.Equal("new", store.Items[Key]);
         Assert.Equal("new", (await service.ReadAsync(allowPrompt: false)).Secret);
@@ -144,7 +144,7 @@ public sealed class QrzCredentialServiceTests
 
         var result = await service.WriteAsync(null, replacedPassword: "old");
 
-        Assert.True(result.IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, result);
         Assert.False(store.Items.ContainsKey(Key));
         Assert.Null(Section(settings).Password);
         Assert.False(Section(settings).PasswordInCredentialStore);
@@ -160,7 +160,7 @@ public sealed class QrzCredentialServiceTests
 
         var result = await Create(settings, store).WriteAsync("secret", null);
 
-        Assert.Equal(CredentialWriteStatus.Failed, result.Status);
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringFailed, result);
         Assert.Null(Section(settings).Password);
         Assert.Null(Section(settings).PasswordInCredentialStore);
     }
@@ -173,7 +173,7 @@ public sealed class QrzCredentialServiceTests
 
         var result = await Create(settings, store).WriteAsync("new", replacedPassword: "old");
 
-        Assert.Equal(CredentialWriteStatus.Failed, result.Status);
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringVerifyFailed, result);
         Assert.Equal("old", Section(settings).Password);
     }
 
@@ -196,7 +196,7 @@ public sealed class QrzCredentialServiceTests
         promptGate.SetResult();
         var result = await write;
 
-        Assert.True(result.IsSuccess);
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, result);
         Assert.Equal(("set", false), store.Calls[0]);
         Assert.Contains(("set", true), store.Calls);
         Assert.Equal("new", store.Items[Key]);
@@ -304,6 +304,30 @@ public sealed class QrzCredentialServiceTests
     }
 
     [Fact]
+    public async Task HungStore_EveryPathTimesOutAsUnavailable_AndTheGateIsReleased()
+    {
+        var settings = StoreWith(new QrzLookupSettings { Password = "plain" });
+        var options = new QrzCredentialServiceOptions { StoreCallTimeout = TimeSpan.FromMilliseconds(100), PromptCallTimeout = TimeSpan.FromMilliseconds(100) };
+        var service = new QrzCredentialService(settings, CredentialStoreResolver.ForStore(new NeverCompletingCredentialStore()), NullLogger<QrzCredentialService>.Instance, options);
+        var bound = TimeSpan.FromSeconds(10);
+
+        await service.MigrateAsync().WaitAsync(bound);
+        Assert.Equal("plain", Section(settings).Password);
+
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringUnavailable, await service.WriteAsync("new", "plain").WaitAsync(bound));
+        Assert.Equal(QrzPasswordWriteOutcome.KeyringUnavailable, await service.WriteAsync(null, "plain").WaitAsync(bound));
+        Assert.Equal("plain", Section(settings).Password);
+
+        settings.Settings = new AppSettings();
+        Assert.Equal(CredentialReadStatus.Unavailable, (await service.ReadAsync(allowPrompt: false).WaitAsync(bound)).Status);
+        Assert.False(await service.IsPresentAsync().WaitAsync(bound));
+
+        // A second gated operation completing proves the timed-out ones released the gate.
+        settings.Settings = StoreWith(new QrzLookupSettings { Password = "plain" }).Settings;
+        await service.MigrateAsync().WaitAsync(bound);
+    }
+
+    [Fact]
     public async Task Resolver_ProbeTimeout_FallsBackWithoutBlockingTheCaller()
     {
         using var release = new ManualResetEventSlim(false);
@@ -353,5 +377,39 @@ public sealed class QrzCredentialServiceTests
         Assert.Same(fake, await resolver.GetAsync());
         Assert.Same(fake, await resolver.GetAsync());
         Assert.Equal(1, calls);
+    }
+
+    /// <summary>A keyring daemon that accepted the call and never answers.</summary>
+    private sealed class NeverCompletingCredentialStore : ICredentialStore
+    {
+        private readonly TaskCompletionSource _never = new();
+
+        public bool IsSecure => true;
+
+        public string BackendName => "hung";
+
+        public async Task<CredentialRead> GetAsync(string key, bool allowPrompt, CancellationToken ct = default)
+        {
+            await _never.Task.ConfigureAwait(false);
+            return CredentialRead.Absent;
+        }
+
+        public async Task<CredentialWrite> SetAsync(string key, string secret, bool allowPrompt, CancellationToken ct = default)
+        {
+            await _never.Task.ConfigureAwait(false);
+            return CredentialWrite.Success;
+        }
+
+        public async Task<CredentialWrite> DeleteAsync(string key, bool allowPrompt, CancellationToken ct = default)
+        {
+            await _never.Task.ConfigureAwait(false);
+            return CredentialWrite.Success;
+        }
+
+        public async Task<bool> ExistsAsync(string key, CancellationToken ct = default)
+        {
+            await _never.Task.ConfigureAwait(false);
+            return true;
+        }
     }
 }

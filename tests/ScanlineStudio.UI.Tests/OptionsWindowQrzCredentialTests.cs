@@ -90,6 +90,34 @@ public sealed class OptionsWindowQrzCredentialTests
     }
 
     [AvaloniaFact]
+    public void Load_FallbackSessionWithCredentialStoreFlag_ShowsKeyringNotAvailable_NoUnlockButton()
+    {
+        var settingsStore = StoreWith(new QrzLookupSettings { Enabled = true, Username = "user", PasswordInCredentialStore = true });
+        var vm = CreateVm(settingsStore, new SettingsFileCredentialStore());
+
+        Assert.False(vm.IsQrzKeyringLocked);
+        Assert.False(vm.UnlockQrzKeyringCommand.CanExecute(null));
+        Assert.True(vm.IsQrzKeyringUnreachable);
+        Assert.Equal("Options.Qrz.KeyringUnavailableWatermark", vm.QrzLookupPasswordWatermark);
+        Assert.Null(vm.QrzLookupPassword);
+    }
+
+    [AvaloniaFact]
+    public async Task Save_KeyringVerifyFails_ShowsTheVerifyMessage_NotTheWriteFailedOne()
+    {
+        var settingsStore = StoreWith(new QrzLookupSettings { Enabled = true, Username = "user" });
+        var credentialStore = new GarblingCredentialStore();
+        var vm = CreateVm(settingsStore, credentialStore);
+        var before = settingsStore.Settings;
+
+        vm.QrzLookupPassword = "secret";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal("Options.Qrz.Error.KeyringVerifyFailed", vm.SaveErrorMessage);
+        Assert.Same(before, settingsStore.Settings);
+    }
+
+    [AvaloniaFact]
     public async Task Save_SecureStore_ChangedPassword_GoesToKeyring_NotSettingsJson()
     {
         var settingsStore = StoreWith(new QrzLookupSettings { Enabled = true, Username = "user" });
@@ -134,6 +162,29 @@ public sealed class OptionsWindowQrzCredentialTests
         secureVm.QrzLookupPassword = "secret";
         Assert.False(secureVm.ShowQrzPlaintextWarning);
         Assert.Equal("Options.Qrz.QrzLookupPasswordHint.Keyring", secureVm.QrzLookupPasswordHint);
+    }
+
+    /// <summary>Accepts every write but reads back a different value (verify mismatch).</summary>
+    private sealed class GarblingCredentialStore : ICredentialStore
+    {
+        private bool _written;
+
+        public bool IsSecure => true;
+
+        public string BackendName => "garbling";
+
+        public Task<CredentialRead> GetAsync(string key, bool allowPrompt, CancellationToken ct = default) =>
+            Task.FromResult(_written ? CredentialRead.Found("garbled") : CredentialRead.Absent);
+
+        public Task<CredentialWrite> SetAsync(string key, string secret, bool allowPrompt, CancellationToken ct = default)
+        {
+            _written = true;
+            return Task.FromResult(CredentialWrite.Success);
+        }
+
+        public Task<CredentialWrite> DeleteAsync(string key, bool allowPrompt, CancellationToken ct = default) => Task.FromResult(CredentialWrite.Success);
+
+        public Task<bool> ExistsAsync(string key, CancellationToken ct = default) => Task.FromResult(_written);
     }
 
     private sealed class FailingCredentialStore : ICredentialStore

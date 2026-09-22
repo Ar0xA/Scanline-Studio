@@ -16,12 +16,17 @@ namespace ScanlineStudio.Credentials.SecretService;
 /// Prompts: <c>Unlock</c>/<c>CreateItem</c>/<c>Delete</c> may hand back a prompt object. With
 /// <c>allowPrompt: false</c> that is reported as Unavailable and no UI is shown. With
 /// <c>allowPrompt: true</c> the prompt is shown and awaited for at most <see cref="PromptTimeout"/>,
-/// then dismissed.
+/// then dismissed. A prompt that is not going to be shown, or whose wait is cancelled, is dismissed too.
+/// Every other D-Bus call is bounded by <see cref="CallTimeout"/>; a timeout reads as Unavailable.
 ///
 /// Each operation opens its own bus connection and session, so no connection state outlives a call.</summary>
 public sealed partial class SecretServiceCredentialStore : ICredentialStore
 {
     public static readonly TimeSpan PromptTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Bound on every non-prompting D-Bus call, matching libdbus's default method-call timeout, so a
+    /// hung daemon surfaces as Unavailable instead of blocking the caller forever.</summary>
+    public static readonly TimeSpan CallTimeout = TimeSpan.FromSeconds(25);
 
     internal const string ApplicationAttributeValue = "ScanlineStudio";
 
@@ -64,11 +69,11 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         try
         {
             using var connection = new Connection(address);
-            await connection.ConnectAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
-            var running = await connection.ListServicesAsync().WaitAsync(ct).ConfigureAwait(false);
+            await connection.ConnectAsync().AsTask().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
+            var running = await connection.ListServicesAsync().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
             if (!running.Contains(ServiceName, StringComparer.Ordinal))
             {
-                var activatable = await connection.ListActivatableServicesAsync().WaitAsync(ct).ConfigureAwait(false);
+                var activatable = await connection.ListActivatableServicesAsync().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
                 if (!activatable.Contains(ServiceName, StringComparer.Ordinal))
                 {
                     Log.ProbeNoService(logger);
@@ -132,6 +137,11 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         {
             return CredentialRead.Unavailable("keyring is locked");
         }
+        catch (TimeoutException)
+        {
+            Log.CallTimedOut(_logger, "read", CallTimeout.TotalSeconds);
+            return CredentialRead.Unavailable("D-Bus call timed out");
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.OperationFailed(_logger, "read", ex);
@@ -171,7 +181,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
                 prompt = await connection.CallMethodAsync(
                     BuildCreateItem(connection, collection, session.Path, key, secretBytes),
                     static (m, _) => ReadObjectPathPair(m).Second,
-                    null).WaitAsync(ct).ConfigureAwait(false);
+                    null).WaitAsync(CallTimeout, ct).ConfigureAwait(false);
             }
             finally
             {
@@ -182,6 +192,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             {
                 if (!allowPrompt)
                 {
+                    await DismissQuietlyAsync(connection, prompt).ConfigureAwait(false);
                     return CredentialWrite.Unavailable("keyring requires a prompt");
                 }
 
@@ -197,6 +208,11 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         catch (DBusException ex) when (ex.ErrorName == IsLockedError)
         {
             return CredentialWrite.Unavailable("keyring is locked");
+        }
+        catch (TimeoutException)
+        {
+            Log.CallTimedOut(_logger, "write", CallTimeout.TotalSeconds);
+            return CredentialWrite.Unavailable("D-Bus call timed out");
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -233,7 +249,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             foreach (var item in unlocked.Concat(locked))
             {
                 var prompt = await connection.CallMethodAsync(BuildItemDelete(connection, item), static (m, _) => m.GetBodyReader().ReadObjectPathAsString(), null)
-                    .WaitAsync(ct).ConfigureAwait(false);
+                    .WaitAsync(CallTimeout, ct).ConfigureAwait(false);
                 if (prompt == NoPrompt)
                 {
                     continue;
@@ -241,6 +257,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
 
                 if (!allowPrompt)
                 {
+                    await DismissQuietlyAsync(connection, prompt).ConfigureAwait(false);
                     return CredentialWrite.Unavailable("keyring requires a prompt");
                 }
 
@@ -256,6 +273,11 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         {
             return CredentialWrite.Unavailable("keyring is locked");
         }
+        catch (TimeoutException)
+        {
+            Log.CallTimedOut(_logger, "delete", CallTimeout.TotalSeconds);
+            return CredentialWrite.Unavailable("D-Bus call timed out");
+        }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.OperationFailed(_logger, "delete", ex);
@@ -268,7 +290,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
         try
         {
             using var connection = new Connection(_busAddress);
-            await connection.ConnectAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
+            await connection.ConnectAsync().AsTask().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
             var (unlocked, locked) = await SearchAsync(connection, key, ct).ConfigureAwait(false);
             return unlocked.Length > 0 || locked.Length > 0;
         }
@@ -284,7 +306,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
     internal async Task<bool?> IsDefaultCollectionLockedAsync(CancellationToken ct = default)
     {
         using var connection = new Connection(_busAddress);
-        await connection.ConnectAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
+        await connection.ConnectAsync().AsTask().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
         var collection = await ReadDefaultCollectionAsync(connection, ct).ConfigureAwait(false);
         return collection is null ? null : await GetBoolPropertyAsync(connection, collection, CollectionInterface, "Locked", ct).ConfigureAwait(false);
     }
@@ -304,7 +326,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             try
             {
                 await connection.CallMethodAsync(BuildItemDelete(connection, item), static (m, _) => m.GetBodyReader().ReadObjectPathAsString(), null)
-                    .WaitAsync(ct).ConfigureAwait(false);
+                    .WaitAsync(CallTimeout, ct).ConfigureAwait(false);
             }
             catch (DBusException ex)
             {
@@ -316,36 +338,45 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
     private static async Task<string?> NewestAsync(Connection connection, IEnumerable<string> items, CancellationToken ct)
     {
         string? newest = null;
-        ulong newestCreated = 0;
+        ulong newestStamp = 0;
         foreach (var item in items)
         {
-            ulong created;
-            try
+            // Modified tracks replace=true rewrites; Created is the fallback for a backend that lacks it.
+            var stamp = await ReadTimestampAsync(connection, item, "Modified", ct).ConfigureAwait(false);
+            if (stamp == 0)
             {
-                created = await connection.CallMethodAsync(
-                    BuildGetProperty(connection, item, ItemInterface, "Created"),
-                    static (m, _) => m.GetBodyReader().ReadVariantValue().GetUInt64(),
-                    null).WaitAsync(ct).ConfigureAwait(false);
-            }
-            catch (DBusException)
-            {
-                created = 0;
+                stamp = await ReadTimestampAsync(connection, item, "Created", ct).ConfigureAwait(false);
             }
 
-            if (newest is null || created > newestCreated)
+            if (newest is null || stamp > newestStamp)
             {
                 newest = item;
-                newestCreated = created;
+                newestStamp = stamp;
             }
         }
 
         return newest;
     }
 
+    private static async Task<ulong> ReadTimestampAsync(Connection connection, string item, string property, CancellationToken ct)
+    {
+        try
+        {
+            return await connection.CallMethodAsync(
+                BuildGetProperty(connection, item, ItemInterface, property),
+                static (m, _) => m.GetBodyReader().ReadVariantValue().GetUInt64(),
+                null).WaitAsync(CallTimeout, ct).ConfigureAwait(false);
+        }
+        catch (DBusException)
+        {
+            return 0;
+        }
+    }
+
     private async Task<bool> UnlockAsync(Connection connection, string[] objects, CancellationToken ct)
     {
         var prompt = await connection.CallMethodAsync(BuildUnlock(connection, objects), static (m, _) => ReadUnlockReply(m), null)
-            .WaitAsync(ct).ConfigureAwait(false);
+            .WaitAsync(CallTimeout, ct).ConfigureAwait(false);
         return prompt == NoPrompt || await RunPromptAsync(connection, prompt, ct).ConfigureAwait(false);
     }
 
@@ -379,12 +410,12 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             ObserverFlags.None,
             readerState: null,
             handlerState: completed,
-            emitOnCapturedContext: false).AsTask().WaitAsync(ct).ConfigureAwait(false);
+            emitOnCapturedContext: false).AsTask().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
 
         Log.PromptShown(_logger);
-        await connection.CallMethodAsync(BuildPromptCall(connection, promptPath, "Prompt", withWindowId: true)).WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            await connection.CallMethodAsync(BuildPromptCall(connection, promptPath, "Prompt", withWindowId: true)).WaitAsync(CallTimeout, ct).ConfigureAwait(false);
             var dismissed = await completed.Task.WaitAsync(PromptTimeout, ct).ConfigureAwait(false);
             return !dismissed;
         }
@@ -420,18 +451,18 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             var unlocked = reader.ReadArrayOfObjectPath().Select(p => p.ToString()).ToArray();
             var locked = reader.ReadArrayOfObjectPath().Select(p => p.ToString()).ToArray();
             return (unlocked, locked);
-        }, null).WaitAsync(ct);
+        }, null).WaitAsync(CallTimeout, ct);
 
     private static async Task<string?> ReadDefaultCollectionAsync(Connection connection, CancellationToken ct)
     {
         var path = await connection.CallMethodAsync(BuildReadAlias(connection), static (m, _) => m.GetBodyReader().ReadObjectPathAsString(), null)
-            .WaitAsync(ct).ConfigureAwait(false);
+            .WaitAsync(CallTimeout, ct).ConfigureAwait(false);
         return path == NoPrompt ? null : path;
     }
 
     private static Task<bool> GetBoolPropertyAsync(Connection connection, string path, string @interface, string name, CancellationToken ct) =>
         connection.CallMethodAsync(BuildGetProperty(connection, path, @interface, name), static (m, _) => m.GetBodyReader().ReadVariantValue().GetBool(), null)
-            .WaitAsync(ct);
+            .WaitAsync(CallTimeout, ct);
 
     private static Task<string> GetSecretAsync(Connection connection, string item, string sessionPath, CancellationToken ct) =>
         connection.CallMethodAsync(BuildGetSecret(connection, item, sessionPath), static (m, _) =>
@@ -449,7 +480,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             {
                 Array.Clear(value);
             }
-        }, null).WaitAsync(ct);
+        }, null).WaitAsync(CallTimeout, ct);
 
     private static async Task<string> OpenSessionAsync(Connection connection, CancellationToken ct) =>
         await connection.CallMethodAsync(BuildOpenSession(connection), static (m, _) =>
@@ -457,7 +488,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             var reader = m.GetBodyReader();
             reader.ReadVariantValue();
             return reader.ReadObjectPathAsString();
-        }, null).WaitAsync(ct).ConfigureAwait(false);
+        }, null).WaitAsync(CallTimeout, ct).ConfigureAwait(false);
 
     private static async Task CloseSessionAsync(Connection connection, string sessionPath)
     {
@@ -622,7 +653,7 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
             var connection = new Connection(busAddress);
             try
             {
-                await connection.ConnectAsync().AsTask().WaitAsync(ct).ConfigureAwait(false);
+                await connection.ConnectAsync().AsTask().WaitAsync(CallTimeout, ct).ConfigureAwait(false);
                 var path = await OpenSessionAsync(connection, ct).ConfigureAwait(false);
                 return new SecretSession(connection, path);
             }
@@ -659,6 +690,9 @@ public sealed partial class SecretServiceCredentialStore : ICredentialStore
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Secret Service duplicate item delete failed")]
         public static partial void DuplicateDeleteFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Secret Service {Operation} timed out after {Seconds} s")]
+        public static partial void CallTimedOut(ILogger logger, string operation, double seconds);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Secret Service prompt shown")]
         public static partial void PromptShown(ILogger logger);

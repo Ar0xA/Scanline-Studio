@@ -607,10 +607,19 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [NotifyCanExecuteChangedFor(nameof(UnlockQrzKeyringCommand))]
     private bool _isUnlockingQrzKeyring;
 
+    /// <summary>The password was stored in a keyring in an earlier session, but no keyring is reachable
+    /// now (plaintext fallback). No Unlock button: shows the "keyring not available" watermark and hint.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(QrzLookupPasswordWatermark))]
+    private bool _isQrzKeyringUnreachable;
+
     /// <summary>One-line warning row: only when a password is set and no system keyring was found.</summary>
     public bool ShowQrzPlaintextWarning => _qrzPasswordLoaded && !IsQrzPasswordStoreSecure && !string.IsNullOrEmpty(QrzLookupPassword);
 
-    public string QrzLookupPasswordWatermark => _localization.GetString(IsQrzKeyringLocked ? "Options.Qrz.KeyringLockedWatermark" : "Options.Qrz.QrzLookupPasswordWatermark");
+    public string QrzLookupPasswordWatermark => _localization.GetString(
+        IsQrzKeyringLocked ? "Options.Qrz.KeyringLockedWatermark"
+        : IsQrzKeyringUnreachable ? "Options.Qrz.KeyringUnavailableWatermark"
+        : "Options.Qrz.QrzLookupPasswordWatermark");
 
     public string QrzLookupPasswordHint => _localization.GetString(IsQrzPasswordStoreSecure ? "Options.Qrz.QrzLookupPasswordHint.Keyring" : "Options.Qrz.QrzLookupPasswordHint");
 
@@ -4151,7 +4160,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
 
         IsQrzPasswordStoreSecure = load.IsSecure;
-        IsQrzKeyringLocked = load.Status == CredentialReadStatus.Unavailable;
+        // Unlock only helps when a keyring is reachable; a keyring-less session that has the flag set gets the "not available" hint instead.
+        IsQrzKeyringLocked = load.IsSecure && load.Status == CredentialReadStatus.Unavailable;
+        IsQrzKeyringUnreachable = !load.IsSecure && load.Status == CredentialReadStatus.Unavailable;
         OnPropertyChanged(nameof(ShowQrzPlaintextWarning));
         Log.QrzPasswordLoaded(_logger, load.Status, load.IsSecure);
     }
@@ -4165,18 +4176,23 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             return true;
         }
 
-        var result = await _optionsSettingsService.SaveQrzPasswordAsync(current, _loadedQrzPassword);
-        if (!result.IsSuccess)
+        var outcome = await _optionsSettingsService.SaveQrzPasswordAsync(current, _loadedQrzPassword);
+        if (outcome != QrzPasswordWriteOutcome.Saved)
         {
-            Log.QrzPasswordSaveFailed(_logger, result.Status, result.Reason);
-            SaveErrorMessage = _localization.GetString(
-                result.Status == CredentialWriteStatus.Unavailable ? "Options.Qrz.Error.KeyringUnavailable" : "Options.Qrz.Error.KeyringWriteFailed",
-                result.Reason ?? string.Empty);
+            // Backend reasons are logged by QrzCredentialService; the UI shows localized text only.
+            Log.QrzPasswordSaveFailed(_logger, outcome);
+            SaveErrorMessage = _localization.GetString(outcome switch
+            {
+                QrzPasswordWriteOutcome.KeyringUnavailable => "Options.Qrz.Error.KeyringUnavailable",
+                QrzPasswordWriteOutcome.KeyringVerifyFailed => "Options.Qrz.Error.KeyringVerifyFailed",
+                _ => "Options.Qrz.Error.KeyringWriteFailed",
+            });
             return false;
         }
 
         _loadedQrzPassword = current;
         IsQrzKeyringLocked = false;
+        IsQrzKeyringUnreachable = false;
         return true;
     }
 
@@ -4437,8 +4453,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Debug, Message = "QRZ password field loaded: status={Status}, secureStore={IsSecure}")]
         public static partial void QrzPasswordLoaded(ILogger logger, CredentialReadStatus status, bool isSecure);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password save failed ({Status}: {Reason}); settings not saved")]
-        public static partial void QrzPasswordSaveFailed(ILogger logger, CredentialWriteStatus status, string? reason);
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password save failed ({Outcome}); settings not saved")]
+        public static partial void QrzPasswordSaveFailed(ILogger logger, QrzPasswordWriteOutcome outcome);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ keyring unlock failed")]
         public static partial void QrzKeyringUnlockFailed(ILogger logger, Exception ex);

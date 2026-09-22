@@ -1143,6 +1143,8 @@
                                     </Grid>
                                     <!-- Hint text depends on where the password is stored: system keyring or plaintext settings.json. -->
                                     <TextBlock Classes="IndustryRowLabel" Text="{Binding QrzLookupPasswordHint}" TextWrapping="Wrap" />
+                                    <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{loc:Translate Options.Qrz.KeyringUnavailableHint}"
+                                               TextWrapping="Wrap" IsVisible="{Binding IsQrzKeyringUnreachable}" />
                                     <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{loc:Translate Options.Qrz.PlaintextWarning}"
                                                TextWrapping="Wrap" IsVisible="{Binding ShowQrzPlaintextWarning}" />
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">

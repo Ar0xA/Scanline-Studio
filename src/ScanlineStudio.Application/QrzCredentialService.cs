@@ -10,14 +10,18 @@ namespace ScanlineStudio.Application;
 ///
 /// Where the password lives: a non-empty <see cref="QrzLookupSettings.Password"/> in settings.json always
 /// wins (pre-migration value, or the plaintext fallback when no keyring exists); otherwise the
-/// credential store under <see cref="CredentialKey"/>. <see cref="QrzLookupSettings.PasswordInCredentialStore"/>
-/// records that the store holds it.
+/// credential store under <see cref="QrzCredentialServiceOptions.CredentialKey"/>.
+/// <see cref="QrzLookupSettings.PasswordInCredentialStore"/> records that the store holds it.
 ///
 /// Concurrency invariant: <see cref="_gate"/> serializes every write/verify/compare-and-clear sequence
 /// (Options save vs. startup migration) but is NEVER held while a keyring prompt is on screen — a
 /// prompting store call runs outside the gate, and the verify + compare-and-clear that follows re-enters
-/// it. Every settings.json change is a compare-and-clear inside <see cref="ISettingsStore.UpdateAsync"/>,
-/// so a value changed by anyone else in between is never cleared.</summary>
+/// it. Every store call made while holding the gate is non-prompting and bounded by
+/// <see cref="QrzCredentialServiceOptions.StoreCallTimeout"/>, so a hung keyring daemon cannot hold the gate
+/// (and with it Options Save and migration) forever; prompting calls are bounded by
+/// <see cref="QrzCredentialServiceOptions.PromptCallTimeout"/>. Every settings.json change is a
+/// compare-and-clear inside <see cref="ISettingsStore.UpdateAsync"/>, so a value changed by anyone else in
+/// between is never cleared.</summary>
 public sealed partial class QrzCredentialService : IDisposable
 {
     public const string CredentialKey = "qrz-lookup-password";
@@ -25,14 +29,18 @@ public sealed partial class QrzCredentialService : IDisposable
     private readonly ISettingsStore _settingsStore;
     private readonly CredentialStoreResolver _storeResolver;
     private readonly ILogger<QrzCredentialService> _logger;
+    private readonly QrzCredentialServiceOptions _options;
     private readonly SemaphoreSlim _gate = new(1, 1);
 
-    public QrzCredentialService(ISettingsStore settingsStore, CredentialStoreResolver storeResolver, ILogger<QrzCredentialService> logger)
+    public QrzCredentialService(ISettingsStore settingsStore, CredentialStoreResolver storeResolver, ILogger<QrzCredentialService> logger, QrzCredentialServiceOptions? options = null)
     {
         _settingsStore = settingsStore;
         _storeResolver = storeResolver;
         _logger = logger;
+        _options = options ?? new QrzCredentialServiceOptions();
     }
+
+    private string Key => _options.CredentialKey;
 
     /// <summary>Whether this session stores the password in a real OS keyring.</summary>
     public async Task<bool> IsSecureAsync(CancellationToken ct = default) =>
@@ -59,7 +67,7 @@ public sealed partial class QrzCredentialService : IDisposable
                     : CredentialRead.Absent;
             }
 
-            var read = await store.GetAsync(CredentialKey, allowPrompt, ct).ConfigureAwait(false);
+            var read = await BoundedAsync(store.GetAsync(Key, allowPrompt, ct), allowPrompt, CredentialRead.Unavailable("keyring call timed out"), "read", ct).ConfigureAwait(false);
             if (read.Status == CredentialReadStatus.Unavailable)
             {
                 Log.StoreReadUnavailable(_logger, store.BackendName, read.Reason);
@@ -87,7 +95,7 @@ public sealed partial class QrzCredentialService : IDisposable
             }
 
             var store = await _storeResolver.GetAsync(ct).ConfigureAwait(false);
-            return store.IsSecure && await store.ExistsAsync(CredentialKey, ct).ConfigureAwait(false);
+            return store.IsSecure && await BoundedAsync(store.ExistsAsync(Key, ct), allowPrompt: false, false, "exists", ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -99,8 +107,9 @@ public sealed partial class QrzCredentialService : IDisposable
     /// <summary>User-started write from Options Save. <paramref name="replacedPassword"/> is the value the
     /// dialog loaded (what this write replaces); settings.json's plaintext copy is cleared only if it
     /// still holds that value or the one just stored. Empty/null <paramref name="newPassword"/> deletes.
-    /// With a keyring present a failure is returned, never downgraded to a plaintext write.</summary>
-    public async Task<CredentialWrite> WriteAsync(string? newPassword, string? replacedPassword, CancellationToken ct = default)
+    /// With a keyring present a failure is returned, never downgraded to a plaintext write. Backend
+    /// reasons are logged here, not returned: callers show their own localized text.</summary>
+    public async Task<QrzPasswordWriteOutcome> WriteAsync(string? newPassword, string? replacedPassword, CancellationToken ct = default)
     {
         try
         {
@@ -117,7 +126,7 @@ public sealed partial class QrzCredentialService : IDisposable
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
             Log.WriteFailed(_logger, ex);
-            return CredentialWrite.Failed(ex.Message);
+            return QrzPasswordWriteOutcome.KeyringFailed;
         }
     }
 
@@ -143,7 +152,7 @@ public sealed partial class QrzCredentialService : IDisposable
                     return;
                 }
 
-                var set = await store.SetAsync(CredentialKey, plaintext, allowPrompt: false, ct).ConfigureAwait(false);
+                var set = await BoundedAsync(store.SetAsync(Key, plaintext, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "migrate", ct).ConfigureAwait(false);
                 if (!set.IsSuccess)
                 {
                     Log.MigrationSkipped(_logger, store.BackendName, set.Status, set.Reason);
@@ -189,7 +198,9 @@ public sealed partial class QrzCredentialService : IDisposable
         }
     }
 
-    private async Task<CredentialWrite> WritePlaintextAsync(string? newPassword, CancellationToken ct)
+    private static CredentialWrite TimedOutWrite { get; } = CredentialWrite.Unavailable("keyring call timed out");
+
+    private async Task<QrzPasswordWriteOutcome> WritePlaintextAsync(string? newPassword, CancellationToken ct)
     {
         var value = string.IsNullOrEmpty(newPassword) ? null : newPassword;
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -208,24 +219,25 @@ public sealed partial class QrzCredentialService : IDisposable
             _gate.Release();
         }
 
-        return CredentialWrite.Success;
+        return QrzPasswordWriteOutcome.Saved;
     }
 
-    private async Task<CredentialWrite> SetSecureAsync(ICredentialStore store, string newPassword, string? replacedPassword, CancellationToken ct)
+    private async Task<QrzPasswordWriteOutcome> SetSecureAsync(ICredentialStore store, string newPassword, string? replacedPassword, CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var set = await store.SetAsync(CredentialKey, newPassword, allowPrompt: false, ct).ConfigureAwait(false);
+            var set = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "write", ct).ConfigureAwait(false);
             if (set.IsSuccess)
             {
                 return await FinishSetAsync(store, newPassword, replacedPassword, ct).ConfigureAwait(false);
             }
 
-            if (set.Status != CredentialWriteStatus.Unavailable)
+            // Only "locked" is worth a prompt; a timeout means the daemon is not answering at all.
+            if (set.Status != CredentialWriteStatus.Unavailable || set == TimedOutWrite)
             {
                 Log.StoreWriteFailed(_logger, store.BackendName, set.Status, set.Reason);
-                return set;
+                return ToOutcome(set);
             }
         }
         finally
@@ -234,11 +246,11 @@ public sealed partial class QrzCredentialService : IDisposable
         }
 
         // Keyring locked: prompt outside the gate, then re-enter it to verify and clear.
-        var prompted = await store.SetAsync(CredentialKey, newPassword, allowPrompt: true, ct).ConfigureAwait(false);
+        var prompted = await BoundedAsync(store.SetAsync(Key, newPassword, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "write", ct).ConfigureAwait(false);
         if (!prompted.IsSuccess)
         {
             Log.StoreWriteFailed(_logger, store.BackendName, prompted.Status, prompted.Reason);
-            return prompted;
+            return ToOutcome(prompted);
         }
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -253,12 +265,12 @@ public sealed partial class QrzCredentialService : IDisposable
     }
 
     // Caller holds _gate.
-    private async Task<CredentialWrite> FinishSetAsync(ICredentialStore store, string newPassword, string? replacedPassword, CancellationToken ct)
+    private async Task<QrzPasswordWriteOutcome> FinishSetAsync(ICredentialStore store, string newPassword, string? replacedPassword, CancellationToken ct)
     {
         if (!await VerifyAsync(store, newPassword, ct).ConfigureAwait(false))
         {
             Log.WriteVerifyFailed(_logger, store.BackendName);
-            return CredentialWrite.Failed("The keyring did not return the password that was just stored.");
+            return QrzPasswordWriteOutcome.KeyringVerifyFailed;
         }
 
         await _settingsStore.UpdateAsync(current =>
@@ -275,24 +287,24 @@ public sealed partial class QrzCredentialService : IDisposable
         }, ct).ConfigureAwait(false);
 
         Log.Stored(_logger, store.BackendName);
-        return CredentialWrite.Success;
+        return QrzPasswordWriteOutcome.Saved;
     }
 
-    private async Task<CredentialWrite> DeleteSecureAsync(ICredentialStore store, string? replacedPassword, CancellationToken ct)
+    private async Task<QrzPasswordWriteOutcome> DeleteSecureAsync(ICredentialStore store, string? replacedPassword, CancellationToken ct)
     {
         await _gate.WaitAsync(ct).ConfigureAwait(false);
         try
         {
-            var deleted = await store.DeleteAsync(CredentialKey, allowPrompt: false, ct).ConfigureAwait(false);
+            var deleted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: false, ct), allowPrompt: false, TimedOutWrite, "delete", ct).ConfigureAwait(false);
             if (deleted.IsSuccess)
             {
                 return await FinishDeleteAsync(store, replacedPassword, ct).ConfigureAwait(false);
             }
 
-            if (deleted.Status != CredentialWriteStatus.Unavailable)
+            if (deleted.Status != CredentialWriteStatus.Unavailable || deleted == TimedOutWrite)
             {
                 Log.StoreDeleteFailed(_logger, store.BackendName, deleted.Status, deleted.Reason);
-                return deleted;
+                return ToOutcome(deleted);
             }
         }
         finally
@@ -300,11 +312,11 @@ public sealed partial class QrzCredentialService : IDisposable
             _gate.Release();
         }
 
-        var prompted = await store.DeleteAsync(CredentialKey, allowPrompt: true, ct).ConfigureAwait(false);
+        var prompted = await BoundedAsync(store.DeleteAsync(Key, allowPrompt: true, ct), allowPrompt: true, TimedOutWrite, "delete", ct).ConfigureAwait(false);
         if (!prompted.IsSuccess)
         {
             Log.StoreDeleteFailed(_logger, store.BackendName, prompted.Status, prompted.Reason);
-            return prompted;
+            return ToOutcome(prompted);
         }
 
         await _gate.WaitAsync(ct).ConfigureAwait(false);
@@ -319,7 +331,7 @@ public sealed partial class QrzCredentialService : IDisposable
     }
 
     // Caller holds _gate. The JSON copy must go too, or the JSON-first read resurrects the deleted password.
-    private async Task<CredentialWrite> FinishDeleteAsync(ICredentialStore store, string? replacedPassword, CancellationToken ct)
+    private async Task<QrzPasswordWriteOutcome> FinishDeleteAsync(ICredentialStore store, string? replacedPassword, CancellationToken ct)
     {
         await _settingsStore.UpdateAsync(current =>
         {
@@ -334,14 +346,37 @@ public sealed partial class QrzCredentialService : IDisposable
         }, ct).ConfigureAwait(false);
 
         Log.Deleted(_logger, store.BackendName);
-        return CredentialWrite.Success;
+        return QrzPasswordWriteOutcome.Saved;
     }
 
-    private static async Task<bool> VerifyAsync(ICredentialStore store, string expected, CancellationToken ct)
+    private async Task<bool> VerifyAsync(ICredentialStore store, string expected, CancellationToken ct)
     {
-        var read = await store.GetAsync(CredentialKey, allowPrompt: false, ct).ConfigureAwait(false);
+        var read = await BoundedAsync(store.GetAsync(Key, allowPrompt: false, ct), allowPrompt: false, CredentialRead.Unavailable("keyring call timed out"), "verify", ct).ConfigureAwait(false);
         return read.Status == CredentialReadStatus.Found && string.Equals(read.Secret, expected, StringComparison.Ordinal);
     }
+
+    /// <summary>Awaits a store call for at most the configured timeout; on timeout returns
+    /// <paramref name="onTimeout"/>. The abandoned call keeps running but no longer holds anyone up.</summary>
+    private async Task<T> BoundedAsync<T>(Task<T> call, bool allowPrompt, T onTimeout, string operation, CancellationToken ct)
+    {
+        var timeout = allowPrompt ? _options.PromptCallTimeout : _options.StoreCallTimeout;
+        try
+        {
+            return await call.WaitAsync(timeout, ct).ConfigureAwait(false);
+        }
+        catch (TimeoutException)
+        {
+            Log.StoreCallTimedOut(_logger, operation, timeout.TotalSeconds);
+            return onTimeout;
+        }
+    }
+
+    private static QrzPasswordWriteOutcome ToOutcome(CredentialWrite write) => write.Status switch
+    {
+        CredentialWriteStatus.Success => QrzPasswordWriteOutcome.Saved,
+        CredentialWriteStatus.Unavailable => QrzPasswordWriteOutcome.KeyringUnavailable,
+        _ => QrzPasswordWriteOutcome.KeyringFailed,
+    };
 
     private async Task<QrzLookupSettings> LoadSectionAsync(CancellationToken ct) =>
         GetSection(await _settingsStore.LoadAsync(ct).ConfigureAwait(false));
@@ -394,5 +429,37 @@ public sealed partial class QrzCredentialService : IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password write failed")]
         public static partial void WriteFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credential store {Operation} timed out after {Seconds} s")]
+        public static partial void StoreCallTimedOut(ILogger logger, string operation, double seconds);
     }
+}
+
+/// <summary>Result of <see cref="QrzCredentialService.WriteAsync"/>. Backend detail is logged, not carried.</summary>
+public enum QrzPasswordWriteOutcome
+{
+    Saved,
+
+    /// <summary>Keyring locked, prompt dismissed/timed out, or the daemon did not answer. Nothing changed.</summary>
+    KeyringUnavailable,
+
+    /// <summary>The keyring rejected the write/delete. Nothing changed.</summary>
+    KeyringFailed,
+
+    /// <summary>The keyring accepted the write but did not return the same value when read back;
+    /// settings.json was not touched.</summary>
+    KeyringVerifyFailed,
+}
+
+/// <summary>Tuning for <see cref="QrzCredentialService"/>; defaults are the production values.</summary>
+public sealed record QrzCredentialServiceOptions
+{
+    /// <summary>Credential-store key. Only tests against a real keyring use anything else.</summary>
+    public string CredentialKey { get; init; } = QrzCredentialService.CredentialKey;
+
+    /// <summary>Bound on one non-prompting store call; 25 s matches libdbus's default method-call timeout.</summary>
+    public TimeSpan StoreCallTimeout { get; init; } = TimeSpan.FromSeconds(25);
+
+    /// <summary>Bound on a prompting store call: the store's own 60 s prompt wait plus its D-Bus calls.</summary>
+    public TimeSpan PromptCallTimeout { get; init; } = TimeSpan.FromMinutes(3);
 }
