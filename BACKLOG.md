@@ -109,13 +109,19 @@ enforce `spec/13-testing.md`'s stated 80%. Decide: raise the floor, or change th
 and `RadioSessionService.cs:75-81` and `:280-286`, with two different error strings for one condition.
 About 15 lines. Do it when already in those files.
 
-### UX-TR1-b. OPEN — dirty check misses load → Undo → one edit
+### UX-COALESCE. OPEN — overlay edits after a Ctrl-drag duplicate are not undoable
 
-`IsDirtySinceLastCheckpoint` (`TxImageEditorPaneViewModel.cs:1117`) compares `_editVersion` against
-`_editVersionAtLastCheckpoint` (`:411`), but `Undo()` does `_editVersion--` (`:7061`). So Undo then one
-edit lands back on the checkpoint value and reads clean: a stale "Loaded" badge and a skipped
-discard-confirm on the next rack load or New Template. Fix: make the counter monotonic (increment on
-undo too, never decrement).
+`DuplicateElementForDrag` sets the `"OverlayGeometry"` coalesce marker (`TxImageEditorPaneViewModel.cs`
+about `:5446`) and nothing posts a clear for it. Later overlay drags or X/Y edits then push no undo step:
+they cannot be undone, and they read clean after a save, so "New Template" can discard them without a
+confirm. Found by `yoniq-auditor` 2026-09-22, not reproduced in a test yet.
+
+### UX-MODESWITCH-DIRTY. OPEN — a mode switch marks a clean loaded template dirty
+
+`ReplaceEditorForModeSwitch` seeds the new editor's carried-over dirtiness from `HasUnsavedEdits`
+(`TxControlsPaneViewModel.cs` about `:1730-1742`), which is true after any template load. So a freshly
+loaded, unedited template reads "edited" after a mode switch. Seed from `IsDirtySinceLastCheckpoint`
+instead, keeping `HasUnsavedEdits` for its own consumers. Found by `yoniq-auditor` 2026-09-22.
 
 ### UX-THUMB1. OPEN — Gallery memory growth
 

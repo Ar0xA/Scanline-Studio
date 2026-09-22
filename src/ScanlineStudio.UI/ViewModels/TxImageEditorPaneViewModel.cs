@@ -370,31 +370,32 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     private int _sourceBaselineRotation;
 
-    private readonly List<EditorSnapshot> _undoStack = [];
+    private readonly List<(EditorSnapshot Snapshot, long StateId)> _undoStack = [];
 
-    /// <summary>yoniq-auditor finding (2026-09-19, Blocker 2): a plain <see cref="_undoStack"/>`.Count`
-    /// comparison against a saved baseline silently reads "clean" once the stack is pinned at
-    /// <see cref="MaxUndoDepth"/> (50) and a checkpoint happened to be taken at that same pinned count
-    /// -- every push past that point nets to Count=50 again (add-then-evict), so further real edits
-    /// after such a checkpoint were invisible to <see cref="IsDirtySinceLastCheckpoint"/>, letting "New
-    /// Template" silently discard a genuinely edited canvas with no confirm dialog. This field is an
-    /// unbounded edit-sequence counter that mirrors <see cref="_undoStack"/>`.Count`'s own push/Undo-pop/
-    /// Redo-push transitions exactly (incremented in <see cref="PushUndoSnapshot"/>/
-    /// <see cref="PushUndoSnapshotCoalesced"/>/<see cref="Redo"/>, decremented in <see cref="Undo"/>)
-    /// but is NEVER decremented by <see cref="MaxUndoDepth"/>'s own <c>RemoveAt(0)</c> eviction --
-    /// that's a memory trim, not an operator undo action, so it must not affect dirtiness math.</summary>
-    private long _editVersion;
+    /// <summary>Identity of the CURRENT canvas state, for <see cref="IsDirtySinceLastCheckpoint"/>. Every
+    /// undo push mints a fresh id from <see cref="_nextStateId"/>; each undo/redo stack entry stores the id
+    /// of the state it restores, and <see cref="Undo"/>/<see cref="Redo"/> set this back to that stored id.
+    /// So returning to a checkpointed state by Undo reads clean, while load → Undo → a new edit mints an
+    /// id the checkpoint has never seen and reads dirty (a plain counter that Undo decremented landed back
+    /// on the checkpoint number there). Invariant kept from the earlier counter (yoniq-auditor Blocker 2):
+    /// <see cref="MaxUndoDepth"/>'s own <c>RemoveAt(0)</c> eviction never touches ids -- it is a memory
+    /// trim, not an operator action, so an edit made while the stack is pinned at 50 still reads dirty.</summary>
+    private long _stateId;
 
-    /// <summary>Templates rack rework, yoniq-auditor finding -- a snapshot of <see cref="_editVersion"/>
-    /// taken right after the most recent successful template load OR save (or 0, for an editor that has
-    /// done neither). <see cref="LoadTemplateIntoLiveEditor"/> pushes ITS OWN undo snapshot (so the load
+    /// <summary>Monotonic source for <see cref="_stateId"/>; never decremented or reused.</summary>
+    private long _nextStateId;
+
+    /// <summary>Templates rack rework, yoniq-auditor finding -- a snapshot of <see cref="_stateId"/>
+    /// taken right after the most recent successful template load, or, for a save, the id of the state
+    /// that was serialized (read with the element snapshot, before the save's own awaits); 0 for an
+    /// editor that has done neither. <see cref="LoadTemplateIntoLiveEditor"/> pushes ITS OWN undo snapshot (so the load
     /// itself is undoable, a deliberate existing design decision -- see that method's own doc comment),
     /// which means <see cref="HasUnsavedEdits"/> goes permanently true the instant ANY template is first
     /// loaded, with zero operator edits. Reusing that raw flag for the Templates rack's own
     /// "Loaded • edited" badge and its discard-confirm gate made both wrong: the badge read "edited"
     /// from the moment of load, and the modal fired on every SUBSEQUENT load in the same session even
     /// with nothing actually typed since. <see cref="IsDirtySinceLastCheckpoint"/> below measures
-    /// relative to THIS baseline instead -- true only once <see cref="_editVersion"/> moves away from
+    /// relative to THIS baseline instead -- true only once <see cref="_stateId"/> moves away from
     /// what it was right after that checkpoint.
     /// <para>User-requested (2026-09-19): "when you save a template into the template library
     /// 'unsaved edits' should be removed and only added again if actual edits are made. Same for when
@@ -406,10 +407,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// comment for why <see cref="HasUnsavedEdits"/> itself is deliberately left unchanged rather than
     /// redefined.</para>
     /// <para>Retyped from <c>int</c>/<see cref="_undoStack"/>`.Count`-based to <see langword="long"/>/
-    /// <see cref="_editVersion"/>-based (yoniq-auditor finding, Blocker 2) -- see that field's own doc
+    /// <see cref="_stateId"/>-based (yoniq-auditor finding, Blocker 2) -- see that field's own doc
     /// comment.</para></summary>
-    private long _editVersionAtLastCheckpoint;
-    private readonly List<EditorSnapshot> _redoStack = [];
+    private long _stateIdAtLastCheckpoint;
+    private readonly List<(EditorSnapshot Snapshot, long StateId)> _redoStack = [];
 
     // Dispatcher-idle coalescing for PushUndoSnapshotCoalesced (round-1 plan-review: sliders/
     // TextBoxes fire many rapid Value/Text changes per user gesture with no cheap drag-start/end
@@ -1094,7 +1095,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// dead code, just no longer wired to those two specific user-facing surfaces.</para></summary>
     public bool HasUnsavedEdits => _undoStack.Count > 0 || _carriedOverUnsavedEdits;
 
-    /// <summary>Templates rack rework -- see <see cref="_editVersionAtLastCheckpoint"/>'s own doc
+    /// <summary>Templates rack rework -- see <see cref="_stateIdAtLastCheckpoint"/>'s own doc
     /// comment for why this is a SEPARATE signal from <see cref="HasUnsavedEdits"/>, not a reuse.
     /// <para>User-requested (2026-09-19): "when you save a template into the template library
     /// 'unsaved edits' should be removed and only added again if actual edits are made. Same for when
@@ -1109,12 +1110,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// ORs in <see cref="_carriedOverDirtySinceCheckpoint"/> (a separate, clearable field from
     /// <see cref="_carriedOverUnsavedEdits"/> -- see its own doc comment, yoniq-auditor Blocker 1) for
     /// the same mode-switch-preservation reason <see cref="HasUnsavedEdits"/> itself does -- a
-    /// mode-switched editor has no checkpoint baseline of its own yet, so the edit-version comparison
-    /// alone can't see work carried over from before the switch. Compares <see cref="_editVersion"/>,
-    /// not <see cref="_undoStack"/>`.Count` (yoniq-auditor Blocker 2) -- see <see cref="_editVersion"/>'s
+    /// mode-switched editor has no checkpoint baseline of its own yet, so the state-id comparison
+    /// alone can't see work carried over from before the switch. Compares <see cref="_stateId"/>,
+    /// not <see cref="_undoStack"/>`.Count` (yoniq-auditor Blocker 2) -- see <see cref="_stateId"/>'s
     /// own doc comment for why the raw stack count is unsafe to compare once <see cref="MaxUndoDepth"/>
     /// pins it.</para></summary>
-    public bool IsDirtySinceLastCheckpoint => _editVersion != _editVersionAtLastCheckpoint || _carriedOverDirtySinceCheckpoint;
+    public bool IsDirtySinceLastCheckpoint => _stateId != _stateIdAtLastCheckpoint || _carriedOverDirtySinceCheckpoint;
 
     /// <summary>Design-fidelity Phase C (mockups/Editwindow line 130) -- canvas footer, bottom-left:
     /// crop dims (always the target mode's own fixed render size, same numbers as
@@ -3703,7 +3704,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// only ever writes the manifest + thumbnail, never a per-element asset (see its own doc
     /// comment), since only this VM holds the resolved pixels to write. A successful save also
     /// resets the checkpoint baseline (2026-09-19 user request) -- see
-    /// <see cref="_editVersionAtLastCheckpoint"/>'s own doc comment.</summary>
+    /// <see cref="_stateIdAtLastCheckpoint"/>'s own doc comment.</summary>
     [RelayCommand(CanExecute = nameof(CanSaveTemplate))]
     private async Task SaveTemplateAsync()
     {
@@ -3716,11 +3717,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         IsSavingTemplate = true;
         string? existingId = null;
         string? templateId = null;
-        // yoniq-auditor risk finding: captured BEFORE the first await below, not after SaveAsync
-        // completes -- an edit made by the operator DURING this method's own ListAsync/asset-write/
-        // SaveAsync awaits must not be silently absorbed into the "clean" checkpoint, since that edit
-        // is genuinely not part of what got written to the template file.
-        var editVersionAtSaveStart = _editVersion;
+        long stateIdOfSavedContent;
         try
         {
             // Backlog item (auditor usability review, 2026-08-17): "Saving a template under an
@@ -3757,8 +3754,12 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // overwrite-saves) rather than risk deleting real, still-referenced data on a failure
             // path. A proper orphan sweep would need ITemplateStore to expose per-asset deletion,
             // which doesn't exist today and is out of scope for this fix.
-            var elements = new List<PersistedTemplateElement>(OverlayElements.Count);
-            foreach (var raw in RawOverlayElements)
+            // The checkpoint must identify exactly the state that gets serialized: snapshot the elements
+            // and read the state id in the same synchronous block, after the last await before it.
+            var elementsToSave = RawOverlayElements;
+            stateIdOfSavedContent = _stateId;
+            var elements = new List<PersistedTemplateElement>(elementsToSave.Count);
+            foreach (var raw in elementsToSave)
             {
                 elements.Add(await BuildPersistedElementAsync(templateId, raw));
             }
@@ -3770,9 +3771,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // 'unsaved edits' should be removed and only added again if actual edits are made." A
             // successful save is now a checkpoint, same as a successful load -- the canvas the
             // operator just saved is, by definition, no longer "unsaved" relative to the library.
-            // Resets to editVersionAtSaveStart (captured before the first await above), not the
-            // live _editVersion -- see that local's own comment.
-            _editVersionAtLastCheckpoint = editVersionAtSaveStart;
+            // The id of the serialized state, not the live one -- edits made during the awaits
+            // above are not in the template, so they must keep the canvas dirty.
+            _stateIdAtLastCheckpoint = stateIdOfSavedContent;
             _carriedOverDirtySinceCheckpoint = false;
             OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
             ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
@@ -4094,7 +4095,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // (LoadTemplateAsync's own name-prefill ListAsync call), so without notifying right here the
         // chip/badge still visibly flash dirty-then-clean across that window, and on a stale-generation
         // discard the caller's re-notify never runs at all, leaving them stuck showing dirty.
-        _editVersionAtLastCheckpoint = _editVersion;
+        _stateIdAtLastCheckpoint = _stateId;
         _carriedOverDirtySinceCheckpoint = false;
         OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
@@ -7055,10 +7056,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        var previous = _undoStack[^1];
+        var (previous, previousStateId) = _undoStack[^1];
         _undoStack.RemoveAt(_undoStack.Count - 1);
-        _redoStack.Add(CaptureSnapshot());
-        _editVersion--;
+        _redoStack.Add((CaptureSnapshot(), _stateId));
+        _stateId = previousStateId;
         ApplyState(previous);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
@@ -7095,10 +7096,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        var next = _redoStack[^1];
+        var (next, nextStateId) = _redoStack[^1];
         _redoStack.RemoveAt(_redoStack.Count - 1);
-        _undoStack.Add(CaptureSnapshot());
-        _editVersion++;
+        _undoStack.Add((CaptureSnapshot(), _stateId));
+        _stateId = nextStateId;
         ApplyState(next);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
@@ -7128,8 +7129,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        _undoStack.Add(CaptureSnapshot());
-        _editVersion++;
+        _undoStack.Add((CaptureSnapshot(), _stateId));
+        _stateId = ++_nextStateId;
         if (_undoStack.Count > MaxUndoDepth)
         {
             _undoStack.RemoveAt(0);
@@ -7173,8 +7174,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        _undoStack.Add(CaptureSnapshot());
-        _editVersion++;
+        _undoStack.Add((CaptureSnapshot(), _stateId));
+        _stateId = ++_nextStateId;
         if (_undoStack.Count > MaxUndoDepth)
         {
             _undoStack.RemoveAt(0);

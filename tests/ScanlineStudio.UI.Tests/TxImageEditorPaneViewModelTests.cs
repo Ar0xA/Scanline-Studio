@@ -966,6 +966,108 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.True(cancelled);
     }
 
+    // UX-TR1-b: the dirty check tracks the identity of the canvas state, so it must read dirty for
+    // any state the checkpoint has not seen, and clean whenever Undo/Redo lands back on the
+    // checkpointed state itself.
+
+    private static async Task<(TxImageEditorPaneViewModel Vm, ReadyRackViewModel Rack)> CreateEditorWithLoadedTemplateAsync()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        var templateId = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(templateId, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        await readyRack.RefreshAsync();
+        readyRack.LoadCommand.Execute(Assert.Single(readyRack.AllTemplates));
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+        return (vm, readyRack);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ThenUndo_ThenOneEdit_ReadsDirty()
+    {
+        var (vm, _) = await CreateEditorWithLoadedTemplateAsync();
+
+        vm.UndoCommand.Execute(null); // back to the pre-load canvas
+        vm.AddOverlayElementCommand.Execute(null);
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ThenEdit_ThenUndo_ReadsClean()
+    {
+        var (vm, _) = await CreateEditorWithLoadedTemplateAsync();
+
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ThenEdit_Undo_DifferentEdit_Undo_ReadsClean()
+    {
+        // Branching history makes the state ids non-consecutive, so an Undo that merely decremented
+        // a counter would land on the wrong id here.
+        var (vm, _) = await CreateEditorWithLoadedTemplateAsync();
+
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+        vm.UndoCommand.Execute(null);
+
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ThenEdit_Undo_Redo_ReadsDirty()
+    {
+        var (vm, _) = await CreateEditorWithLoadedTemplateAsync();
+
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.UndoCommand.Execute(null);
+        vm.RedoCommand.Execute(null);
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+    }
+
+    [AvaloniaFact]
+    public async Task LoadTemplate_ThenUndo_ThenRedo_ReadsClean()
+    {
+        // Pins Redo restoring the stored id rather than minting a new one.
+        var (vm, _) = await CreateEditorWithLoadedTemplateAsync();
+
+        vm.UndoCommand.Execute(null);
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+        vm.RedoCommand.Execute(null);
+
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+    }
+
+    [AvaloniaFact]
+    public async Task EditSave_ThenUndo_ThenOneEdit_ReadsDirty()
+    {
+        var templateStore = new FakeTemplateStore();
+        var readyRack = CreateReadyRack(templateStore);
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), readyRack);
+        vm.AddOverlayElementCommand.Execute(null);
+        vm.NewTemplateName = "Saved Template";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+
+        vm.UndoCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint);
+    }
+
     // spec/18-path-to-1.0.md High item 3. All rotate tests below use a non-square 6x4 source
     // within SmallMode's 8x8 working-copy budget (so _workingCopy IS _originalSource, the common
     // small-image case) unless a test specifically needs the two to be distinct instances.
