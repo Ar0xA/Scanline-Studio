@@ -761,7 +761,7 @@ public sealed class SqliteReceiveHistoryStoreTests
 
             var columns = await ReadColumnNamesAsync(dbPath);
 
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, columns);
         }
         finally
@@ -809,7 +809,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -863,7 +863,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -927,7 +927,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -991,7 +991,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var loaded = Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter()));
@@ -1009,6 +1009,82 @@ public sealed class SqliteReceiveHistoryStoreTests
             var secondStore = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
             Assert.Equal(expectedColumns, await ReadColumnNamesAsync(dbPath));
             _ = secondStore;
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    /// <summary>Every current user's `history.db` has the 16 columns up to DecodedCwId; SnrDb must be
+    /// appended last (same order as a fresh DB), old rows read back NULL, and a second startup is a no-op.</summary>
+    [Fact]
+    public async Task EnsureSchema_ExistingSixteenColumnDatabase_AddsSnrDbLast_OldRowsReadNull()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            await using (var seedConnection = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = dbPath }.ToString()))
+            {
+                await seedConnection.OpenAsync();
+                var create = seedConnection.CreateCommand();
+                create.CommandText = """
+                    CREATE TABLE ReceiveHistory (
+                        Id TEXT PRIMARY KEY,
+                        ReceivedAt TEXT NOT NULL,
+                        ModeId TEXT NOT NULL,
+                        FilePath TEXT NOT NULL,
+                        LinkedQsoId TEXT NULL,
+                        DecodeState TEXT NOT NULL DEFAULT 'Completed',
+                        Note TEXT NULL,
+                        IsFlagged INTEGER NOT NULL DEFAULT 0,
+                        FrequencyHz INTEGER NULL,
+                        RigMode TEXT NULL,
+                        AudioFilePath TEXT NULL,
+                        ReceivedAtUtc TEXT NULL,
+                        DecodedCallsign TEXT NULL,
+                        DecodedNrRst TEXT NULL,
+                        DecodedCallsignSource TEXT NULL,
+                        DecodedCwId TEXT NULL
+                    )
+                    """;
+                await create.ExecuteNonQueryAsync();
+
+                var insert = seedConnection.CreateCommand();
+                insert.CommandText = "INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, DecodeState, IsFlagged, ReceivedAtUtc) VALUES ('a', $receivedAt, 'robot36', '/tmp/a.png', 'Completed', 0, $receivedAtUtc)";
+                var now = DateTimeOffset.UtcNow;
+                insert.Parameters.AddWithValue("$receivedAt", now.ToString("O"));
+                insert.Parameters.AddWithValue("$receivedAtUtc", now.UtcDateTime.ToString("O"));
+                await insert.ExecuteNonQueryAsync();
+            }
+
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
+            Assert.Equal(expectedColumns, await ReadColumnNamesAsync(dbPath));
+            Assert.Null(Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter())).SnrDb);
+
+            _ = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            Assert.Equal(expectedColumns, await ReadColumnNamesAsync(dbPath));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Theory]
+    [InlineData(17.25)]
+    [InlineData(-60.0)]
+    [InlineData(null)]
+    public async Task RecordAsync_SnrDb_RoundTrips(double? snrDb)
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
+            await store.RecordAsync(new ReceiveHistoryEntry("a", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, SnrDb: snrDb));
+
+            Assert.Equal(snrDb, Assert.Single(await store.QueryAsync(new ReceiveHistoryFilter())).SnrDb);
         }
         finally
         {
@@ -1241,7 +1317,7 @@ public sealed class SqliteReceiveHistoryStoreTests
             var store = new SqliteReceiveHistoryStore(new FakeSettingsStore(), NullLogger<SqliteReceiveHistoryStore>.Instance, dbPath);
 
             var migratedColumns = await ReadColumnNamesAsync(dbPath);
-            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId"];
+            string[] expectedColumns = ["Id", "ReceivedAt", "ModeId", "FilePath", "LinkedQsoId", "DecodeState", "Note", "IsFlagged", "FrequencyHz", "RigMode", "AudioFilePath", "ReceivedAtUtc", "DecodedCallsign", "DecodedNrRst", "DecodedCallsignSource", "DecodedCwId", "SnrDb"];
             Assert.Equal(expectedColumns, migratedColumns);
 
             var indexNames = await ReadIndexNamesAsync(dbPath);

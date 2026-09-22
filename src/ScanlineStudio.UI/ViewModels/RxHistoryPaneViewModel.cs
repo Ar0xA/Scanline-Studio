@@ -189,7 +189,11 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(SelectedEntryCallsignSourceDisplay))]
+    [NotifyPropertyChangedFor(nameof(SelectedEntrySnrDisplay))]
     private RxHistoryEntryViewModel? _selectedEntry;
+
+    /// <summary>Gallery Selected-frame SNR row: the stored per-picture figure, "—" for entries without one.</summary>
+    public string SelectedEntrySnrDisplay => SnrDisplay.Format(_localization, SelectedEntry?.Entry.SnrDb);
 
     /// <summary>fsk_cwid.md B-P5, code-review finding: the Gallery Callsign row's source annotation --
     /// computed VM-side rather than an AXAML <c>StringFormat</c>/<c>TargetNullValue</c> combo, which

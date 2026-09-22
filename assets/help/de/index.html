@@ -240,7 +240,7 @@
         <div class="note"><strong>Automatischer Verlauf.</strong> Vollständig empfangene Bilder werden als PNG-Dateien im konfigurierten Ordner für RX-Bilder gespeichert und in der Galerie indiziert. Die JPEG-Qualität beim manuellen Export ändert diese Verlaufs-PNG-Dateien nicht.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="receive-controls" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="sync synchronisation schräglauf ppm neu synchronisieren resync schräglauf korrigieren schräglaufkorrektur squelch rauschsperre bpf bandpass notch agc puffer clipping übersteuerung auto stop neustart sync-quelle eingangskette dsp afc automatische frequenznachführung signalqualität gehörte stationen bereits gearbeitet worked before fsk cw id neue station rufzeichen">
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="sync synchronisation schräglauf ppm neu synchronisieren resync schräglauf korrigieren schräglaufkorrektur squelch rauschsperre bpf bandpass notch agc puffer clipping übersteuerung auto stop neustart sync-quelle eingangskette dsp afc automatische frequenznachführung signalqualität snr signal-rausch-abstand rauschabstand gehörte stationen bereits gearbeitet worked before fsk cw id neue station rufzeichen">
         <p class="topic-category">Empfangen</p>
         <h2>Empfangs-Bedienelemente und Telemetrie</h2>
         <p>Die Registerkarte Empfang zeigt, was der Decoder gerade tut. Hier muss nur selten etwas verstellt werden.</p>
@@ -278,6 +278,17 @@
           <li>Die Änderung wirkt während des laufenden Bildes. Ab der nächsten Zeile wird die Korrektur nicht mehr hinzugerechnet, und die Tondetektoren kehren zu ihren Nennfrequenzen zurück. Bereits decodierte Zeilen behalten die Korrektur, die sie erhalten haben.</li>
           <li>Bei ausgeschalteter AFC zeigt die Zeile <strong>Sync-Ton</strong> in der Karte Signalqualität einen Strich, weil keine Korrektur gemessen wird.</li>
           <li>Der AVT-Modus verwendet nie AFC, unabhängig von dieser Einstellung.</li>
+        </ul>
+
+        <h3>Signalqualität: SNR</h3>
+        <p>Die Zeile <strong>SNR</strong> in der Karte Signalqualität und, während ein Bild empfangen wird, der Chip <strong>SNR</strong> in der Statusleiste zeigen den <a class="term" href="#glossary-snr">Signal-Rausch-Abstand</a> des empfangenen Signals in Dezibel. Höher ist besser: ab etwa 30 dB ist das Bild sauber, unter etwa 10 dB ist sichtbares Rauschen zu erwarten.</p>
+        <ul>
+          <li>Gemessen wird am Synchronimpuls am Anfang jeder Zeile. Dieser Impuls ist ein gleichbleibender Ton, daher kann die Anwendung den Ton vom Rauschen um ihn herum trennen. Das Rauschen wird im Band 400–2500 Hz gezählt, in dem das SSTV-Signal liegt.</li>
+          <li>Der Live-Wert ist der Median der letzten 16 Zeilen. Am Bildende wird ein Wert für das ganze Bild (der Median über alle seine Zeilen) mit dem Bild gespeichert und in der <a href="#gallery">Galerie</a> angezeigt.</li>
+          <li>Werte unter −10 dB erscheinen als <strong>&lt; −10 dB</strong>, Werte über 50 dB als <strong>&gt; 50 dB</strong>.</li>
+          <li>Ein Strich erscheint im Leerlauf, wenn <strong>Empfangs-SNR messen</strong> unter Optionen → Decodierung ausgeschaltet ist (siehe <a href="#decode-options">Decodierungsoptionen</a>), in den ersten Zeilen jedes Bildes, solange der Synchronimpuls gesucht wird, und im AVT-Modus, der keine Synchronimpulse hat.</li>
+          <li>Es wird nur gemessen. Die decodierten Bilder sind mit und ohne Messung identisch.</li>
+          <li>Bei ausgeschaltetem Auto-Schräglauf kann ein großer Taktfehler der Soundkarte den Synchronimpuls aus dem Messbereich wandern lassen. Der Wert ist dann zu niedrig oder verschwindet. Auto-Schräglauf wieder einschalten.</li>
         </ul>
 
         <div class="warning"><strong>Nicht nur nach Zahlen abstimmen.</strong> Wird ein Bild sauber decodiert, Squelch, BPF oder erweiterte Demodulator-Einstellungen nicht allein deshalb ändern, damit eine Anzeige anders aussieht.</div>
@@ -471,7 +482,7 @@
         <div class="warning"><strong>Die vorschriftsmäßige Kennung bleibt Ihre Verantwortung.</strong> Prüfen Sie, ob gewählter Text, Rufzeichen, Verfahren und Zeitpunkt den für Ihre Station geltenden Vorschriften entsprechen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="gallery" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="galerie empfang verlauf historie bilder miniaturansichten vorschaubilder filter heute nicht geloggt markiert suche notiz exportieren ausgewähltes bild speicherort speicher festplatte frei bildbetrachter kopieren ältere anzeigen">
+      <article id="gallery" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="galerie empfang verlauf historie bilder miniaturansichten vorschaubilder filter heute nicht geloggt markiert suche notiz exportieren ausgewähltes bild speicherort speicher festplatte frei bildbetrachter kopieren ältere anzeigen snr signal-rausch-abstand">
         <p class="topic-category">Bilder und Logbuch</p>
         <h2>Empfangene Bilder durchsuchen</h2>
         <p>Die Galerie ist der durchsuchbare Verlauf abgeschlossener Empfänge. Eine Miniaturansicht auswählen, um dieses Bild zu prüfen und zu verwalten.</p>
@@ -487,6 +498,7 @@
         <h3>Mit der Auswahl arbeiten</h3>
         <ul>
           <li>Eine Notiz hinzufügen oder wichtige Bilder markieren.</li>
+          <li>Die Zeile <strong>SNR</strong> zeigt den beim Empfang gemessenen Signal-Rausch-Abstand des Bildes (siehe <a href="#receive-controls">Signalqualität: SNR</a>). Einen Strich zeigt sie bei Bildern, die vor dieser Funktion, bei ausgeschalteter Messung oder im AVT-Modus empfangen wurden.</li>
           <li><strong>Exportieren</strong> wählen, um eine Kopie in einem gewählten Bildformat zu schreiben. Bei der Wahl von JPEG gilt die JPEG-Qualität aus der Registerkarte „Allgemein“.</li>
           <li><strong>Im Logbuch öffnen</strong> wählen, um das Bild mit einem bestehenden QSO zu verknüpfen oder ein neues QSO anzulegen und zu verknüpfen.</li>
           <li>Den Bildbetrachter öffnen für Einpassen/100 % Zoom, Navigation vorheriges/nächstes Bild, Kopieren in die Zwischenablage und Öffnen des Dateispeicherorts.</li>
@@ -614,7 +626,7 @@
         <div class="tip"><strong>Gerätenamen können sich ändern.</strong> USB-Audiogeräte werden nach einem Wechsel des Anschlusses oder einem Betriebssystem-Update möglicherweise anders aufgelistet. Verschwinden die Pegel nach einer Hardware-Änderung, beide Geräteauswahlen erneut prüfen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="decode-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="decodierung decoder decodieren optionen empfindlichkeit squelch rauschsperre bpf bandpass demodulator hilbert pll nulldurchgang puffer pufferung aus ein erweitert auto stopp neustart sync synchronisation schräglauf slant">
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="decodierung decoder decodieren optionen empfindlichkeit squelch rauschsperre bpf bandpass demodulator hilbert pll nulldurchgang puffer pufferung aus ein erweitert auto stopp neustart sync synchronisation schräglauf slant snr signal-rausch-abstand messen">
         <p class="topic-category">Referenz der Optionen</p>
         <h2>Decodieroptionen</h2>
         <p>Die Registerkarte „Decodierung“ ändert das Verhalten des Empfängers. Mit den Standardwerten beginnen und beim Lösen eines konkreten Empfangsproblems jeweils nur eine Einstellung ändern. Es sind dieselben Einstellungen, die auf der Registerkarte „Empfang“ in der <a href="#receive-controls">Eingangskette</a> angezeigt werden. Eine Änderung an einer der beiden Stellen wirkt sich auf beide aus.</p>
@@ -631,6 +643,7 @@
               <tr><td>Auto-Neustart</td><td>Kann bei einem während des Empfangs erkannten stärkeren Synchronimpuls neu starten.</td></tr>
               <tr><td>Auto-Sync</td><td>Versucht, die Synchronisation während der Decodierung wiederherzustellen.</td></tr>
               <tr><td>Auto-Schräglauf</td><td>Korrigiert den vom Soundtakt verursachten Schräglauf während des Empfangs. Erfordert RX-Pufferung.</td></tr>
+              <tr><td>Empfangs-SNR messen</td><td>Misst den Signal-Rausch-Abstand am Synchronimpuls jeder Zeile und zeigt ihn live und pro Bild an (siehe <a href="#receive-controls">Signalqualität: SNR</a>). Nur eine Messung. Gilt ab der nächsten empfangenen Zeile.</td></tr>
             </tbody>
           </table>
         </div>
@@ -984,6 +997,7 @@
           <dt id="glossary-qso">QSO</dt><dd>Eine Funkverbindung zwischen Stationen.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Bestätigung einer Funkverbindung; häufig in Form einer gestalteten Karte oder eines SSTV-Bildes.</dd>
           <dt id="glossary-rst">RST</dt><dd>Rapport aus Lesbarkeit (Readability), Signalstärke (Strength) und Ton (Tone). Bei SSTV-Verbindungen können verwandte Rapport-Konventionen verwendet werden.</dd>
+          <dt id="glossary-snr">SNR</dt><dd>Signal-Rausch-Abstand (Signal-to-Noise Ratio) in Dezibel: wie viel stärker das Signal ist als das Rauschen um es herum. Scanline Studio misst ihn am Synchronimpuls jeder Zeile gegenüber dem Rauschen im Band 400–2500 Hz.</dd>
           <dt id="glossary-sstv">SSTV</dt><dd>Slow-Scan Television (Schmalbandfernsehen): Standbilder, die als Töne im NF-Bereich über einen Funkkanal übertragen werden.</dd>
           <dt id="glossary-swr">SWR</dt><dd>Stehwellenverhältnis (Standing Wave Ratio); ein Maß für die Fehlanpassung der Impedanz im HF-Pfad.</dd>
           <dt id="glossary-utc">UTC</dt><dd>Koordinierte Weltzeit; die einheitliche Zeitzone, in der Funkamateure ihre Verbindungen loggen, damit Aufzeichnungen aus verschiedenen Zeitzonen vergleichbar bleiben.</dd>

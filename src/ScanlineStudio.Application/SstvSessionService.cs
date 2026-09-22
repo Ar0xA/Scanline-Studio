@@ -1156,6 +1156,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <summary>See <see cref="ISstvSessionService.SignalPeakLevel"/> / <see cref="ISstvDecoder.SignalPeakLevel"/>.</summary>
     public double SignalPeakLevel => _decoder.SignalPeakLevel;
 
+    /// <summary>See <see cref="ISstvSessionService.LiveSnrDb"/>.</summary>
+    public double LiveSnrDb => _decoder.LiveSnrDb;
+
+    /// <summary>See <see cref="ISstvSessionService.ReceptionSnrDb"/>.</summary>
+    public double ReceptionSnrDb => _decoder.ReceptionSnrDb;
+
     /// <summary>See <see cref="ISstvSessionService.RawInputPeakLevel"/> for the full contract and
     /// why it's a separate value from <see cref="SignalPeakLevel"/> above.</summary>
     public double RawInputPeakLevel => _rawInputPeakLevel;
@@ -1285,6 +1291,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     }
 
     /// <summary>See <see cref="ISstvSessionService.RequestAutoSlantEnabled"/>.</summary>
+    /// <summary>See <see cref="ISstvSessionService.RequestSnrMeasurementEnabled"/>.</summary>
+    public void RequestSnrMeasurementEnabled(bool enabled)
+    {
+        Log.SnrMeasurementEnabledRequested(_logger, enabled);
+        _decoder.SnrMeasurementEnabled = enabled;
+    }
+
     public void RequestAutoSlantEnabled(bool enabled)
     {
         Log.AutoSlantEnabledRequested(_logger, enabled);
@@ -4946,6 +4959,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Auto-Slant enabled requested: {Enabled}")]
         public static partial void AutoSlantEnabledRequested(ILogger logger, bool enabled);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Reception SNR measurement enabled requested: {Enabled}")]
+        public static partial void SnrMeasurementEnabledRequested(ILogger logger, bool enabled);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "AFC enabled requested: {Enabled}")]
         public static partial void AfcEnabledRequested(ILogger logger, bool enabled);

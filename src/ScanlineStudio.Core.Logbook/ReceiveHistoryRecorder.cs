@@ -90,6 +90,11 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
     // reception, never a candidate for the abandon discriminator below.
     private long _currentReceptionId;
 
+    // ISstvDecoder.ReceptionSnrDb sampled synchronously at this image's latest decoded line (null = none
+    // measured). Same stash/clear lifecycle as _previousLine/_currentReceptionId, and hoisted into a local
+    // before every save closure, so an abandon or completion records the value of ITS last line.
+    private double? _currentSnrDb;
+
     // Abandoned-image-save state (port of legacy's m_ReqSave, sstv.cpp:2134-2137 -- see
     // OnDecodeRestarted's own doc comment for the full design and the three rounds of review this
     // went through, two plan-level and two code-level). Holds whatever was current the instant
@@ -107,6 +112,9 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
     // as its siblings above; never a live _currentReceptionId read at abandon time (see
     // OnDecodeRestarted's own doc comment for why both branches need their own id source).
     private long _pendingAbandonReceptionId;
+
+    // Stashed with the abandon candidate above, same lifecycle.
+    private double? _pendingAbandonSnrDb;
 
     // Second code-level review finding: whether the stashed image had ALREADY been handled (normal
     // completion, or an earlier DecodeRestarted already consumed it) at the moment it was stashed --
@@ -177,6 +185,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
             _pendingAbandonStep = _observedStep;
             _pendingAbandonRecorded = _recordedForCurrentImage;
             _pendingAbandonReceptionId = _currentReceptionId;
+            _pendingAbandonSnrDb = _currentSnrDb;
         }
         else
         {
@@ -185,6 +194,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
 
         _currentMode = mode;
         _previousLine = null;
+        _currentSnrDb = null;
         _observedStep = null;
         _recordedForCurrentImage = false;
         // T0-10: _scratchMaterialized = true (not false) -- there is no image data yet for the new
@@ -404,6 +414,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         // records, a LATER OnModeDetected may already have advanced it past the abandoned
         // reception's own id -- exactly the minority-ordering case this stash exists for).
         long candidateReceptionId = 0;
+        double? candidateSnrDb = null;
 
         if (_pendingAbandonMode == abandonedMode)
         {
@@ -411,6 +422,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
             // already describes the NEW image at this point, and marking it handled here would
             // prevent it ever being recorded once it completes.
             candidateReceptionId = _pendingAbandonReceptionId;
+            candidateSnrDb = _pendingAbandonSnrDb;
             if (!_pendingAbandonRecorded && _pendingAbandonImage is not null && _pendingAbandonLine is not null)
             {
                 candidateImage = _pendingAbandonImage;
@@ -421,6 +433,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         else if (_currentMode == abandonedMode)
         {
             candidateReceptionId = _currentReceptionId;
+            candidateSnrDb = _currentSnrDb;
             // Dominant ordering. "Mark this mode's image as handled" and "is there actually
             // something to save" are deliberately two SEPARATE conditions here (an earlier draft
             // conflated them, gating the flag on image presence -- caught by auditor review: that
@@ -485,9 +498,10 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         // ui_transition_plan.md step 12: hoisted synchronously, same reasoning as the fields above --
         // already selected by the correct branch-specific discriminator, never re-read live.
         var receptionId = candidateReceptionId;
+        var snrDb = candidateSnrDb;
 
         // Scheduled off the decoder callback, and owned through PNG + history completion.
-        QueueSave(() => RecordAbandonedImageAsync(modeId, snapshot, radioState, receptionId), modeId, abandoned: true);
+        QueueSave(() => RecordAbandonedImageAsync(modeId, snapshot, radioState, receptionId, snrDb), modeId, abandoned: true);
     }
 
     private void OnLineDecoded(DecodedImageUpdate update)
@@ -537,6 +551,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         }
 
         _previousLine = update.Line;
+        _currentSnrDb = _decoder.ReceptionSnrDb is var snr && double.IsFinite(snr) ? snr : null;
 
         // The step (scanline group size) is only known from the SECOND event onward -- the first
         // event of any image can never be treated as "complete" here: every real SstvModeDefinition
@@ -588,14 +603,15 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         // here), but still must be read NOW, not from inside the closure below: a new OnModeDetected
         // could advance _currentReceptionId before the closure actually runs.
         var receptionId = _currentReceptionId;
+        var snrDb = _currentSnrDb;
 
         // Fire-and-forget, isolated -- must not block the caller (the audio drain thread, same
         // threading contract as SstvSessionService's own _decoderHandler/_waterfallHandler; disk +
         // SQLite I/O here would otherwise stall live decoding).
-        QueueSave(() => RecordCompletedImageAsync(modeId, snapshot, generation, radioState, receptionId), modeId, abandoned: false);
+        QueueSave(() => RecordCompletedImageAsync(modeId, snapshot, generation, radioState, receptionId, snrDb), modeId, abandoned: false);
     }
 
-    private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation, RadioState? radioState, long receptionId)
+    private async Task RecordCompletedImageAsync(string modeId, PixelSnapshot snapshot, int generation, RadioState? radioState, long receptionId, double? snrDb)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
         Directory.CreateDirectory(directory);
@@ -631,7 +647,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
 
         var entry = new ReceiveHistoryEntry(
             entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Completed,
-            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode)
+            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode, SnrDb: snrDb)
         {
             ReceptionId = receptionId,
         };
@@ -650,7 +666,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
     // `_partial` suffix, on top of RecordCompletedImageAsync's own millisecond+entry-id
     // uniqueness scheme -- gives the user a visible marker distinguishing a partial/abandoned save
     // from a genuinely completed one, which neither legacy nor an unsuffixed filename would.
-    private async Task RecordAbandonedImageAsync(string modeId, PixelSnapshot snapshot, RadioState? radioState, long receptionId)
+    private async Task RecordAbandonedImageAsync(string modeId, PixelSnapshot snapshot, RadioState? radioState, long receptionId, double? snrDb)
     {
         var directory = await ResolveImagesDirectoryAsync().ConfigureAwait(false);
         Directory.CreateDirectory(directory);
@@ -670,7 +686,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
 
         var entry = new ReceiveHistoryEntry(
             entryId, receivedAt, modeId, filePath, LinkedQsoId: null, DecodeState: ReceiveDecodeState.Abandoned,
-            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode)
+            FrequencyHz: radioState?.FrequencyHz, RigMode: radioState?.Mode, SnrDb: snrDb)
         {
             ReceptionId = receptionId,
         };
@@ -769,6 +785,7 @@ public sealed partial class ReceiveHistoryRecorder : IAsyncDisposable
         _pendingAbandonStep = null;
         _pendingAbandonRecorded = false;
         _pendingAbandonReceptionId = 0;
+        _pendingAbandonSnrDb = null;
     }
 
     private Task<string> ResolveImagesDirectoryAsync() => ReceiveHistorySettings.ResolveDirectoryAsync(_settingsStore);

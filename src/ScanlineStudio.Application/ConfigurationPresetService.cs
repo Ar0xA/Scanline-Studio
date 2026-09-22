@@ -353,6 +353,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         _sstvSession.RequestAutoSyncEnabled(newResolved.AutoSyncEnabled);
         _sstvSession.RequestAutoStopEnabled(newResolved.AutoStopEnabled);
         _sstvSession.RequestAutoSlantEnabled(newResolved.AutoSlantEnabled);
+        _sstvSession.RequestSnrMeasurementEnabled(newResolved.SnrMeasurementEnabled);
         _sstvSession.RequestAfcEnabled(newResolved.AfcEnabled);
         _sstvSession.RequestSyncRestartEnabled(newResolved.SyncRestartEnabled);
         _sstvSession.RequestReconfiguration(newResolved.RxBpfPreset, newResolved.DemodType, newResolved.RxBufferMode);

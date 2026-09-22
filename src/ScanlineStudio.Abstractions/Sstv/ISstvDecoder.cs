@@ -438,6 +438,25 @@ public interface ISstvDecoder
     /// Safe to read from any thread, same guarantee as <see cref="SlantPpm"/> above.</summary>
     double SignalPeakLevel { get; }
 
+    /// <summary>Sync-pulse SNR over the last 16 measured lines of the current reception, in dB:
+    /// tone power in the sync pulse over noise power in 400–2500 Hz (medians). <see cref="double.NaN"/>
+    /// when there is none: idle, measurement off, AVT, the first lines of a reception (placement is
+    /// still being acquired), and after the picture ends or is abandoned. Unclamped; a noise-dominated
+    /// reading bottoms out at −60 dB. Published by the decode thread after every line; lock-free, safe
+    /// from any thread (latest value wins).</summary>
+    double LiveSnrDb { get; }
+
+    /// <summary>Sync-pulse SNR over every measured line of the current (or just-finished) reception, in
+    /// dB, same definition as <see cref="LiveSnrDb"/>. Survives the end of the picture until the next
+    /// reception locks or measurement is switched off; <see cref="double.NaN"/> otherwise. Safe from any
+    /// thread.</summary>
+    double ReceptionSnrDb { get; }
+
+    /// <summary>Whether the decoder measures sync-pulse SNR. Measurement only: decoded pixels are
+    /// identical either way. Safe to set from any thread; applied at the next <see cref="PushSamples"/>
+    /// (the getter returns the last requested value). Switching it off clears both SNR figures.</summary>
+    bool SnrMeasurementEnabled { get; set; }
+
     /// <summary>Whether <see cref="SignalPeakLevel"/>'s underlying peak amplitude has reached
     /// legacy's own red-meter-bar threshold -- <c>CLVL.m_CurMax &gt;= 24578</c>, the exact
     /// condition legacy's RX level meter turns red at (<c>DrawLvl</c>'s RX branch,

@@ -78,7 +78,12 @@ public enum ReceiveDecodeState
 /// <see cref="DecodedCwId"/> (fsk_cwid.md B-P5): the CW-ID decoder's raw decoded text (e.g.
 /// <c>"DE W1AW"</c>), always attached when a CW-ID window decodes for this reception -- independent of
 /// whether a callsign was extracted from it (a CW-ID with no callsign-shaped token still fills this
-/// field). Mirrors <c>RxImagePaneViewModel.CwIdText</c>'s own live-pane value for the same event.</summary>
+/// field). Mirrors <c>RxImagePaneViewModel.CwIdText</c>'s own live-pane value for the same event.
+///
+/// <see cref="SnrDb"/>: the reception's per-picture sync-pulse SNR in dB
+/// (<c>ISstvDecoder.ReceptionSnrDb</c> as sampled at the reception's last decoded line), unclamped.
+/// <see langword="null"/> when none was measured: measurement off, AVT, too few lines, rows older than
+/// this field, and orphan-imported files.</summary>
 public sealed record ReceiveHistoryEntry(
     string Id,
     DateTimeOffset ReceivedAt,
@@ -94,7 +99,8 @@ public sealed record ReceiveHistoryEntry(
     string? DecodedCallsign = null,
     string? DecodedNrRst = null,
     string? DecodedCallsignSource = null,
-    string? DecodedCwId = null)
+    string? DecodedCwId = null,
+    double? SnrDb = null)
 {
     /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): the reception identity
     /// (<c>ISstvDecoder.ReceptionSequence</c>'s value at this reception's arm) an in-memory

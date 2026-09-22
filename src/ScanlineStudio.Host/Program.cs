@@ -1296,7 +1296,7 @@ internal static partial class Program
         // construction, see that method's own doc comment for why a second independent copy here
         // would have been a real drift risk.
         var resolved = decoderSettings.Resolve();
-        return new RestartableSstvDecoder(
+        var decoder = new RestartableSstvDecoder(
             afcEnabled: resolved.AfcEnabled,
             syncRestartEnabled: resolved.SyncRestartEnabled,
             autoSyncEnabled: resolved.AutoSyncEnabled,
@@ -1317,6 +1317,8 @@ internal static partial class Program
             zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz,
             sampleRate: sampleRate,
             loggerFactory: loggerFactory);
+        decoder.SnrMeasurementEnabled = resolved.SnrMeasurementEnabled;
+        return decoder;
     }
 
     // Restart-required-settings backlog item 4 (2026-08-27): RestartableSstvEncoder, not the plain

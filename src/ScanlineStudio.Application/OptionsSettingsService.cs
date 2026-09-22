@@ -84,6 +84,7 @@ public sealed partial class OptionsSettingsService
         AutoStopEnabled: new SstvDecoderSettings().AutoStopEnabled ?? false,
         SyncRestartEnabled: new SstvDecoderSettings().SyncRestartEnabled ?? true,
         SenseLevel: new SstvDecoderSettings().SenseLevel ?? 1,
+        SnrMeasurementEnabled: new SstvDecoderSettings().SnrMeasurementEnabled ?? SstvDecoderSettings.DefaultSnrMeasurementEnabled,
         // Absent -> Hilbert (legacy's real compiled-in default) -- same "?? Hilbert" resolution
         // ScanlineStudio.Host.Program's ISstvDecoder registration applies (that read site also
         // clamps a present-but-out-of-range value; this dialog's own ApplyFromSnapshot does the
@@ -194,6 +195,7 @@ public sealed partial class OptionsSettingsService
             AutoStopEnabled: decoder.AutoStopEnabled ?? false,
             SyncRestartEnabled: decoder.SyncRestartEnabled ?? true,
             SenseLevel: decoder.SenseLevel ?? 1,
+            SnrMeasurementEnabled: decoder.SnrMeasurementEnabled ?? SstvDecoderSettings.DefaultSnrMeasurementEnabled,
             DemodType: decoder.DemodType ?? DemodType.Hilbert,
             RxBpfPreset: decoder.RxBpfPreset ?? RxBpfPreset.Wide,
             RxBufferMode: decoder.RxBufferMode ?? RxBufferMode.On,
@@ -363,6 +365,7 @@ public sealed partial class OptionsSettingsService
                     AutoStopEnabled = snapshot.AutoStopEnabled,
                     SyncRestartEnabled = snapshot.SyncRestartEnabled,
                     SenseLevel = snapshot.SenseLevel,
+                    SnrMeasurementEnabled = snapshot.SnrMeasurementEnabled,
                     DemodType = snapshot.DemodType,
                     RxBpfPreset = snapshot.RxBpfPreset,
                     RxBufferMode = snapshot.RxBufferMode,

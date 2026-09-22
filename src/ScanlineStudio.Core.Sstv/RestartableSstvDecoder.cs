@@ -170,6 +170,9 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
     // CreateInner under _gate.
     private bool _stationIdDecodeEnabled;
 
+    // Live-settable like _stationIdDecodeEnabled: seed for a freshly-(re)built inner AND the current value. Guarded by _gate.
+    private bool _snrMeasurementEnabled;
+
     // Un-stub-RX-tab Piece A: NOT readonly, same reasoning as _stationIdDecodeEnabled immediately
     // above -- unlike RequestReSync's own genuinely one-shot request (silently dropped if a restart
     // races it, see that method's own doc comment), the notch is persistent STATE that must survive
@@ -1086,6 +1089,64 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
     }
 
+    /// <summary>See <see cref="ISstvDecoder.LiveSnrDb"/>. Forwards to whichever inner is current; a
+    /// freshly swapped-in inner reads NaN until it measures.</summary>
+    public double LiveSnrDb
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.LiveSnrDb;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.ReceptionSnrDb"/>. Forwards to whichever inner is current.</summary>
+    public double ReceptionSnrDb
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.ReceptionSnrDb;
+            }
+        }
+    }
+
+    /// <summary>See <see cref="ISstvDecoder.SnrMeasurementEnabled"/>. Applied to the current inner and
+    /// stored so <see cref="CreateInner"/> re-applies it after every swap.</summary>
+    public bool SnrMeasurementEnabled
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _snrMeasurementEnabled;
+            }
+        }
+        set
+        {
+            lock (_gate)
+            {
+                _snrMeasurementEnabled = value;
+                _inner.SnrMeasurementEnabled = value;
+            }
+        }
+    }
+
+    /// <summary>Test-only: the CURRENT inner's own toggle, to prove a swap re-applied it.</summary>
+    internal bool InnerSnrMeasurementEnabledForTests
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _inner.SnrMeasurementEnabled;
+            }
+        }
+    }
+
     /// <summary>Forwards to whichever inner instance is current. Unlike <see cref="SlantPpm"/>/
     /// <see cref="SyncOffsetSamples"/> above, a restart swap does NOT reliably reset this to
     /// <c>0.0</c>: <see cref="PushSamples"/> swaps to a fresh inner and then forwards that SAME
@@ -1755,6 +1816,7 @@ public sealed class RestartableSstvDecoder : ISstvDecoder, ISstvDecoderMaintenan
         }
 
         decoder.StationIdDecodeEnabled = _stationIdDecodeEnabled;
+        decoder.SnrMeasurementEnabled = _snrMeasurementEnabled;
         if (_notchEnabled)
         {
             // A fresh decoder has nothing locked yet, so ApplyPendingNotchRequest's own group-delay

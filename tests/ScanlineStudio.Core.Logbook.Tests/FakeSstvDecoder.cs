@@ -70,6 +70,12 @@ internal sealed class FakeSstvDecoder : ISstvDecoder
 
     public double SignalPeakLevel => 0.0;
 
+    public double LiveSnrDb { get; set; } = double.NaN;
+
+    public double ReceptionSnrDb { get; set; } = double.NaN;
+
+    public bool SnrMeasurementEnabled { get; set; }
+
     public bool IsLevelOverdriven => false;
 
     public bool RxBufferDegraded => false;

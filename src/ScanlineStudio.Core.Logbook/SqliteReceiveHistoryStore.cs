@@ -52,7 +52,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         using var command = connection.CreateCommand();
-        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId FROM ReceiveHistory WHERE 1 = 1";
+        command.CommandText = "SELECT Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId, SnrDb FROM ReceiveHistory WHERE 1 = 1";
 
         if (filter.ModeId is not null)
         {
@@ -96,7 +96,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 reader.IsDBNull(11) ? null : reader.GetString(11),
                 reader.IsDBNull(12) ? null : reader.GetString(12),
                 reader.IsDBNull(13) ? null : reader.GetString(13),
-                reader.IsDBNull(14) ? null : reader.GetString(14)));
+                reader.IsDBNull(14) ? null : reader.GetString(14),
+                reader.IsDBNull(15) ? null : reader.GetDouble(15)));
         }
 
         return results;
@@ -153,8 +154,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
 
         using var command = connection.CreateCommand();
         command.CommandText = """
-            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId)
-            SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId
+            INSERT INTO ReceiveHistory (Id, ReceivedAt, ModeId, FilePath, LinkedQsoId, DecodeState, Note, IsFlagged, FrequencyHz, RigMode, AudioFilePath, ReceivedAtUtc, DecodedCallsign, DecodedNrRst, DecodedCallsignSource, DecodedCwId, SnrDb)
+            SELECT $id, $receivedAt, $modeId, $filePath, $linkedQsoId, $decodeState, $note, $isFlagged, $frequencyHz, $rigMode, $audioFilePath, $receivedAtUtc, $decodedCallsign, $decodedNrRst, $decodedCallsignSource, $decodedCwId, $snrDb
             WHERE NOT EXISTS (SELECT 1 FROM ReceiveHistoryDeletion WHERE FilePath = $canonicalPath)
             """;
         command.Parameters.AddWithValue("$id", entry.Id);
@@ -186,6 +187,7 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         // already exists.
         command.Parameters.AddWithValue("$decodedCallsignSource", (object?)entry.DecodedCallsignSource ?? DBNull.Value);
         command.Parameters.AddWithValue("$decodedCwId", (object?)entry.DecodedCwId ?? DBNull.Value);
+        command.Parameters.AddWithValue("$snrDb", entry.SnrDb is { } snr && double.IsFinite(snr) ? snr : DBNull.Value);
 
         command.Parameters.AddWithValue("$canonicalPath", CanonicalFilePath(entry.FilePath));
         if (await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false) == 0)
@@ -690,7 +692,8 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
                 DecodedCallsign TEXT NULL,
                 DecodedNrRst TEXT NULL,
                 DecodedCallsignSource TEXT NULL,
-                DecodedCwId TEXT NULL
+                DecodedCwId TEXT NULL,
+                SnrDb REAL NULL
             )
             """;
         createCommand.ExecuteNonQuery();
@@ -792,6 +795,13 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
         if (!existingColumns.Contains("DecodedCwId"))
         {
             ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN DecodedCwId TEXT NULL");
+        }
+
+        // Per-picture sync-pulse SNR, appended after DecodedCwId (same append-only order). Old rows stay
+        // NULL: never measured. The orphan-import INSERT leaves it NULL by design.
+        if (!existingColumns.Contains("SnrDb"))
+        {
+            ExecuteNonQuery(connection, transaction, "ALTER TABLE ReceiveHistory ADD COLUMN SnrDb REAL NULL");
         }
 
         // Backfill ONLY when DecodeState was newly added THIS pass -- never on subsequent startups,

@@ -245,7 +245,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality stations heard worked before fsk cw id new station callsign">
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality snr signal to noise ratio noise level stations heard worked before fsk cw id new station callsign">
         <p class="topic-category">Receiving</p>
         <h2>Reception controls and telemetry</h2>
         <p>The Receive tab shows what the decoder is doing. You rarely need to adjust anything here.</p>
@@ -283,6 +283,17 @@
           <li>The change applies during the current picture. From the next line onward the correction is no longer added, and the tone detectors return to their nominal frequencies. Lines already decoded keep the correction they were given.</li>
           <li>While AFC is off, the <strong>Sync tone</strong> row on the Signal quality card shows a dash, because no correction is being measured.</li>
           <li>AVT mode never uses AFC, whatever this is set to.</li>
+        </ul>
+
+        <h3>Signal quality: SNR</h3>
+        <p>The <strong>SNR</strong> row on the Signal quality card, and the <strong>SNR</strong> chip in the status bar while a picture is being received, show the <a class="term" href="#glossary-snr">signal-to-noise ratio</a> of the incoming signal in decibels. Higher is better: around 30 dB and above is a clean picture, and below about 10 dB you should expect visible noise.</p>
+        <ul>
+          <li>It is measured on the sync pulse at the start of every line. That pulse is a steady tone, so the application can separate the tone from the noise around it. The noise is counted over 400–2500 Hz, the band the SSTV signal occupies.</li>
+          <li>The live figure is the median over the last 16 lines. When the picture ends, one figure for the whole picture (the median over all of its lines) is stored with the image and shown in the <a href="#gallery">Gallery</a>.</li>
+          <li>Readings below −10 dB show as <strong>&lt; −10 dB</strong> and above 50 dB as <strong>&gt; 50 dB</strong>.</li>
+          <li>It shows a dash while idle, when <strong>Measure reception SNR</strong> is off in Options → Decode (see <a href="#decode-options">Decode options</a>), during the first lines of each picture while the sync pulse is being located, and in AVT mode, which has no sync pulses.</li>
+          <li>It measures only. Decoded pictures are identical with it on or off.</li>
+          <li>With Auto-slant off, a large sound-card clock error can make the sync pulse drift away from where it is measured. The figure then reads low or disappears. Switch Auto-slant back on.</li>
         </ul>
 
         <div class="warning"><strong>Do not tune by numbers alone.</strong> If a picture decodes cleanly, avoid changing squelch, BPF, or advanced demodulator settings merely to make a readout look different.</div>
@@ -484,7 +495,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="gallery" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="gallery receive history images thumbnails filter today unlogged flagged search note export selected frame storage disk free image viewer copy show older">
+      <article id="gallery" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="gallery receive history images thumbnails filter today unlogged flagged search note export selected frame storage disk free image viewer copy show older snr signal to noise">
         <p class="topic-category">Images and logging</p>
         <h2>Browse received images</h2>
         <p>The Gallery is the searchable history of completed receptions. Select a thumbnail to inspect and manage that frame.</p>
@@ -500,6 +511,7 @@
         <h3>Work with the selection</h3>
         <ul>
           <li>Add a note or flag important frames.</li>
+          <li>The <strong>SNR</strong> row shows the picture's signal-to-noise ratio as measured while it was received (see <a href="#receive-controls">Signal quality: SNR</a>). It shows a dash for pictures received before this feature existed, with measurement off, or in AVT mode.</li>
           <li>Select <strong>Export</strong> to write a copy in a chosen image format. The General tab's JPEG quality applies when you choose JPEG.</li>
           <li>Select <strong>Open in log</strong> to link the frame to an existing QSO or create and link a new QSO.</li>
           <li>Open the image viewer for Fit/100% zoom, previous/next navigation, clipboard copy, and opening the file location.</li>
@@ -633,7 +645,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant">
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant snr signal to noise measure">
         <p class="topic-category">Options reference</p>
         <h2>Decode options</h2>
         <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. These are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing it in either place changes both.</p>
@@ -650,6 +662,7 @@
               <tr><td>Auto-restart</td><td>Can restart on a stronger sync detected during reception.</td></tr>
               <tr><td>Auto-sync</td><td>Attempts to re-establish synchronization during decode.</td></tr>
               <tr><td>Auto-slant</td><td>Corrects sound-clock slant while receiving. Requires RX buffering.</td></tr>
+              <tr><td>Measure reception SNR</td><td>Measures the signal-to-noise ratio on each line's sync pulse and shows it live and per picture (see <a href="#receive-controls">Signal quality: SNR</a>). Measurement only. It applies from the next received line.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1015,6 +1028,7 @@
           <dt id="glossary-qso">QSO</dt><dd>A radio contact between stations.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Confirmation of a radio contact; often represented by a designed card or SSTV picture.</dd>
           <dt id="glossary-rst">RST</dt><dd>Readability, strength, and tone signal report. SSTV exchanges may use related reporting conventions.</dd>
+          <dt id="glossary-snr">SNR</dt><dd>Signal-to-noise ratio, in decibels: how much stronger the signal is than the noise around it. Scanline Studio measures it on each line's sync pulse, against the noise in 400–2500 Hz.</dd>
           <dt id="glossary-sstv">SSTV</dt><dd>Slow-scan television: still images carried as audio-frequency tones over a radio channel.</dd>
           <dt id="glossary-swr">SWR</dt><dd>Standing wave ratio; an indication of impedance mismatch in the RF path.</dd>
           <dt id="glossary-utc">UTC</dt><dd>Coordinated Universal Time; the single time zone radio operators use to log contacts so records from different time zones stay comparable.</dd>

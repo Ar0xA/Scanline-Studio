@@ -166,6 +166,15 @@ public sealed record SstvDecoderSettings
     /// construction; a third independent copy would risk silently drifting from the other two, which
     /// would make a self-test decode with different settings than live RX -- exactly the kind of bad
     /// demod-type/sense-level mismatch the self-test exists to catch.</summary>
+    /// <summary>Whether the decoder measures sync-pulse SNR (measurement only; decoded pixels are identical
+    /// either way). Absent resolves to <see cref="DefaultSnrMeasurementEnabled"/> at every read site —
+    /// never a property initializer (the settings missing-default rule).</summary>
+    public bool? SnrMeasurementEnabled { get; init; }
+
+    /// <summary>Default for an absent <see cref="SnrMeasurementEnabled"/>; set by the step-7 bit-identity
+    /// and cost checks (docs/reception-snr-validation.md).</summary>
+    public const bool DefaultSnrMeasurementEnabled = false;
+
     public ResolvedSstvDecoderSettings Resolve() => new(
         AfcEnabled: AfcEnabled ?? true,
         SyncRestartEnabled: SyncRestartEnabled ?? true,
@@ -214,7 +223,8 @@ public sealed record SstvDecoderSettings
         // Both-direction clamp, applied from the start here (unlike PllLoopCutoffHz's own floor-only
         // shape above, discovered incrementally) -- legacy's real two-sided range is [500,8000]
         // (`Option.cpp:536-540`).
-        ZeroCrossingSmoothingFrequencyHz: ZeroCrossingSmoothingFrequencyHz is { } zs ? Math.Clamp(zs, 500.0, 8000.0) : 2200);
+        ZeroCrossingSmoothingFrequencyHz: ZeroCrossingSmoothingFrequencyHz is { } zs ? Math.Clamp(zs, 500.0, 8000.0) : 2200,
+        SnrMeasurementEnabled: SnrMeasurementEnabled ?? DefaultSnrMeasurementEnabled);
 }
 
 /// <summary>Concrete, fully-resolved decoder-behavior values -- see <see cref="SstvDecoderSettings.Resolve"/>.</summary>
@@ -236,4 +246,5 @@ public sealed record ResolvedSstvDecoderSettings(
     ZeroCrossingSmoothingMode ZeroCrossingSmoothingMode,
     int ZeroCrossingOutputOrder,
     double ZeroCrossingOutputCutoffHz,
-    double ZeroCrossingSmoothingFrequencyHz);
+    double ZeroCrossingSmoothingFrequencyHz,
+    bool SnrMeasurementEnabled);

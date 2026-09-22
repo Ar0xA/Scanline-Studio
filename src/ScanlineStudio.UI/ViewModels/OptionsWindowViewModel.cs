@@ -467,6 +467,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private bool _syncRestartEnabled = true;
 
+    /// <summary>Decode tab "Measure reception SNR" -- see
+    /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.SnrMeasurementEnabled"/>. Live-applied on
+    /// Save via <see cref="ISstvSessionService.RequestSnrMeasurementEnabled"/>.</summary>
+    [ObservableProperty]
+    private bool _snrMeasurementEnabled = ScanlineStudio.Core.Sstv.SstvDecoderSettings.DefaultSnrMeasurementEnabled;
+
     /// <summary>Squelch/sense-level preset index (0-3, "Very low".."Very high") -- see
     /// <see cref="ScanlineStudio.Core.Sstv.SstvDecoderSettings.SenseLevel"/>'s own doc comment for
     /// the legacy basis and the absent-vs-out-of-range fallback distinction. Backed by 4
@@ -3303,6 +3309,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         AutoSlantEnabled = snapshot.AutoSlantEnabled;
         AutoStopEnabled = snapshot.AutoStopEnabled;
         SyncRestartEnabled = snapshot.SyncRestartEnabled;
+        SnrMeasurementEnabled = snapshot.SnrMeasurementEnabled;
         // Clamp, not trust -- a hand-edited settings.json can persist an out-of-range value; falls
         // back to index 0 ("Very low"), matching legacy's own SetSenseLvl switch `default:` branch
         // (see SstvDecoderSettings.SenseLevel's own doc comment for why 0, not 1, is the fallback
@@ -3545,6 +3552,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             AutoStopEnabled: AutoStopEnabled,
             SyncRestartEnabled: SyncRestartEnabled,
             SenseLevel: SenseLevel,
+            SnrMeasurementEnabled: SnrMeasurementEnabled,
             DemodType: DemodType,
             RxBpfPreset: RxBpfPreset,
             RxBufferMode: RxBufferMode,
@@ -3669,6 +3677,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             _sstvSession.RequestAutoStopEnabled(AutoStopEnabled);
             _sstvSession.RequestAutoSlantEnabled(AutoSlantEnabled);
             _sstvSession.RequestSyncRestartEnabled(SyncRestartEnabled);
+            _sstvSession.RequestSnrMeasurementEnabled(SnrMeasurementEnabled);
 
             // RX BPF preset/Demod type/RX buffer mode (2026-08-27, restart-required-settings backlog
             // item 2): same unconditional-every-Save convention as RequestSenseLevel/RequestAutoSyncEnabled
@@ -4052,6 +4061,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         AutoSlantEnabled = defaults.AutoSlantEnabled;
         AutoStopEnabled = defaults.AutoStopEnabled;
         SyncRestartEnabled = defaults.SyncRestartEnabled;
+        SnrMeasurementEnabled = defaults.SnrMeasurementEnabled;
         SenseLevel = defaults.SenseLevel;
         DemodType = defaults.DemodType;
         RxBpfPreset = defaults.RxBpfPreset;

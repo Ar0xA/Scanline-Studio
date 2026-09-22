@@ -63,6 +63,7 @@ public sealed record OptionsSnapshot(
     bool AutoStopEnabled,
     bool SyncRestartEnabled,
     int SenseLevel,
+    bool SnrMeasurementEnabled,
     AudioChannelSource CaptureChannelSource,
     bool StereoTxEnabled,
     CwIdMode CwIdMode,

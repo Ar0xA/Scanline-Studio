@@ -853,6 +853,10 @@
                                          Auto Slant has no effect with RX buffering off. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSlant}"
                                               IsChecked="{Binding AutoSlantEnabled}" IsEnabled="{Binding IsAutoSlantRowEnabled}" />
+                                    <!-- Sync-pulse SNR measurement: read-only, decoded pixels identical either way. -->
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.MeasureSnr}"
+                                              ToolTip.Tip="{loc:Translate Options.Decode.MeasureSnr.Tooltip}"
+                                              IsChecked="{Binding SnrMeasurementEnabled}" />
 
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetDecodeToDefaultCommand}" />
                                 </StackPanel>

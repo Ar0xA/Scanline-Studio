@@ -922,6 +922,22 @@ public static class SstvModeRegistry
         throw new InvalidOperationException($"Mode '{mode.Id}' has no sync segment at {expectedSyncHz}Hz.");
     }
 
+    /// <summary>Duration of the same sync segment <see cref="GetSyncSegmentOffsetMs"/> locates. Throws
+    /// for <see cref="Avt"/>, same caller-exclusion contract.</summary>
+    internal static double GetSyncSegmentDurationMs(SstvModeDefinition mode)
+    {
+        var expectedSyncHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
+        foreach (var segment in mode.LineSegments)
+        {
+            if (segment is SyncSegment sync && Math.Abs(sync.FrequencyHz - expectedSyncHz) < 0.01)
+            {
+                return sync.DurationMs;
+            }
+        }
+
+        throw new InvalidOperationException($"Mode '{mode.Id}' has no sync segment at {expectedSyncHz}Hz.");
+    }
+
     /// <summary>The midpoint (not start) of this mode's sync segment, in ms from line start --
     /// <see cref="GetSyncSegmentOffsetMs"/> plus half that same segment's own duration. Used only by
     /// the sync-interval-bypass mode detector (<c>m_sint2</c>, see

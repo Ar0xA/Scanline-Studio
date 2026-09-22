@@ -563,6 +563,7 @@
                                 <StackPanel Classes="Industry IndustryRows">
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClipLoHiDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.SyncTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncToneDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow" ToolTip.Tip="{loc:Translate Panes.RxSignal.SnrTooltip}"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.Snr}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SnrDisplay}" /></Grid></Border>
                                 </StackPanel>
                             </HeaderedContentControl>
                         </StackPanel>
@@ -1407,12 +1408,8 @@
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding SelectedEntry.Entry.FilePath}" />
                                     </Grid></Border>
                                     <!-- Combined rows matching mock2's own layout: Mode is real
-                                         (Entry.ModeId). SNR removed outright 2026-08-26 (user
-                                         decision) — no per-frame SNR is tracked anywhere today and
-                                         it needs a real noise-floor-estimation subsystem this port
-                                         doesn't have (scoped as a real backlog item, spec/14-roadmap.md,
-                                         not a quick wire); row's own label renamed from "Mode / SNR"
-                                         to "Mode" to match. Time is real (Entry.ReceivedAt); the
+                                         (Entry.ModeId). SNR has its own row below it (sync-pulse
+                                         SNR, ReceiveHistoryEntry.SnrDb). Time is real (Entry.ReceivedAt); the
                                          Frequency half was removed outright, stub sweep 2026-08-26 —
                                          ReceiveHistoryEntry has no captured-frequency field, so it was
                                          a literal em-dash, and the row's own label renamed from
@@ -1420,6 +1417,11 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ModeId}" />
+                                    </Grid></Border>
+                                    <!-- Per-picture sync-pulse SNR (ReceiveHistoryEntry.SnrDb); VM-side "—" when absent. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.SnrLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntrySnrDisplay}" />
                                     </Grid></Border>
                                     <!-- Date row added 2026-08-26 (user decision), above Time — same
                                          real Entry.ReceivedAt value as the Time row below, just the
@@ -1881,13 +1883,9 @@
              spec/17-rx-telemetry-feasibility.md). Buffer's own "· N XRUN" half (a separate
              audio-engine dropped-frame counter, not this decoder's own sample buffer) is real too
              now, recombined into mock2's original single format; see
-             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. SNR was a
-             literal placeholder matching mock2's own exact wording, same precedent as the Receive
-             tab's own scaffolding cards — removed outright 2026-08-26 (user decision, along with
-             the identical Gallery/tab-strip SNR chips): no per-line/per-frame SNR is tracked
-             anywhere today, and it needs a real noise-floor-estimation subsystem this port doesn't
-             have, scoped as a real backlog item (spec/14-roadmap.md), not left as a placeholder
-             indefinitely. The Memory chip that used to sit here (same placeholder
+             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. The SNR chip is
+             real (RxImage.SnrStatusBarDisplay, live sync-pulse SNR) and only visible while a
+             reception is being measured. The Memory chip that used to sit here (same placeholder
              class) was removed outright in the earlier stub sweep — no memory-channel concept exists
              anywhere in IRadioSessionService to back it, unlike Disk below. Disk is now real
              (RxHistory.DiskFreeDisplay, DriveInfo-based, stub sweep 2026-08-26) — no longer a
@@ -1991,6 +1989,9 @@
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.SlantPpmStatusBarDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding RxImage.IsSnrChipVisible}">
+                        <TextBlock Text="{Binding RxImage.SnrStatusBarDisplay}" />
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" />

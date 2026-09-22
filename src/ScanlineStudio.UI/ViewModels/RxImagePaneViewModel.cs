@@ -434,6 +434,23 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(AgcGainDisplay))]
     private double _signalPeakLevel;
 
+    /// <summary>Live sync-pulse SNR (<see cref="ISstvSessionService.LiveSnrDb"/>), polled by the
+    /// telemetry timer; NaN when there is none (idle, measurement off, AVT, acquiring).</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SnrDisplay))]
+    [NotifyPropertyChangedFor(nameof(SnrStatusBarDisplay))]
+    [NotifyPropertyChangedFor(nameof(IsSnrChipVisible))]
+    private double _liveSnrDb = double.NaN;
+
+    /// <summary>Signal quality card's SNR row: the live figure, or "—".</summary>
+    public string SnrDisplay => ViewModels.SnrDisplay.Format(_localization, LiveSnrDb);
+
+    /// <summary>Status bar chip text; the chip is only shown while <see cref="IsSnrChipVisible"/>.</summary>
+    public string SnrStatusBarDisplay => _localization.GetString("MainWindow.StatusBar.SnrValueFormat", ViewModels.SnrDisplay.Format(_localization, LiveSnrDb));
+
+    /// <summary>True only while a reception is being measured.</summary>
+    public bool IsSnrChipVisible => !double.IsNaN(LiveSnrDb);
+
     /// <summary>ui_transition_plan.md step 12, Step 4: real, varying backing for the main-window
     /// status bar's auto-save-audio chip -- see <see cref="ISstvSessionService.IsAudioAutoSaveActive"/>'s
     /// own doc comment for why this must never be a static reflection of the Options enable toggle.</summary>
@@ -1641,6 +1658,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         IsLevelOverdriven = _sstvSession.IsLevelOverdriven;
         BufferedSampleCount = _sstvSession.BufferedSampleCount;
         SignalPeakLevel = _sstvSession.SignalPeakLevel;
+        LiveSnrDb = _sstvSession.LiveSnrDb;
         CaptureOverrunCount = _sstvSession.CaptureOverrunCount;
         IsAudioAutoSaveActive = _sstvSession.IsAudioAutoSaveActive;
     }
