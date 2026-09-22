@@ -173,17 +173,6 @@ keyring (as QRZ-PW did for the lookup password via `QrzCredentialService`) would
 Needs an Options control first, then the same store. `spec/12-settings.md` "Secrets" DoD stays unticked
 for it.
 
-### QRZ-APIKEY. OPEN — QRZ upload API key stored in plaintext, no Options control
-
-`QrzUploadSettings.ApiKey` lives in plain `settings.json` and can only be set by hand-editing it
-(`assets/help/index.html:546`). Split out of QRZ-PW 2026-09-22: moving it to the OS keyring without an
-Options field would make it invisible and unmanageable. Needs an Options field first, then the same
-`ICredentialStore` path as the lookup password.
-
----
-
-## 4. Measure before building
-
 ### M2. DECISION — Hamlib header anchoring
 
 Vendor a pinned `rig.h` into the test project with a `LICENSES.md` entry (Hamlib is LGPL-2.1, `CLAUDE.md`
