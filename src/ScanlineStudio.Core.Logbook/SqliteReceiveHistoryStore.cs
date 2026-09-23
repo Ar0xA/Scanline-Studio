@@ -622,12 +622,12 @@ public sealed partial class SqliteReceiveHistoryStore : IReceiveHistoryStore
     /// <summary>Creates the table on a fresh DB, and migrates an existing pre-`Note`/`IsFlagged`/
     /// `DecodeState` DB in place -- the first schema change this store has ever needed. Lightweight
     /// `PRAGMA table_info` probe + `ALTER TABLE ADD COLUMN` (NOT a versioned-migration framework --
-    /// proportionate to a single 16-column table; do not "improve" this without a real second table
+    /// proportionate to a single 17-column table; do not "improve" this without a real second table
     /// to justify it). `CREATE TABLE`'s own column definitions carry the identical `DEFAULT`s the
-    /// `ALTER TABLE` statements below use, AND the 11 `ALTER TABLE ADD COLUMN`s below run in the
+    /// `ALTER TABLE` statements below use, AND the 12 `ALTER TABLE ADD COLUMN`s below run in the
     /// same order `CREATE TABLE` declares them (`DecodeState`, `Note`, `IsFlagged`, `FrequencyHz`,
     /// `RigMode`, `AudioFilePath`, `ReceivedAtUtc`, `DecodedCallsign`, `DecodedNrRst`,
-    /// `DecodedCallsignSource`, `DecodedCwId`) --
+    /// `DecodedCallsignSource`, `DecodedCwId`, `SnrDb`) --
     /// deliberate, not incidental: SQLite's `ADD COLUMN` always appends, so a migrated DB's column
     /// ORDER would otherwise permanently diverge from a fresh DB's the moment this ships (code-level
     /// audit finding -- harmless today, since no query anywhere uses `SELECT *`, but a real,

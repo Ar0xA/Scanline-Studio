@@ -281,9 +281,9 @@
         </ul>
 
         <h3>Signalqualität: SNR</h3>
-        <p>Die Zeile <strong>SNR</strong> in der Karte Signalqualität und, während ein Bild empfangen wird, der Chip <strong>SNR</strong> in der Statusleiste zeigen den <a class="term" href="#glossary-snr">Signal-Rausch-Abstand</a> des empfangenen Signals in Dezibel. Höher ist besser: ab etwa 30 dB ist das Bild sauber, unter etwa 10 dB ist sichtbares Rauschen zu erwarten.</p>
+        <p>Die Zeile <strong>SNR</strong> in der Karte Signalqualität und, während ein Bild empfangen wird, der Chip <strong>SNR</strong> in der Statusleiste zeigen den <a class="term" href="#glossary-snr">Signal-Rausch-Abstand</a> des empfangenen Signals in Dezibel. Höher ist besser. Als Anhaltspunkt aus echten Empfangsaufnahmen: lesbare Bilder lagen bei etwa 5–14 dB, Bilder aus reinem Rauschen unter 0 dB. Den Wert zum Vergleich von Bildern und Bedingungen verwenden, nicht als feste Grenze.</p>
         <ul>
-          <li>Gemessen wird am Synchronimpuls am Anfang jeder Zeile. Dieser Impuls ist ein gleichbleibender Ton, daher kann die Anwendung den Ton vom Rauschen um ihn herum trennen. Das Rauschen wird im Band 400–2500 Hz gezählt, in dem das SSTV-Signal liegt.</li>
+          <li>Gemessen wird am Synchronimpuls jeder Zeile (in den meisten Modi am Zeilenanfang, in Scottie-Modi in der Zeilenmitte). Dieser Impuls ist ein gleichbleibender Ton, daher kann die Anwendung den Ton vom Rauschen um ihn herum trennen. Das Rauschen wird in einem festen Referenzband von 400–2500 Hz gezählt, das das ganze SSTV-Signal enthält.</li>
           <li>Der Live-Wert ist der Median der letzten 16 Zeilen. Am Bildende wird ein Wert für das ganze Bild (der Median über alle seine Zeilen) mit dem Bild gespeichert und in der <a href="#gallery">Galerie</a> angezeigt.</li>
           <li>Werte unter −10 dB erscheinen als <strong>&lt; −10 dB</strong>, Werte über 50 dB als <strong>&gt; 50 dB</strong>.</li>
           <li>Ein Strich erscheint im Leerlauf, wenn <strong>Empfangs-SNR messen</strong> unter Optionen → Decodierung ausgeschaltet ist (siehe <a href="#decode-options">Decodierungsoptionen</a>), in den ersten Zeilen jedes Bildes, solange der Synchronimpuls gesucht wird, und im AVT-Modus, der keine Synchronimpulse hat.</li>

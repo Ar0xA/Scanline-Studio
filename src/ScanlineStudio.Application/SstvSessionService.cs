@@ -1290,7 +1290,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.AutoStopEnabled = enabled;
     }
 
-    /// <summary>See <see cref="ISstvSessionService.RequestAutoSlantEnabled"/>.</summary>
     /// <summary>See <see cref="ISstvSessionService.RequestSnrMeasurementEnabled"/>.</summary>
     public void RequestSnrMeasurementEnabled(bool enabled)
     {
@@ -1298,6 +1297,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _decoder.SnrMeasurementEnabled = enabled;
     }
 
+    /// <summary>See <see cref="ISstvSessionService.RequestAutoSlantEnabled"/>.</summary>
     public void RequestAutoSlantEnabled(bool enabled)
     {
         Log.AutoSlantEnabledRequested(_logger, enabled);

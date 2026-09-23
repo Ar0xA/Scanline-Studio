@@ -286,9 +286,9 @@
         </ul>
 
         <h3>Signal quality: SNR</h3>
-        <p>The <strong>SNR</strong> row on the Signal quality card, and the <strong>SNR</strong> chip in the status bar while a picture is being received, show the <a class="term" href="#glossary-snr">signal-to-noise ratio</a> of the incoming signal in decibels. Higher is better: around 30 dB and above is a clean picture, and below about 10 dB you should expect visible noise.</p>
+        <p>The <strong>SNR</strong> row on the Signal quality card, and the <strong>SNR</strong> chip in the status bar while a picture is being received, show the <a class="term" href="#glossary-snr">signal-to-noise ratio</a> of the incoming signal in decibels. Higher is better. As a guide from real off-air recordings: readable pictures measured about 5–14 dB, and pictures that were pure noise measured below 0 dB. Use it to compare pictures and conditions rather than as a fixed pass mark.</p>
         <ul>
-          <li>It is measured on the sync pulse at the start of every line. That pulse is a steady tone, so the application can separate the tone from the noise around it. The noise is counted over 400–2500 Hz, the band the SSTV signal occupies.</li>
+          <li>It is measured on the sync pulse of every line (in most modes at the start of the line; in Scottie modes in the middle). That pulse is a steady tone, so the application can separate the tone from the noise around it. The noise is counted over a fixed 400–2500 Hz reference band, which contains the whole SSTV signal.</li>
           <li>The live figure is the median over the last 16 lines. When the picture ends, one figure for the whole picture (the median over all of its lines) is stored with the image and shown in the <a href="#gallery">Gallery</a>.</li>
           <li>Readings below −10 dB show as <strong>&lt; −10 dB</strong> and above 50 dB as <strong>&gt; 50 dB</strong>.</li>
           <li>It shows a dash while idle, when <strong>Measure reception SNR</strong> is off in Options → Decode (see <a href="#decode-options">Decode options</a>), during the first lines of each picture while the sync pulse is being located, and in AVT mode, which has no sync pulses.</li>
