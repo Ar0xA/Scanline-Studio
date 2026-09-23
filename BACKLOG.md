@@ -219,17 +219,25 @@ German (`de`) shipped 2026-09-20. Spec: `spec/10-localization.md`.
 ### R3. Receive-tab signal telemetry — the parts with no legacy precedent
 
 The three cards exist and every shown row is bound to real data. What is left is new design:
-- **R3-a. DECISION, then OPEN — reception SNR.** A live SNR / noise-floor estimate in the Signal-quality
-  card, optionally per line, plus one summary figure saved per received picture (Gallery, status bar).
-  Legacy has no measurement (`CNoise` is a generator). First decide what "SNR" means for FM SSTV (e.g.
-  sync-tone power against the between-tone floor, or frequency spread on the sync pulse), then validate
-  against the noise harness and the OTA recordings. Starting it reopens the closed decode-quality
-  workstream — measurement only, but a user call. DSP improvement rules apply (UI toggle).
-- **R3-b. OPEN, after R3-a** — Signal-quality Min/Max.
+- **R3-b. OPEN** — Signal-quality Min/Max (the per-line SNR it would summarise shipped with R3-a, `SyncSnrTracker`).
 - **R3-c. DECISION** — an Input-chain squelch. No legacy basis. Legacy's only squelch is repeater-scoped
   `m_RepSQ` (gated on `m_Repeater && !m_Sync`; uses at `sstv.cpp:1502`, `:1865`, `:2688`, `:2734`), so it
   is not a drop-in general RX squelch. Distinct from the Sync & Slant card's "Squelch level" (VIS sense
   level). Citations: `spec/17-rx-telemetry-feasibility.md`.
+
+### SNR-HFNOISE. OPEN — validate reception SNR on real HF noise
+
+The reception-SNR estimator (`SyncSnrEstimator`, shipped on 0.9.1-beta) was validated with full-band white
+noise only (`docs/reception-snr-validation.md`); the real-noise corpus that `RealNoiseImpairmentSweepHarness`
+needs is not on this machine. Coloured noise (sub-400 Hz hum, adjacent QRM) can leak into the in-band
+periodogram bins and make the figure read low. Run `SyncSnrValidationProbe`'s accuracy grid on the real-noise
+corpus once it exists; also add a decoder-level test that a replay backward snap resets SNR placement
+(ReSync is the only discontinuity tested at decoder level today).
+
+### SNR-GALLERY-ROW. OPEN — visual check of the Gallery SNR row
+
+The new SNR row in the Gallery's Selected-frame panel sits in a fixed-height panel and was never checked on
+screen for clipping. Check it at MainWindow's declared default size and at the Large font preset.
 
 ### R4. BLOCKED on H3 — offline callsign and country lookup
 
