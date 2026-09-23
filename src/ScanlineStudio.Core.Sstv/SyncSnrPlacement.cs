@@ -16,8 +16,17 @@ internal static class SyncSnrPlacement
     /// start precedes the formula.</summary>
     internal const double CentreBiasMs = -1.8;
 
-    /// <summary>Half-width of the sync search around the centre.</summary>
+    /// <summary>Minimum half-width of the sync search around the centre.</summary>
     internal const double SearchHalfRangeMs = 2.0;
+
+    /// <summary>Half-width actually searched: <see cref="SearchHalfRangeMs"/>, or half the pulse for pulses of
+    /// <see cref="LongPulseMs"/> and more. Mistuning shifts the sync-envelope anchor by several ms on 20 ms (PD)
+    /// pulses; on shorter pulses a wider range only lets neighbouring segments bias the location at low SNR
+    /// (measured, docs/reception-snr-validation.md).</summary>
+    internal static double SearchHalfRangeFor(double syncDurationMs) =>
+        syncDurationMs >= LongPulseMs ? syncDurationMs / 2.0 : SearchHalfRangeMs;
+
+    internal const double LongPulseMs = 15.0;
 
     /// <summary>Returns the raw-timeline sample index (fractional) the sync search is centred on.</summary>
     /// <param name="anchor">The line's own start cursor, before it is advanced.</param>

@@ -48,7 +48,7 @@ internal static class SyncSnrEstimator
 
         var steps = Math.Max(0, (int)Math.Round(halfSpanHz / GridStepHz));
         var bestIndex = 0;
-        var energies = new double[(2 * steps) + 1];
+        Span<double> energies = stackalloc double[(2 * steps) + 1];
         for (var k = 0; k < energies.Length; k++)
         {
             energies[k] = Fit(window, sampleRate, centreHz + ((k - steps) * GridStepHz)).Energy;
@@ -78,26 +78,37 @@ internal static class SyncSnrEstimator
             return Estimate.Invalid;
         }
 
-        // Residual periodogram over the in-band bins; the residual is formed on the fly, never stored.
+        // Residual periodogram over the in-band bins.
+        var pooled = n > 1024 ? System.Buffers.ArrayPool<double>.Shared.Rent(n) : null;
+        var residual = pooled is null ? stackalloc double[n] : pooled.AsSpan(0, n);
+        var (toneCos, toneSin) = Rotator(fittedHz, sampleRate);
+        double tc = 1, ts = 0;
+        for (var i = 0; i < n; i++)
+        {
+            residual[i] = window[i] - ((fit.A * tc) + (fit.B * ts));
+            (tc, ts) = ((tc * toneCos) - (ts * toneSin), (ts * toneCos) + (tc * toneSin));
+        }
+
         var bandSum = 0.0;
         for (var bin = firstBin; bin <= lastBin; bin++)
         {
             var omega = 2.0 * Math.PI * bin / n;
             double re = 0, im = 0;
-            var (toneCos, toneSin) = Rotator(fittedHz, sampleRate);
-            double tc = 1, ts = 0;
             double bc = 1, bs = 0;
             var (stepCos, stepSin) = (Math.Cos(omega), Math.Sin(omega));
             for (var i = 0; i < n; i++)
             {
-                var residual = window[i] - ((fit.A * tc) + (fit.B * ts));
-                re += residual * bc;
-                im -= residual * bs;
-                (tc, ts) = ((tc * toneCos) - (ts * toneSin), (ts * toneCos) + (tc * toneSin));
+                re += residual[i] * bc;
+                im -= residual[i] * bs;
                 (bc, bs) = ((bc * stepCos) - (bs * stepSin), (bs * stepCos) + (bc * stepSin));
             }
 
             bandSum += (re * re) + (im * im);
+        }
+
+        if (pooled is not null)
+        {
+            System.Buffers.ArrayPool<double>.Shared.Return(pooled);
         }
 
         // One-sided in-band power, + the 2 degrees of freedom the fit removed from inside the band,

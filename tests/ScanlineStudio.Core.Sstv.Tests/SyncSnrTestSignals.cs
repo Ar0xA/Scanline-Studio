@@ -28,25 +28,30 @@ internal static class SyncSnrTestSignals
     /// Truth comes from the encoder's own arithmetic, not an estimate: a segment's first sample is
     /// <c>(long)</c> of the running ideal sample count (the same accumulation <c>EncodeBatchedAsyncCore</c>
     /// does), the tone switches half a sample before it, and the symmetric TX BPF delays everything by
-    /// exactly <c>tap/2</c> samples.
+    /// exactly <c>tap/2</c> samples. A clock error (<paramref name="sampleRateOffsetHz"/>) is the
+    /// encoder's own effective rate, so the truth accumulates at that rate too.
     /// </remarks>
     public static async Task<(float[] Samples, double[] SyncStarts)> EncodeAsync(
         SstvModeDefinition mode,
         int sampleRate,
         int? transmissionLines,
-        IImageSource? source = null)
+        IImageSource? source = null,
+        double sampleRateOffsetHz = 0.0,
+        int txBpfTapCount = TxOutputBandpassFilter.DefaultTapCount,
+        double carrierOffsetHz = 0.0)
     {
         source ??= SourceFor(mode);
         var encoder = new AnalogFmSstvEncoder(sampleRate);
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
         var syncHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
         var syncOffsetMs = SstvModeRegistry.GetSyncSegmentOffsetMs(mode);
-        const double txBpfDelay = TxOutputBandpassFilter.DefaultTapCount / 2;
+        var txBpfDelay = (double)(TxOutputBandpassFilter.ClampTapCount(txBpfTapCount) / 2);
+        var effectiveRate = sampleRate + sampleRateOffsetHz;
 
         var ideal = 0.0;
         foreach (var (_, durationMs) in HeaderSegments(mode))
         {
-            ideal += durationMs / 1000.0 * sampleRate;
+            ideal += durationMs / 1000.0 * effectiveRate;
         }
 
         var syncStarts = new List<double>();
@@ -65,7 +70,7 @@ internal static class SyncSnrTestSignals
                     found = true;
                 }
 
-                ideal += durationMs / 1000.0 * sampleRate;
+                ideal += durationMs / 1000.0 * effectiveRate;
                 lineOffsetMs += durationMs;
             }
 
@@ -81,7 +86,21 @@ internal static class SyncSnrTestSignals
         }
 
         var samples = new List<float>((int)Math.Min(endSample, int.MaxValue / 2));
-        await foreach (var batch in encoder.EncodeBatchedAsync(mode, source))
+        if (carrierOffsetHz != 0.0)
+        {
+            await foreach (var sample in encoder.EncodeWithCarrierOffsetAsync(mode, source, carrierOffsetHz))
+            {
+                samples.Add(sample);
+                if (samples.Count >= endSample)
+                {
+                    break;
+                }
+            }
+
+            return (samples.ToArray(), syncStarts.ToArray());
+        }
+
+        await foreach (var batch in encoder.EncodeBatchedAsync(mode, source, sampleRateOffsetHz: sampleRateOffsetHz, txBpfTapCount: txBpfTapCount))
         {
             var take = (int)Math.Min(batch.Length, endSample - samples.Count);
             samples.AddRange(batch[..take].ToArray());

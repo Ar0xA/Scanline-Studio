@@ -171,9 +171,10 @@ public sealed record SstvDecoderSettings
     /// never a property initializer (the settings missing-default rule).</summary>
     public bool? SnrMeasurementEnabled { get; init; }
 
-    /// <summary>Default for an absent <see cref="SnrMeasurementEnabled"/>; set by the step-7 bit-identity
-    /// and cost checks (docs/reception-snr-validation.md).</summary>
-    public const bool DefaultSnrMeasurementEnabled = false;
+    /// <summary>Default for an absent <see cref="SnrMeasurementEnabled"/>: on, because the step-7 checks
+    /// passed — decoded pixels identical on/off in every comparison, cost under 2% of decode time per line
+    /// (docs/reception-snr-validation.md).</summary>
+    public const bool DefaultSnrMeasurementEnabled = true;
 
     public ResolvedSstvDecoderSettings Resolve() => new(
         AfcEnabled: AfcEnabled ?? true,

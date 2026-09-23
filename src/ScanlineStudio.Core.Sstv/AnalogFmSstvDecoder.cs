@@ -443,7 +443,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
     private AfcTracker? _afcTracker;
 
-    // Sync-pulse SNR measurement (MeasureLineSyncSnr). Tracker/enabled/expected-anchor/stride are decode
+    // Sync-pulse SNR measurement (MeasureLineSyncSnr). Tracker/enabled/expected-anchor are decode
     // thread only. The two published figures are double bits written with Interlocked.Exchange on the
     // decode thread and read with Interlocked.Read from any thread: the producer never waits, a slow
     // reader simply sees the latest value (older values are dropped). _snrMeasurementRequested is the
@@ -452,7 +452,6 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private bool _snrMeasurementEnabled;
     private int _snrMeasurementRequested;
     private int _snrExpectedAnchor = int.MinValue;
-    private double _snrPreviousStride = double.NaN;
     private long _liveSnrBits = BitConverter.DoubleToInt64Bits(double.NaN);
     private long _receptionSnrBits = BitConverter.DoubleToInt64Bits(double.NaN);
     private int _afcProcessedUpTo;
@@ -3533,7 +3532,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
 
     // Read-only measurement: reads _rawSamples by index only (never a *SampleAt accessor, which would
     // forward-fill caches) and skips, never throws, when any index is outside the retained buffer.
-    private void MeasureLineSyncSnr(SstvModeDefinition mode, int lineAnchor, int nextLineStartSample, double stride, int effectiveSampleRate, int transmissionLine)
+    private void MeasureLineSyncSnr(SstvModeDefinition mode, int lineAnchor, int nextLineStartSample, int effectiveSampleRate, int transmissionLine)
     {
         var observer = SyncWindowObservedForTests;
         if ((!_snrMeasurementEnabled && observer is null) || mode == SstvModeRegistry.Avt)
@@ -3553,21 +3552,24 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
             return;
         }
 
-        // Any anchor jump (ReSync, Auto-Sync, notch shifts, replay snaps, Correct Slant) or stride change
-        // (slant commit/revert) invalidates the placement history.
-        if (lineAnchor != _snrExpectedAnchor || !stride.Equals(_snrPreviousStride))
+        // Any anchor jump (ReSync, Auto-Sync, notch shifts, replay snaps, Correct Slant) invalidates the
+        // placement history. A stride change alone does not: the anchor stays continuous and the tracker
+        // follows the slow drift it causes (resetting on it cost most lines under Auto Slant; see
+        // docs/reception-snr-validation.md).
+        if (lineAnchor != _snrExpectedAnchor)
         {
             _syncSnrTracker.ResetPlacement();
         }
 
         _snrExpectedAnchor = nextLineStartSample;
-        _snrPreviousStride = stride;
 
-        var halfRange = (int)Math.Round(SyncSnrPlacement.SearchHalfRangeMs / 1000.0 * effectiveSampleRate);
-        var pulseLength = (int)Math.Round(SstvModeRegistry.GetSyncSegmentDurationMs(mode) / 1000.0 * effectiveSampleRate);
+        var syncDurationMs = SstvModeRegistry.GetSyncSegmentDurationMs(mode);
+        var halfRange = (int)Math.Round(SyncSnrPlacement.SearchHalfRangeFor(syncDurationMs) * _syncSnrTracker.RangeMultiplier / 1000.0 * effectiveSampleRate);
+        var pulseLength = (int)Math.Round(syncDurationMs / 1000.0 * effectiveSampleRate);
         var trim = (int)Math.Round(SyncSnrTrimMs / 1000.0 * effectiveSampleRate);
         var positions = (2 * halfRange) + 1;
-        var first = (int)Math.Floor(searchCentre) - halfRange;
+        var spanOffset = _syncSnrTracker.SearchBias - halfRange;
+        var first = (int)Math.Floor(searchCentre) + spanOffset;
         var endExclusive = (long)first + positions - 1 + pulseLength;
         if (first < _bufferBase || endExclusive > TotalSamplesReceived)
         {
@@ -3577,7 +3579,7 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
         var span = CollectionsMarshal.AsSpan(_rawSamples).Slice(first - _bufferBase, (int)(endExclusive - first));
         var nominalHz = mode.NarrowModeCode is not null ? 1900.0 : 1200.0;
         var expectedToneHz = nominalHz - (_afcTracker?.CorrectionHz ?? 0.0);
-        var outcome = _syncSnrTracker.ProcessLine(transmissionLine, span, positions, pulseLength, trim, _sampleRate, expectedToneHz);
+        var outcome = _syncSnrTracker.ProcessLine(transmissionLine, span, positions, pulseLength, trim, _sampleRate, expectedToneHz, spanOffset);
         PublishSnr();
         SyncSnrLineObservedForTests?.Invoke(
             transmissionLine,
@@ -3761,12 +3763,11 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
                     SstvModeRegistry.NeverPeakPicks(mode) || _rxBufferMode == RxBufferMode.Extended);
 
                 var lineAnchor = _consumedSamples;
-                var lineStride = _effectiveSamplesPerLine;
                 lineDecoder.DecodeLine(mode, effectiveSampleRate, _consumedSamples, _nextLine, reader, pixels);
                 _idealLineStartSample += _effectiveSamplesPerLine;
                 _consumedSamples = nextLineStartSample;
 
-                MeasureLineSyncSnr(mode, lineAnchor, nextLineStartSample, lineStride, effectiveSampleRate, _nextLine / lineDecoder.RowsPerTransmissionLine);
+                MeasureLineSyncSnr(mode, lineAnchor, nextLineStartSample, effectiveSampleRate, _nextLine / lineDecoder.RowsPerTransmissionLine);
                 RaiseSubscribers(LineDecoded, new DecodedImageUpdate(_nextLine, new MutableImageSource(mode.ImageWidth, mode.ImageHeight, pixels)));
                 _nextLine += lineDecoder.RowsPerTransmissionLine;
 

@@ -441,8 +441,8 @@ public interface ISstvDecoder
     /// <summary>Sync-pulse SNR over the last 16 measured lines of the current reception, in dB:
     /// tone power in the sync pulse over noise power in 400–2500 Hz (medians). <see cref="double.NaN"/>
     /// when there is none: idle, measurement off, AVT, the first lines of a reception (placement is
-    /// still being acquired), and after the picture ends or is abandoned. Unclamped; a noise-dominated
-    /// reading bottoms out at −60 dB. Published by the decode thread after every line; lock-free, safe
+    /// still being acquired), after the picture ends or is abandoned, and when the measured windows
+    /// held no tone at all (the sync pulse could not be found). Otherwise unclamped down to a −60 dB floor. Published by the decode thread after every line; lock-free, safe
     /// from any thread (latest value wins).</summary>
     double LiveSnrDb { get; }
 

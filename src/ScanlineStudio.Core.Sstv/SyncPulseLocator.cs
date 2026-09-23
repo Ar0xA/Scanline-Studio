@@ -54,17 +54,18 @@ internal static class SyncPulseLocator
             foreach (var frequencyHz in frequenciesHz)
             {
                 var omega = 2.0 * Math.PI * frequencyHz / sampleRate;
+                var (stepCos, stepSin) = (Math.Cos(omega), Math.Sin(omega));
+                double c = 1, s = 0;
                 pcc[0] = pss[0] = pcs[0] = pxc[0] = pxs[0] = 0;
                 for (var i = 0; i < length; i++)
                 {
-                    var c = Math.Cos(omega * i);
-                    var s = Math.Sin(omega * i);
                     double x = span[i];
                     pcc[i + 1] = pcc[i] + (c * c);
                     pss[i + 1] = pss[i] + (s * s);
                     pcs[i + 1] = pcs[i] + (c * s);
                     pxc[i + 1] = pxc[i] + (x * c);
                     pxs[i + 1] = pxs[i] + (x * s);
+                    (c, s) = ((c * stepCos) - (s * stepSin), (s * stepCos) + (c * stepSin));
                 }
 
                 for (var p = 0; p < positions; p++)
