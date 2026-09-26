@@ -34,6 +34,7 @@ public static class TestAppBuilder
     public static AppBuilder BuildAvaloniaApp()
         => AppBuilder.Configure<ScanlineStudio.UI.App>()
             .UseSkia()
+            .UseHarfBuzz()
             .UseHeadless(new AvaloniaHeadlessPlatformOptions { UseHeadlessDrawing = false })
             .With(new FontManagerOptions { DefaultFamilyName = ScanlineStudio.UI.App.DefaultFontFamilyUri });
 }

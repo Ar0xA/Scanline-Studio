@@ -9449,7 +9449,7 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
-    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // uses: a disposed instance throws ObjectDisposedException from
     // any real operation, here .Lock().
     private static bool IsWriteableBitmapDisposed(Avalonia.Media.Imaging.WriteableBitmap bitmap)
     {
@@ -9461,7 +9461,7 @@ public sealed class TxImageEditorPaneViewModelTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }

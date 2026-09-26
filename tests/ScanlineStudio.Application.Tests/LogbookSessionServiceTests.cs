@@ -329,7 +329,7 @@ public sealed class LogbookSessionServiceTests
 
             Assert.DoesNotContain("Previous export", content);
             Assert.Contains("<EOH>", content);
-            Assert.Equal(2, System.Text.RegularExpressions.Regex.Matches(content, "<EOR>").Count);
+            Assert.Equal(2, System.Text.RegularExpressions.Regex.Count(content, "<EOR>"));
         }
         finally
         {

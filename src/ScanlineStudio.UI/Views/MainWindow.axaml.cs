@@ -58,9 +58,6 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-#if DEBUG
-        this.AttachDevTools();
-#endif
         // Views aren't DI-constructed (Avalonia builds them via `new`, not the container) -- resolved
         // from App.Services directly, same pattern this project already uses for other code-behind
         // needs (e.g. FilePickerService). Null-tolerant: a headless/design-time construction with no
@@ -257,6 +254,15 @@ public partial class MainWindow : Window
             // "don't remember my window" should mean don't remember this either.
             shouldStartMaximized = geometry is { RememberWindowPosition: true, WasMaximized: true };
         }
+
+        // Independent proof of the backend Avalonia really started ("XID" = X11/XWayland), not what Host asked for.
+        Opened += (_, _) =>
+        {
+            if (logger is not null)
+            {
+                Log.PlatformHandleDescriptor(logger, TryGetPlatformHandle()?.HandleDescriptor ?? "(none)");
+            }
+        };
 
         // Code-review finding (2026-09-03): the constructor's own clamp above compares the
         // DIP-valued CLIENT Width/Height against the working area -- it has no way to know the
@@ -1208,7 +1214,7 @@ public partial class MainWindow : Window
     /// popup opens (not a Click), so <see cref="RxHistoryPaneViewModel.SelectedEntry"/> is already
     /// the right-clicked photo by the time any of its menu items run, matching the same
     /// SelectedEntry-only contract every other per-entry command in that class already has.</summary>
-    private void OnGalleryThumbnailContextRequested(object? sender, Avalonia.Controls.ContextRequestedEventArgs e)
+    private void OnGalleryThumbnailContextRequested(object? sender, Avalonia.Input.ContextRequestedEventArgs e)
     {
         if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
         {
@@ -1271,6 +1277,9 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing OptionsWindowView")]
         public static partial void ConstructingOptionsWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Main window opened; platform handle descriptor: {Descriptor}")]
+        public static partial void PlatformHandleDescriptor(ILogger logger, string descriptor);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OptionsWindowView opened: Position={Position}, Screen={Screen}")]
         public static partial void OptionsWindowOpened(ILogger logger, string position, string screen);

@@ -12,32 +12,14 @@ using Avalonia.Media.Imaging;
 using Avalonia.Styling;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using Avalonia.Headless.XUnit;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.UI.Tests;
 using ScanlineStudio.UI.ViewModels;
-using Xunit.Sdk;
 
 namespace ScanlineStudio.UI.FontTests;
 
-/// <summary>Opt-in gate for <see cref="GalleryDisplayCapMeasurementProbe"/>: a timing probe, not a
-/// pass/fail test -- it reports its table through the failure message, so it always "fails" when run.
-/// Same discoverer as <c>[AvaloniaFact]</c> (that attribute is sealed), so the body still runs on the
-/// headless UI thread.</summary>
-[XunitTestCaseDiscoverer("Avalonia.Headless.XUnit.AvaloniaUIFactDiscoverer", "Avalonia.Headless.XUnit")]
-public sealed class GalleryMeasurementProbeFactAttribute : FactAttribute
-{
-    public const string OptInVariable = "SCANLINE_RUN_GALLERY_PROBE";
-
-    public GalleryMeasurementProbeFactAttribute()
-    {
-        if (Environment.GetEnvironmentVariable(OptInVariable) != "1")
-        {
-            Skip = $"Set {OptInVariable}=1 to run the Gallery timing probe. It reports through the "
-                + "failure message by design, so it always 'fails' when run.";
-        }
-    }
-}
 /// <summary>Real-Skia window timings for the Gallery's display-capped grid at 1 500 / 5 000 /
 /// 20 000 history rows, 300 and 1 500 displayed: a no-change refresh, the per-received-frame refresh
 /// (one new row, cache warm), and three publishes (same set, to empty, refill), each with layout. The
@@ -48,9 +30,14 @@ public sealed class GalleryDisplayCapMeasurementProbe
 {
     private const int Repeats = 5;
 
-    [GalleryMeasurementProbeFact]
+    // Opt-in: a timing probe that reports its table through the failure message, so it always "fails" when run.
+    public const string OptInVariable = "SCANLINE_RUN_GALLERY_PROBE";
+
+    [AvaloniaFact]
     public async Task Measure()
     {
+        Assert.SkipUnless(Environment.GetEnvironmentVariable(OptInVariable) == "1",
+            $"Set {OptInVariable}=1 to run the Gallery timing probe. It reports through the failure message by design.");
         RealWindowTestSupport.EnsureAppServices();
         var report = new StringBuilder();
         report.AppendLine("median ms of " + Repeats + "; refresh = UI-thread RefreshAsync, layout = dispatcher + layout + render tick");

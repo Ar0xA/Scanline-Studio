@@ -260,6 +260,18 @@ Today a live `Directory.EnumerateFiles` scan with no index and no import path. "
 untouched" is de facto, not decided. Decide and document, or build the migration.
 `spec/07-image-pipeline.md:411`.
 
+### AV12. PLANNED — Avalonia 12.1 migration, then opt-in native Wayland
+
+Avalonia 11 has no Wayland backend, so Linux runs through XWayland today. 12.1 adds an experimental
+native one. Plan: `docs/plans/avalonia-12-migration-plan.md`, branch `avalonia-12`.
+
+### COMPILED-BINDINGS. OPEN, after AV12 — move XAML to compiled bindings
+
+AV12 pins `AvaloniaUseCompiledBindingsByDefault=false` to keep today's reflection bindings (1,457 of them).
+Gain: binding typos fail the build instead of blanking the UI; enables trimming/AOT later. Risk: null-intermediate
+and runtime-typed bindings change behavior silently. Do it per file (`x:CompileBindings="True"`) when a file
+is touched anyway, not as one big change. Not started until AV12 ships.
+
 ---
 
 ## 6. Blocked on a human

@@ -38,7 +38,7 @@ public sealed class RxHistoryThumbnailCacheTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }

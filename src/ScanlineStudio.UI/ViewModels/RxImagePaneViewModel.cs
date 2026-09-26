@@ -810,7 +810,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         // never took effect.
         sstvSession.ReconfigurationRejected += OnReconfigurationRejected;
 
-        _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, (_, _) => PollTelemetry());
+        _telemetryTimer = new DispatcherTimer(TelemetryPollInterval, DispatcherPriority.Background, Dispatcher.UIThread, (_, _) => PollTelemetry());
         _telemetryTimer.Start();
 
         BuildQuickModeSlots(QuickModeGridDefaults.Ids);

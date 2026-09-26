@@ -85,10 +85,8 @@ public sealed partial class FilePickerService : IFilePickerService
             var tempPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid():N}.png");
             try
             {
-                // Bitmap.Save always encodes PNG regardless of the given path's extension (confirmed
-                // via reflection: the overload takes no format parameter) -- matches the ".png"
-                // extension chosen here, not a mismatch.
-                bitmap.Save(tempPath);
+                // PNG explicitly, matching the ".png" extension chosen here.
+                bitmap.Save(tempPath, Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
             }
             catch (Exception ex)
             {

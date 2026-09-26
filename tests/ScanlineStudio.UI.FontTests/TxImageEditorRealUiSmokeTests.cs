@@ -547,7 +547,7 @@ public sealed class TxImageEditorRealUiSmokeTests
             // own doc comment ("harmless +0.02 seed offset is immediately overridden by the drag that
             // follows" -- overridden by an ADDITIONAL delta on top, not replaced).
             const double CloneSeedOffset = 0.02;
-            var clone = Assert.Single(vm.OverlayElements.Where(e => !ReferenceEquals(e, original)));
+            var clone = Assert.Single(vm.OverlayElements, e => !ReferenceEquals(e, original));
             AssertClose(originalXBefore + CloneSeedOffset + dragVector.X / vm.CanvasDisplayWidth, clone.X);
             AssertClose(originalYBefore + CloneSeedOffset + dragVector.Y / vm.CanvasDisplayHeight, clone.Y);
 

@@ -409,7 +409,19 @@ internal static partial class Program
         });
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
-        BuildAvaloniaApp().SetupWithLifetime(lifetime);
+        var appBuilder = BuildAvaloniaApp();
+        var backend = WindowingBackendSelector.Choose(OperatingSystem.IsLinux(), Environment.GetEnvironmentVariable);
+        if (backend == WindowingBackendChoice.Wayland)
+        {
+            appBuilder = appBuilder.UseWayland();
+        }
+        else if (backend == WindowingBackendChoice.WaylandRequestedWithoutSession)
+        {
+            Log.WaylandRequestedWithoutSession(logger, WindowingBackendSelector.OptInVariable, WindowingBackendSelector.WaylandDisplayVariable);
+        }
+
+        Log.WindowingBackendChosen(logger, backend);
+        appBuilder.SetupWithLifetime(lifetime);
         Log.AvaloniaLifetimeStarted(logger);
 
         // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
@@ -1355,6 +1367,12 @@ internal static partial class Program
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credential migration threw")]
         public static partial void QrzCredentialMigrationThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Windowing backend: {Backend}")]
+        public static partial void WindowingBackendChosen(ILogger logger, WindowingBackendChoice backend);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "{OptInVariable}=1 is set but {WaylandDisplayVariable} is not; starting the default backend instead")]
+        public static partial void WaylandRequestedWithoutSession(ILogger logger, string optInVariable, string waylandDisplayVariable);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
         public static partial void ImagePersistenceDrainIncomplete(ILogger logger);

@@ -363,7 +363,7 @@ public sealed partial class AtomsFontScaleTests
             var expectedCount = ExpectedRemainingLiteralCounts.GetValueOrDefault(fileName, 0);
 
             var text = StripAxamlComments(File.ReadAllText(file));
-            var actualCount = LiteralAttributeRegex().Matches(text).Count;
+            var actualCount = LiteralAttributeRegex().Count(text);
             if (actualCount != expectedCount)
             {
                 violations.Add($"{fileName}: expected {expectedCount} remaining literal(s), found {actualCount} -- "
@@ -381,7 +381,7 @@ public sealed partial class AtomsFontScaleTests
         var uiSourceDirectory = FindUiSourceDirectory();
         var path = Path.Combine(uiSourceDirectory, "Styles", "Atoms.axaml");
         var text = StripAxamlComments(File.ReadAllText(path));
-        var actualCount = LiteralSetterRegex().Matches(text).Count;
+        var actualCount = LiteralSetterRegex().Count(text);
 
         Assert.Equal(ExpectedAtomsSetterFormLiteralCount, actualCount);
     }

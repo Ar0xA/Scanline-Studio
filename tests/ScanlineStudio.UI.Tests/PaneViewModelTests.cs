@@ -4777,8 +4777,7 @@ public sealed class PaneViewModelTests
         // WriteableBitmapPool.Dispose() disposes SYNCHRONOUSLY (no Dispatcher.UIThread.Post needed
         // for this one, unlike each element's own bitmap) -- Lock() on the captured reference throws
         // the instant Dispose() has run. WriteableBitmapPoolTests' own established convention:
-        // NullReferenceException (Dispose() nulls the internal platform impl), not
-        // ObjectDisposedException.
+        // ObjectDisposedException from Lock().
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
         var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
@@ -4788,7 +4787,7 @@ public sealed class PaneViewModelTests
         editor.CancelCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+        Assert.Throws<ObjectDisposedException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
     }
 
     [AvaloniaFact]
@@ -4836,7 +4835,7 @@ public sealed class PaneViewModelTests
         var realEditor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
 
         Assert.NotSame(blankEditor, realEditor);
-        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+        Assert.Throws<ObjectDisposedException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
     }
 
     // User-requested (2026-09-15): "even if there are elements on the canvas, if no background has
@@ -4936,7 +4935,7 @@ public sealed class PaneViewModelTests
         await editor.CancelCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Throws<NullReferenceException>(() => elementBitmap.Lock());
+        Assert.Throws<ObjectDisposedException>(() => elementBitmap.Lock());
     }
 
     [AvaloniaFact]
@@ -8280,7 +8279,7 @@ public sealed class PaneViewModelTests
     }
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
-    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // uses: a disposed instance throws ObjectDisposedException from
     // any real operation, here .Lock().
     private static bool IsWriteableBitmapDisposed(WriteableBitmap bitmap)
     {
@@ -8292,7 +8291,7 @@ public sealed class PaneViewModelTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }
