@@ -260,10 +260,49 @@ Today a live `Directory.EnumerateFiles` scan with no index and no import path. "
 untouched" is de facto, not decided. Decide and document, or build the migration.
 `spec/07-image-pipeline.md:411`.
 
-### AV12. PLANNED — Avalonia 12.1 migration, then opt-in native Wayland
+### AV12. IN PROGRESS on branch `avalonia-12` — Avalonia 12.1 migration + opt-in native Wayland
 
 Avalonia 11 has no Wayland backend, so Linux runs through XWayland today. 12.1 adds an experimental
-native one. Plan: `docs/plans/avalonia-12-migration-plan.md`, branch `avalonia-12`.
+native one. Local plan (gitignored): `docs/plans/avalonia-12-migration-plan.md`.
+
+**Done on the branch (`0f63fd67`, yoniq-auditor plan-review x2 + code-review round 1 go):** Avalonia
+12.1.3, Tmds.DBus.Protocol 0.94.1 port of the Secret Service store, DispatcherTimers on
+`Dispatcher.UIThread`, UI test projects on xUnit v3, DevTools removed, compiled bindings pinned off,
+opt-in `SCANLINE_WAYLAND=1` (`WindowingBackendSelector`), real backend logged from the platform handle
+descriptor. All 14 test projects green. Native Wayland verified in nested weston (desktop-shell).
+
+**Must be done before merging to master:**
+1. **Build toolchain.** Avalonia 12's generators need the .NET 10 SDK (CS9057 on 8.0.x); target stays
+   `net8.0`. Move `ci.yml` and `release-macos.yml` `setup-dotnet` to 10.0.x (tests also need the 8.0
+   runtime), add a `global.json`, update `docs/`/build notes that name the .NET 8 SDK.
+2. **Locked-keyring prompt check (manual).** No test reaches `RunPromptAsync` (all use `allowPrompt: false`).
+   Lock the login keyring in Seahorse → open Options (QRZ password load prompts) → unlock. The field must
+   fill within seconds, and the log must have no "dismissed or timed out" line.
+3. **Windows hardware check** of the maximize workaround, `MainWindow.axaml.cs` (Avalonia#19434 block):
+   12 made `WindowState` a direct property and reworked Windows decorations. Remove only if proven unneeded.
+4. **Visual pass** of every Industry-styled control: `Atoms.axaml` selectors reach into Fluent template
+   parts (`#PART_Indicator`, `#PART_SelectedPipe`, `#PART_ItemsPresenter`, `ComboBox /template/ TextBox`,
+   `/template/ ContentPresenter`) and fail silently if Fluent 12 renamed them. Include TextBox placeholders.
+5. **Re-verify:** Alt access keys (`_File`, `Cali_bration`, … now trigger by symbol);
+   `TxImageEditorQuickStyleFlyoutRealClickTests` (relies on a private Avalonia `Open` overload).
+6. **Cleanup:** `Watermark=` → `PlaceholderText=` in 6 AXAML files (AVLN5001 warnings in Release);
+   `LostFocus` handlers → `FocusChangedEventArgs`; stale ColorPicker comment in `ScanlineStudio.UI.csproj`.
+7. **Wayland Phase B**, so the opt-in is safe to ship:
+   - Under Wayland, do not save/restore window **position** (Wayland has none; it would corrupt the next X11
+     launch). Host registers a UI-owned `WindowingBackendInfo` in DI; `MainWindow` reads it; decision in a
+     unit-tested `WindowGeometryPolicy` function. Restore block needs restructuring (size clamp sits inside
+     the position branch).
+   - If `UseWayland()` fails: catch at the `SetupWithLifetime` and `lifetime.Start` sites in `Program.cs`,
+     write a message naming `SCANLINE_WAYLAND` to stderr + log, exit non-zero. (`UseWaylandWithFallback()`
+     exists; fail-loud was chosen because the user opted in explicitly.)
+   - Known crash: weston kiosk-shell (forced fullscreen smaller than the 1920×1032 surface) → xdg_wm_base
+     error 4. Test sway/Hyprland-style tiling before advertising Wayland support.
+   - Help guide: document `SCANLINE_WAYLAND=1` (Linux section) + `node assets/help/check-help.mjs`.
+8. **macOS**: skipped for the spike (user, 2026-09-26); decide before merge — the manual
+   `release-macos.yml` run needs explicit user OK.
+9. **Code review** of items 1-7 (full yoniq-auditor cadence), then merge.
+
+Friend test build (not a release): `0.9.1-avalonia12-test+0f63fd6`, Linux x64 tarball in local `publish/dist/`.
 
 ### COMPILED-BINDINGS. OPEN, after AV12 — move XAML to compiled bindings
 
