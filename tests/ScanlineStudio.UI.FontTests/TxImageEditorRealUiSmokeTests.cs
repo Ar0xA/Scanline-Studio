@@ -247,6 +247,32 @@ public sealed class TxImageEditorRealUiSmokeTests
     }
 
     [AvaloniaFact]
+    public void ContextBarSaveButton_IsEnabledOnlyWhileTheUnsavedEditsChipShows()
+    {
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            var view = (TxImageEditorPaneView)window.Content!;
+            var saveButton = view.FindControl<Button>("ContextBarSaveButton")
+                ?? throw new InvalidOperationException("ContextBarSaveButton not found in the real View's visual tree.");
+
+            Assert.False(vm.IsDirtySinceLastCheckpoint);
+            Assert.False(saveButton.IsEnabled);
+
+            vm.AddOverlayElementCommand.Execute(null);
+            PumpDispatcher();
+
+            Assert.True(vm.IsDirtySinceLastCheckpoint);
+            Assert.True(saveButton.IsEnabled);
+            Assert.Contains("IndustryBtnPrimary", saveButton.Classes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void CancelButton_RendersExactlyOneLabel_NotTwoStackedOnes()
     {
         // Auditor-found blocker (2026-09-15): migrating Cancel from an in-row two-click arm/confirm

@@ -107,6 +107,13 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                     <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
+                    <!-- Discards the card and starts a blank editor via a Yes/No dialog (CancelAsync/ConfirmRequested); label was CANCEL before. -->
+                    <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary"
+                            Content="{loc:Translate Panes.TxImageEditor.NewTemplate}" Command="{Binding CancelCommand}" />
+                    <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
+                    <!-- Same handler as the canvas right-click Save (auto-names "tmpN" when the name box is empty). IndustryBtnPrimary is blue when enabled and grey when disabled, so it lights up exactly while the UNSAVED EDITS chip beside it shows. -->
+                    <Button x:Name="ContextBarSaveButton" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnPrimary" Click="OnSaveTemplateContextMenuClick"
+                            IsEnabled="{Binding IsDirtySinceLastCheckpoint}" Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" />
                 </StackPanel>
             </Grid>
             </StackPanel>
@@ -3138,7 +3145,7 @@
                         </ItemsControl>
                     </StackPanel>
                     <Border Grid.Column="1" Width="1" Background="{DynamicResource IndustryChromeBorder}" />
-                    <StackPanel Grid.Column="2" Spacing="{StaticResource IndustrySpacingTight}">
+                    <Grid Grid.Column="2" RowDefinitions="Auto,*" RowSpacing="{StaticResource IndustrySpacingTight}">
                         <Grid ColumnDefinitions="Auto,*">
                             <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Panes.TxImageEditor.SendHeader}" />
                             <TextBlock Grid.Column="1" Classes="IndustryKicker" HorizontalAlignment="Right" VerticalAlignment="Center" Text="{Binding SendMetaText}" />
@@ -3165,31 +3172,14 @@
                              close+stage step reuses that same code path internally, and this project's
                              test suite exercises it directly) — only this now-unreachable BUTTON is
                              removed. -->
-                        <Grid RowDefinitions="Auto,Auto" RowSpacing="{StaticResource IndustrySpacingTight}">
-                            <!-- Backlog item (auditor usability review, 2026-08-17, item 2): "Cancel
-                                 discards all edits with no confirmation." User-reported feedback
-                                 (2026-09-15): the original arm/confirm (a second click on this SAME
-                                 button, swapping its own label to "DISCARD?") is gone — this button
-                                 shows a real Yes/No dialog via CancelAsync/ConfirmRequested instead,
-                                 same shape as template recall's own dialog.
-                                 User-requested (2026-09-15): relabeled "NEW TEMPLATE" — "CANCEL" read
-                                 as odd/unclear wording for what this button actually does (discard the
-                                 current card and start a fresh blank editor, see CancelAsync's own doc
-                                 comment for the one exception: cancelling a re-edit of an
-                                 already-applied image just closes back out instead). Now the row's
-                                 own full-width secondary action, directly above TRANSMIT, now that
-                                 Apply's removal freed up the space it used to share a column with —
-                                 CancelCommand/CancelAsync/the CancelButton name/the Cancelled event
-                                 are unchanged internally, only the user-facing label moved. -->
-                            <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnSecondary"
-                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
-                                    Content="{loc:Translate Panes.TxImageEditor.NewTemplate}" Command="{Binding CancelCommand}" />
-                            <Button Grid.Row="1" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" HorizontalAlignment="Stretch" HorizontalContentAlignment="Center"
+                        <Grid Grid.Row="1">
+                            <!-- Fills the whole column height under the header (near-square) now that NEW TEMPLATE lives in the context bar. -->
+                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" Height="NaN" MinHeight="72" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                     Content="{loc:Translate Panes.TxImageEditor.Transmit}"
                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Transmit.Help}"
                                     Command="{Binding ApplyAndTransmitCommand}" />
                         </Grid>
-                    </StackPanel>
+                    </Grid>
                 </Grid>
             </Border>
         </Grid>

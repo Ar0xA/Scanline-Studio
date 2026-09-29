@@ -218,7 +218,7 @@ public sealed partial class AtomsFontScaleTests
         // on the 2 new dedicated flyouts' own StackPanel (image, line) -- same fixed-control-sizing
         // class as the FontSizePx/BorderThicknessPx/CornerRadiusPx/StrokeThicknessPx TextBoxes'
         // own pre-existing Width="70" literals in this same file, not font-size-coupled.
-        ["TxImageEditorPaneView.axaml"] = 116,
+        ["TxImageEditorPaneView.axaml"] = 119,
         ["Atoms.axaml"] = 30,
     };
 
