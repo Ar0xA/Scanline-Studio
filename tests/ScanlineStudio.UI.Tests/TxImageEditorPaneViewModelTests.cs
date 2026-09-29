@@ -1287,6 +1287,30 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public void RedoAllCommand_ReappliesEveryRevertedEdit_AndIsOnlyEnabledWithRedoHistory()
+    {
+        var vm = CreateEditor(CreateSource(6, 4), SmallMode, new FakeTransmitImagePreparer());
+        Assert.False(vm.RedoAllCommand.CanExecute(null));
+
+        vm.RotateCommand.Execute(null);
+        vm.AddOverlayElementCommand.Execute(null);
+        Assert.False(vm.RedoAllCommand.CanExecute(null));
+
+        vm.RevertCommand.Execute(null);
+        Assert.True(vm.RedoAllCommand.CanExecute(null));
+        Assert.Empty(vm.OverlayElements);
+
+        vm.RedoAllCommand.Execute(null);
+
+        Assert.False(vm.RedoAllCommand.CanExecute(null));
+        Assert.False(vm.RedoCommand.CanExecute(null));
+        Assert.True(vm.UndoCommand.CanExecute(null));
+        Assert.Single(vm.OverlayElements);
+        AssertClose(4, vm.WorkingCopyWidth);
+        AssertClose(6, vm.WorkingCopyHeight);
+    }
+
+    [AvaloniaFact]
     public void FrameReadoutText_ReflectsTheActualTargetModesDimensionsNameAndDuration()
     {
         // Same FakeLocalizationService pattern as HeaderText_ReflectsTheActualTargetModesDimensionsAndName

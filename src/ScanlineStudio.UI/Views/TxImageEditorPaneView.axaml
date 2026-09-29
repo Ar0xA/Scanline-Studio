@@ -107,6 +107,8 @@
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoCommand}" Content="{loc:Translate Panes.TxImageEditor.Redo}" />
                     <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
                     <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RevertCommand}" Content="{loc:Translate Panes.TxImageEditor.Revert}" />
+                    <Button Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" Command="{Binding RedoAllCommand}" Content="{loc:Translate Panes.TxImageEditor.RedoAll}" />
+                    <Border Width="1" Height="18" Margin="6,0" Background="{DynamicResource IndustryChromeBorder}" />
                     <!-- Discards the card and starts a blank editor via a Yes/No dialog (CancelAsync/ConfirmRequested); label was CANCEL before. -->
                     <Button x:Name="CancelButton" Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary"
                             Content="{loc:Translate Panes.TxImageEditor.NewTemplate}" Command="{Binding CancelCommand}" />
@@ -3174,7 +3176,7 @@
                              removed. -->
                         <Grid Grid.Row="1">
                             <!-- Fills the whole column height under the header (near-square) now that NEW TEMPLATE lives in the context bar. -->
-                            <Button Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" Height="NaN" MinHeight="72" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
+                            <Button x:Name="TransmitButton" Classes="Industry IndustryBtn IndustryBtn36 IndustryBtnTransmit" Height="NaN" MinHeight="72" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" HorizontalContentAlignment="Center" VerticalContentAlignment="Center"
                                     Content="{loc:Translate Panes.TxImageEditor.Transmit}"
                                     ToolTip.Tip="{loc:Translate Panes.TxImageEditor.Transmit.Help}"
                                     Command="{Binding ApplyAndTransmitCommand}" />

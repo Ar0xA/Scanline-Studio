@@ -7064,6 +7064,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
+        RedoAllCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
         OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
@@ -7088,6 +7089,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
     }
 
+    /// <summary>The context bar's REDO ALL action: the inverse of <see cref="Revert"/>. Calls
+    /// <see cref="Redo"/> until the redo stack is empty, so every step is applied through the same
+    /// already-correct path.</summary>
+    [RelayCommand(CanExecute = nameof(CanRedo))]
+    private void RedoAll()
+    {
+        while (CanRedo())
+        {
+            Redo();
+        }
+    }
+
     [RelayCommand(CanExecute = nameof(CanRedo))]
     private void Redo()
     {
@@ -7104,6 +7117,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
+        RedoAllCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
         OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
@@ -7141,6 +7155,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
+        RedoAllCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
         OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
@@ -7195,6 +7210,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();
+        RedoAllCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(HasUnsavedEdits));
         OnPropertyChanged(nameof(IsDirtySinceLastCheckpoint));
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);

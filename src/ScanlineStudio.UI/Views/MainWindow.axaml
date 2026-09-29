@@ -1203,8 +1203,11 @@
                          on a real machine even though it fit exactly at the declared default. This
                          LOWERS the SEND-bar risk from the 2026-09-16 finding above, it does not
                          reopen it — trimming leaves MORE headroom before SEND, never less. -->
-                    <ScrollViewer Grid.Column="1">
-                    <ContentControl Height="810" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
+                    <!-- User-requested (2026-09-29): the editor now fills the tab height instead of a pinned 810,
+                         so the QSO FILL / SEND bar (root Grid.Row="3") always stays on screen. The canvas row
+                         (the "*" row) absorbs any shortfall and its own ScrollViewer scrolls instead. -->
+                    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Disabled">
+                    <ContentControl Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
                     </ScrollViewer>
                 </Grid>
             </TabItem>

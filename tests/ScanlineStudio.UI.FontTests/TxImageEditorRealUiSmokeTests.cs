@@ -272,6 +272,35 @@ public sealed class TxImageEditorRealUiSmokeTests
         }
     }
 
+    [AvaloniaTheory]
+    [InlineData(442)] // MainWindow.MinHeight (640) minus the fixed bands and tab chrome
+    [InlineData(700)]
+    [InlineData(1032)]
+    public void HostedLikeMainWindow_TransmitButtonStaysInsideTheViewport_AtEveryTabHeight(int tabContentHeight)
+    {
+        EnsureAppServices();
+        var vm = CreateEditor(CreateSource(DefaultSourceWidth, DefaultSourceHeight), TestMode);
+        var view = new TxImageEditorPaneView { DataContext = vm };
+        // Same shape as MainWindow's Transmit tab: a vertical-scroll-disabled ScrollViewer around the editor.
+        var host = new ScrollViewer { VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = view };
+        var window = new Window { Content = host, Width = 1280, Height = tabContentHeight };
+        window.Show();
+        PumpDispatcher();
+        try
+        {
+            var transmit = view.FindControl<Button>("TransmitButton")
+                ?? throw new InvalidOperationException("TransmitButton not found in the real View's visual tree.");
+            var bottom = transmit.TranslatePoint(new Point(0, transmit.Bounds.Height), window)!.Value.Y;
+
+            Assert.True(transmit.Bounds.Height > 0);
+            Assert.True(bottom <= tabContentHeight + 0.5, $"TRANSMIT bottom {bottom} is below the {tabContentHeight}px viewport.");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
     [AvaloniaFact]
     public void CancelButton_RendersExactlyOneLabel_NotTwoStackedOnes()
     {

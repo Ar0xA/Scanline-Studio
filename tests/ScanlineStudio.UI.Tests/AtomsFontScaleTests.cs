@@ -196,7 +196,7 @@ public sealed partial class AtomsFontScaleTests
         ["ImageViewerWindowView.axaml"] = 4,
         ["LoopbackSelfTestResultWindowView.axaml"] = 4,
         ["MacrosReferenceWindowView.axaml"] = 4,
-        ["MainWindow.axaml"] = 22,
+        ["MainWindow.axaml"] = 21,
         ["OptionsWindowView.axaml"] = 6,
         ["QsoLinkWindowView.axaml"] = 4,
         ["QuickSwitchFailedDialogView.axaml"] = 2,
@@ -218,7 +218,7 @@ public sealed partial class AtomsFontScaleTests
         // on the 2 new dedicated flyouts' own StackPanel (image, line) -- same fixed-control-sizing
         // class as the FontSizePx/BorderThicknessPx/CornerRadiusPx/StrokeThicknessPx TextBoxes'
         // own pre-existing Width="70" literals in this same file, not font-size-coupled.
-        ["TxImageEditorPaneView.axaml"] = 119,
+        ["TxImageEditorPaneView.axaml"] = 121,
         ["Atoms.axaml"] = 30,
     };
 
