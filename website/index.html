@@ -113,14 +113,23 @@
     margin-bottom: 26px;
   }
 
-  /* waterfall strip: a real crop of the app's Spectrum & Waterfall panel */
-  .waterfall {
+  /* reception clip: the real app decoding a recorded Martin M1 picture */
+  .demo { margin: 30px 0 0; }
+
+  .demo video {
     display: block;
     width: 100%;
     height: auto;
-    margin-bottom: 26px;
+    aspect-ratio: 1580 / 880;
+    background: var(--card);
     border: 1px solid var(--line);
     border-radius: 4px;
+  }
+
+  .demo figcaption {
+    margin-top: 10px;
+    color: var(--muted);
+    font-size: 0.88rem;
   }
 
   .buttons {
@@ -536,12 +545,23 @@
           your radio to an SSTV frequency and it picks out the mode and draws the picture as it
           comes in.
         </p>
-        <img class="waterfall" src="images/waterfall.jpg" alt="Scanline Studio's live spectrum and waterfall display">
         <div class="buttons">
           <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
           <a class="btn btn-secondary" href="https://github.com/Ar0xA/Scanline-Studio">View on GitHub</a>
         </div>
         <p class="platforms">Free and open source for Windows, Linux and macOS</p>
+        <figure class="demo">
+          <video autoplay muted loop playsinline controls
+                 poster="images/reception-poster.jpg" width="1580" height="880"
+                 aria-label="Screen recording of Scanline Studio decoding a Martin M1 picture. The waterfall shows the signal arriving, then the picture is drawn line by line.">
+            <source src="images/reception-demo.mp4" type="video/mp4">
+            Your browser can't play this video. You can <a href="images/reception-demo.mp4">download it</a> instead.
+          </video>
+          <figcaption>
+            Scanline Studio decoding a Martin M1 picture recorded off the air, sped up 5×. It picked
+            out the mode by itself.
+          </figcaption>
+        </figure>
       </div>
     </div>
 
@@ -675,11 +695,25 @@
       </div>
     </section>
 
+    <section id="migrating">
+      <div class="wrap">
+        <div class="section-head">
+          <h2>Coming from YONIQ?</h2>
+          <p>
+            Your <code>.mtm</code> templates import with the Import legacy button in the template
+            library, and the importer flags anything it can't carry over. Your YONIQ settings file
+            doesn't import, so you'll need to enter your settings again. Nearly every YONIQ setting
+            has a counterpart in Options.
+          </p>
+        </div>
+      </div>
+    </section>
+
     <section id="download">
       <div class="wrap">
         <div class="section-head">
           <h2>Download</h2>
-          <p>Releases are on GitHub, and the user guide opens right here on this page.</p>
+          <p>Scanline Studio is currently in beta. Releases are on GitHub, and the user guide opens right here on this page.</p>
         </div>
         <div class="download-card">
           <div class="row">
@@ -839,6 +873,16 @@
       document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape' && !overlay.hidden) closeGuide();
       });
+    })();
+  </script>
+
+  <script>
+    (function () {
+      var video = document.querySelector('.demo video');
+      if (video && window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+        video.removeAttribute('autoplay');
+        video.pause();
+      }
     })();
   </script>
 
