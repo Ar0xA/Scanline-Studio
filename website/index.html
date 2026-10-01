@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Scanline Studio — SSTV for amateur radio</title>
-<meta name="description" content="Scanline Studio is a free, cross-platform SSTV application for amateur radio. Receive, transmit, and log Slow-Scan Television pictures on Windows, Linux, and macOS.">
+<title>Scanline Studio: SSTV for amateur radio</title>
+<meta name="description" content="Scanline Studio is a free rewrite of YONIQ (a fork of MMSSTV) that sends, receives and logs SSTV pictures on Windows, Linux and macOS.">
 <style>
   :root {
     --paper: #f5f4ef;
@@ -527,40 +527,31 @@
 
     <div class="hero" id="top">
       <div class="wrap">
-        <p class="eyebrow">Amateur radio · SSTV</p>
-        <h1>Slow-scan television, for the modern shack</h1>
+        <p class="eyebrow">A rewrite of YONIQ</p>
+        <h1>Slow-scan TV on Windows, Linux and macOS</h1>
         <p class="lede">
-          A ground-up, cross-platform rewrite of YONIQ (a fork of MMSSTV). Every one of the 43
-          modes is ported exactly, so it's identical on the air — and everything around them is
-          rebuilt: a real QSL-style layout editor, a searchable receive history, and rig control
-          through Hamlib instead of a hard-coded list of six radios.
+          Scanline Studio sends and receives SSTV pictures over amateur radio. It handles all 43
+          MMSSTV-family modes, so you can swap pictures with stations already using them. It's a
+          rewrite of YONIQ, which is a fork of MMSSTV, the long-running Windows SSTV program. Tune
+          your radio to an SSTV frequency and it picks out the mode and draws the picture as it
+          comes in.
         </p>
         <img class="waterfall" src="images/waterfall.jpg" alt="Scanline Studio's live spectrum and waterfall display">
         <div class="buttons">
           <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
           <a class="btn btn-secondary" href="https://github.com/Ar0xA/Scanline-Studio">View on GitHub</a>
         </div>
-        <p class="platforms">Windows · Linux · macOS</p>
-      </div>
-    </div>
-
-    <div class="strip">
-      <div class="wrap">
-        <p>
-          Same 43 modes, verified against the source · Real template editor, not paste-on
-          captions · Searchable SQLite gallery, not a binary blob · Any rig Hamlib knows, not six
-        </p>
+        <p class="platforms">Free and open source</p>
       </div>
     </div>
 
     <section id="modes">
       <div class="wrap">
         <div class="section-head">
-          <h2>Every mode from the original</h2>
+          <h2>All 43 modes</h2>
           <p>
-            All 43 SSTV modes from YONIQ are ported — checked mode by mode against YONIQ's own
-            encoder and decoder, not just against each other, so a picture sent from Scanline Studio
-            reads correctly on any other MMSSTV-family station, and vice versa.
+            Each one was checked against YONIQ's own encoder and decoder code, so a picture sent
+            from Scanline Studio decodes on other MMSSTV-family stations, and theirs decode here.
           </p>
         </div>
         <div class="modes">
@@ -573,7 +564,6 @@
           <span class="mode-chip">MN / MC (narrow)</span>
           <span class="mode-chip">and more</span>
         </div>
-        <p class="mode-count">43 of 43 YONIQ modes — full parity, not a subset.</p>
       </div>
     </section>
 
@@ -582,29 +572,23 @@
         <div class="spotlight">
           <button type="button" class="shot shot-photo" data-lightbox-trigger>
             <img src="images/radiosettings.jpg" loading="lazy"
-                 alt="Scanline Studio radio control (CAT) settings — Hamlib, rigctld, flrig, and OmniRig options">
+                 alt="Scanline Studio radio control (CAT) settings: Hamlib, rigctld, flrig and OmniRig options">
             <span class="shot-hint">Click to enlarge</span>
           </button>
           <div class="copy">
-            <h3>Talks to any rig Hamlib does, not just six</h3>
+            <h3>Works with any rig Hamlib supports</h3>
             <p>
-              YONIQ hand-coded control for a fixed list of six rig families — Yaesu, Icom CI-V,
-              Kenwood, Ten-Tec, and JRC — and could never talk to anything outside that list.
-              Scanline Studio never bundles a copy of Hamlib: it links against whatever Hamlib your
-              own system already has installed, or talks to an already-running Hamlib daemon over
-              rigctld — either way, you get Hamlib's full rig list without carrying a private fork
-              of it that can fall out of date.
+              Rig control goes through Hamlib, the open-source rig-control library, so any radio it
+              knows works here. YONIQ used its own serial code for a fixed list of rigs, plus
+              OmniRig on Windows.
             </p>
             <ul>
-              <li><strong>Linked Hamlib</strong> — in-process, against your own installed
-                <code>libhamlib</code> — the widest rig list available, with no per-radio code to
-                maintain.</li>
-              <li><strong>rigctld</strong> — talks to an already-running Hamlib daemon, local or
-                over the network, so more than one program can share the same rig, and it works on
-                platforms without a linked build.</li>
-              <li><strong>flrig</strong> and <strong>OmniRig</strong> (Windows) for stations already
-                running them.</li>
-              <li>Frequency and PTT, fully async, so radio polling never blocks the decoder.</li>
+              <li><strong>Linked Hamlib</strong> loads the <code>libhamlib</code> installed on your
+                system and runs inside the app. It has the widest rig list.</li>
+              <li><strong>rigctld</strong> connects to a Hamlib daemon running on this machine or
+                elsewhere on your network, so several programs can share one rig.</li>
+              <li><strong>flrig</strong> and <strong>OmniRig</strong> (Windows), if you use them.</li>
+              <li>Rig polling runs in the background, so a slow radio never freezes the decoder.</li>
             </ul>
           </div>
         </div>
@@ -616,26 +600,25 @@
         <div class="spotlight spotlight-reverse">
           <button type="button" class="shot shot-photo" data-lightbox-trigger>
             <img src="images/txeditor.jpg" loading="lazy"
-                 alt="Scanline Studio TX Template Editor — text, box, image, and line elements on a QSL-style layout">
+                 alt="Scanline Studio TX Template Editor: text, box, image and line elements on a QSL-style layout">
             <span class="shot-hint">Click to enlarge</span>
           </button>
           <div class="copy">
-            <h3>A real template editor, not a picture-plus-caption box</h3>
+            <h3>A template editor for QSL-style pictures</h3>
             <p>
-              MMSSTV let you paste a callsign onto a picture. Scanline Studio's TX Template
-              Editor builds full QSL-style layouts and reuses them instantly, mid-contact.
+              Set a layout up once, then reuse it whenever you need it, even in the middle of a
+              contact.
             </p>
             <ul>
-              <li><strong>Text, box, image, and line elements</strong>, each independently styled,
-                stacked, and positioned on the canvas.</li>
-              <li><strong>Macros</strong> drop in your own callsign, grid, and live frequency/mode
-                automatically; the rest of the QSO fills in as you type it.</li>
-              <li><strong>Ready Rack</strong>, a 9-slot pinned strip for instant recall, backed by a
-                full searchable <strong>Template Library</strong> in grid or list view.</li>
-              <li><strong>Imports your existing YONIQ <code>.mtm</code> templates</strong>, so past
-                template work carries over.</li>
-              <li>Perspective transform and grow-to-fill text, for layouts MMSSTV's flat paste-on
-                couldn't do.</li>
+              <li><strong>Text, box, image and line elements.</strong> Each one has its own style,
+                stacking order and position on the canvas.</li>
+              <li><strong>Macros</strong> fill in your callsign, grid square and the current
+                frequency and mode.</li>
+              <li><strong>Ready Rack</strong> is a strip of nine pinned slots for quick recall. It
+                sits on top of a searchable <strong>Template Library</strong> that you can view as a
+                grid or a list.</li>
+              <li>Your existing <strong>YONIQ <code>.mtm</code> templates</strong> import directly.</li>
+              <li>Distort boxes and images in perspective, and let text grow to fill its box.</li>
             </ul>
           </div>
         </div>
@@ -647,68 +630,46 @@
         <div class="spotlight">
           <button type="button" class="shot shot-photo" data-lightbox-trigger>
             <img src="images/gallery.jpg" loading="lazy"
-                 alt="Scanline Studio Gallery tab — searchable receive history with Send to TX, Logged status, and re-decode">
+                 alt="Scanline Studio Gallery tab: searchable receive history with Send to TX, Logged status and re-decode">
             <span class="shot-hint">Click to enlarge</span>
           </button>
           <div class="copy">
-            <h3>Every picture you've received, searchable</h3>
+            <h3>Search everything you've received</h3>
             <p>
-              YONIQ kept a proprietary binary history file. The Gallery tab is a real, searchable
-              record of every received image, tied directly to your log.
+              Every picture you receive goes into a history that's linked to your logbook, in place
+              of YONIQ's single binary history file.
             </p>
             <ul>
-              <li>Full receive history, browsable and searchable, stored in a standard SQLite
-                database.</li>
-              <li><strong>Send to TX</strong> takes a received image straight into the Template
-                Editor, and resolves the QSO it was linked to.</li>
-              <li>A <strong>Logged</strong> indicator shows at a glance whether a picture already has
-                a log entry.</li>
-              <li><strong>Re-decode this frame</strong> re-runs decoding on a saved recording, and
-                <strong>Open audio file location</strong> gets you to the raw capture.</li>
+              <li>It's a standard SQLite database, so you can browse it and search it.</li>
+              <li><strong>Send to TX</strong> moves a received image straight into the Template
+                Editor and looks up the QSO it belongs to.</li>
+              <li>A <strong>Logged</strong> indicator shows whether a picture already has a log
+                entry.</li>
+              <li><strong>Re-decode this frame</strong> runs the decoder again on a saved recording.
+                <strong>Open audio file location</strong> takes you to the raw capture.</li>
             </ul>
           </div>
         </div>
       </div>
     </section>
 
-    <div class="strip">
-      <div class="wrap">
-        <p>
-          Already have YONIQ <code>.mtm</code> templates? They import directly. Already running
-          rigctld or flrig for another program? Point Scanline Studio at the same instance.
-        </p>
-      </div>
-    </div>
-
     <section id="features">
       <div class="wrap">
         <div class="section-head">
-          <h2>Other features</h2>
+          <h2>Also included</h2>
         </div>
         <div class="features">
           <div class="feature">
-            <h3>Receive</h3>
-            <p>Decode live from your audio device, with a waterfall and spectrum display.</p>
-          </div>
-          <div class="feature">
             <h3>Audio recording</h3>
-            <p>An optional setting saves each reception's raw audio as a .wav file alongside its image, for later diagnosis or re-decoding.</p>
+            <p>You can save each reception's raw audio as a .wav file next to its picture and re-decode it later.</p>
           </div>
           <div class="feature">
-            <h3>Logbook</h3>
-            <p>ADIF export, and UDP forwarding to GridTracker2, N1MM, and Log4OM.</p>
+            <h3>Logbook and QRZ</h3>
+            <p>You can export ADIF, forward logged QSOs over UDP to GridTracker2, N1MM and Log4OM, and look up station details on QRZ.</p>
           </div>
           <div class="feature">
-            <h3>Callsign lookup</h3>
-            <p>QRZ integration fills in station details for logged contacts.</p>
-          </div>
-          <div class="feature">
-            <h3>Multilingual</h3>
-            <p>English and German today, switchable at runtime — more languages to come.</p>
-          </div>
-          <div class="feature">
-            <h3>Light and dark themes</h3>
-            <p>Switch anytime in Options — the screenshots above show both.</p>
+            <h3>Languages and themes</h3>
+            <p>The interface comes in English and German, with more languages planned, and in light and dark themes. Change either in Options.</p>
           </div>
         </div>
       </div>
@@ -718,13 +679,13 @@
       <div class="wrap">
         <div class="section-head">
           <h2>Download</h2>
-          <p>Releases are hosted on GitHub. The user guide is built into this page.</p>
+          <p>Releases are on GitHub, and the user guide opens right here on this page.</p>
         </div>
         <div class="download-card">
           <div class="row">
             <div>
               <h3 style="font-family: inherit; font-size: 1.05rem; font-weight: 600;">Latest release</h3>
-              <p>Windows, Linux, and macOS builds.</p>
+              <p>Pick the file for your system on the releases page. To go on the air you need a radio and a sound card connected to it, and rig control is optional. No radio handy? Open a saved .wav recording and decode that.</p>
             </div>
             <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
           </div>
@@ -741,74 +702,39 @@
       <div class="wrap">
         <div class="section-head">
           <h2>About Scanline Studio</h2>
-          <p>
-            What another station transmits or expects over the air is never up for
-            reinterpretation. Everything else was an engineering choice, and choices can be
-            improved. Here's why this exists, what it's trying to be, and how it's actually built.
-          </p>
         </div>
 
         <div class="about-block">
-          <h3>Vision</h3>
+          <h3>Why this exists</h3>
           <p>
-            SSTV has been carried for decades by one lineage of software: MMSSTV, and later YONIQ.
-            That lineage encodes a great deal of hard-won knowledge about how real signals behave on
-            real bands. Scanline Studio's aim is to carry that knowledge forward onto every platform
-            a ham actually uses today, without changing what goes over the air.
+            MMSSTV goes back to 2000, and YONIQ is a fork of it. Both only run on Windows, and Linux
+            hams have had QSSTV instead. Scanline Studio brings the MMSSTV family to Windows, Linux
+            and macOS and keeps what goes out over the air exactly the same.
           </p>
           <p>
-            Linux hams have had QSSTV; Windows hams have had MMSSTV and YONIQ. Scanline Studio is
-            the MMSSTV lineage, on every platform.
-          </p>
-        </div>
-
-        <div class="about-block">
-          <h3>Goals</h3>
-          <p>
-            All 43 of YONIQ's modes, on the air exactly as before. MMSSTV and YONIQ are
-            Windows-only C++Builder programs; Scanline Studio runs natively on Windows, Linux, and
-            macOS, as equals, from one codebase. A template editor and receive history built for
-            how SSTV is actually operated today, rig control through Hamlib instead of a
-            hard-coded rig list, and a logbook that hands off to the tools you already run rather
-            than trying to replace them. Free and open source, LGPL-3.0-or-later — the same
-            license as upstream.
+            It's free and open source, under LGPL-3.0-or-later like the code it grew out of.
           </p>
         </div>
 
         <div class="about-block">
           <h3>How it's built</h3>
           <p>
-            Scanline Studio is developed with heavy use of AI-assisted engineering (Claude Code).
-            Porting a couple of decades of C++ DSP and codec logic into a new C# codebase is exactly
-            the kind of large, exacting, easy-to-get-subtly-wrong work where that help matters — and
-            we'd rather say so plainly than pretend otherwise.
+            Scanline Studio is developed with heavy use of AI-assisted engineering (Claude Code),
+            which helped with the C++ to C# port. The AI doesn't decide what's correct, though:
+            every mode is checked against YONIQ's own code. That rule exists because an early
+            Scottie port got its channel order wrong by inferring it from the receive code, and a
+            round-trip test passed anyway because the encoder and decoder were wrong in the same
+            way.
           </p>
-          <p>
-            The tooling does not get to decide what the protocol is. Every ported mode is checked
-            against the YONIQ source, not inferred from similar-looking code. An early port of the
-            Scottie mode got the channel order wrong for exactly that reason — it inferred the
-            transmit structure from the receive code instead of reading the real transmit function,
-            and a round-trip test didn't catch it, because the encoder and decoder agreed with each
-            other while both were wrong about the actual protocol. Every mode now gets checked
-            against YONIQ's own encoder and decoder source specifically, not just cross-checked
-            against itself.
-          </p>
-          <div class="callout">
-            <p>
-              MMSSTV's lineage goes back to 2000 — over two decades of accumulated engineering
-              knowledge about how SSTV actually behaves on real bands, carried forward here rather
-              than started over.
-            </p>
-          </div>
         </div>
 
         <div class="about-block">
           <h3>Found a mismatch or a bug?</h3>
           <p>
-            If a mode decodes differently from MMSSTV or YONIQ, or transmits something another
-            station can't read, that's a bug by definition, not a matter of opinion. The same goes
-            for anything else that doesn't work as expected — please
-            <a href="https://github.com/Ar0xA/Scanline-Studio/issues">open an issue</a>.
+            If a mode decodes differently from MMSSTV or YONIQ, or sends something another station
+            can't read, that's a bug. The same goes for anything else that doesn't work the way you'd
+            expect. Please <a href="https://github.com/Ar0xA/Scanline-Studio/issues">open an
+            issue</a>.
           </p>
         </div>
       </div>
