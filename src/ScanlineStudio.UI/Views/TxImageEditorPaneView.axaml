@@ -553,7 +553,7 @@
                                                  Content="{loc:Translate Panes.TxImageEditor.LibraryViewModeGrid}" />
                                 </StackPanel>
                             </Grid>
-                            <TextBox Grid.Row="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
+                            <TextBox Grid.Row="1" Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Panes.TxImageEditor.LibraryFilterPlaceholder}" Text="{Binding ReadyRack.LibraryFilterText}" />
 
                             <!-- Expanded template selector: two ListBoxes (list/grid), mutually
                                  exclusive IsVisible off ReadyRack.IsGridView, sharing the SAME
@@ -683,7 +683,7 @@
                             </StackPanel>
 
                             <Grid Grid.Row="4" ColumnDefinitions="*,Auto" ColumnSpacing="4">
-                                <TextBox x:Name="NewTemplateNameTextBox" Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
+                                <TextBox x:Name="NewTemplateNameTextBox" Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Panes.TxImageEditor.TemplateNamePlaceholder}" Text="{Binding NewTemplateName}" />
                                 <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnPrimary" Padding="7,0"
                                         Content="{loc:Translate Panes.TxImageEditor.SaveTemplate}" Command="{Binding SaveTemplateCommand}" />
                             </Grid>
