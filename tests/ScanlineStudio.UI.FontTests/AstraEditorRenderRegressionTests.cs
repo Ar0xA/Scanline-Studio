@@ -343,7 +343,7 @@ public sealed class AstraEditorRenderRegressionTests
         using var bitmap = new RenderTargetBitmap(new PixelSize(width, height), new Vector(96, 96));
         bitmap.Render(control);
         using var stream = new MemoryStream();
-        bitmap.Save(stream);
+        bitmap.Save(stream, Avalonia.Media.Imaging.PngBitmapEncoderOptions.Default);
         stream.Position = 0;
         return SixLabors.ImageSharp.Image.Load<Rgba32>(stream);
     }

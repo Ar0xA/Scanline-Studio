@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) — the Arm64 or x64 installer,
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (Avalonia 12 needs it to build; the app still targets `net8.0`, so also install the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to run the tests) — the Arm64 or x64 installer,
   matching your Mac.
 - Xcode Command Line Tools, for `clang` (the native audio shim's compiler on this platform):
 

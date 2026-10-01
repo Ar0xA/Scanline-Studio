@@ -877,7 +877,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         _ = LoadSsbAsPktPreferenceSafeAsync();
 
         UpdateUtcClock();
-        _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, (_, _) => UpdateUtcClock());
+        _utcClockTimer = new DispatcherTimer(UtcClockTickInterval, DispatcherPriority.Background, Dispatcher.UIThread, (_, _) => UpdateUtcClock());
         _utcClockTimer.Start();
 
         // Always running, not gated on IsReceiving -- same "no Start/Stop pairing, runs for this
@@ -893,7 +893,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // so IsDecodingImage/IsDecodingBlinkOn also read correctly from construction, not just
         // after the first real 250ms timer tick.
         OnRxAudioLevelTick();
-        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, (_, _) => OnRxAudioLevelTick());
+        _rxAudioLevelTimer = new DispatcherTimer(RxAudioLevelPollInterval, DispatcherPriority.Background, Dispatcher.UIThread, (_, _) => OnRxAudioLevelTick());
         _rxAudioLevelTimer.Start();
 
         // spec/18-path-to-1.0.md High item 8: Program.cs's own automatic StartReceivingAsync()

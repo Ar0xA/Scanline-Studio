@@ -144,6 +144,10 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public double SignalPeakLevel => throw NotExercised();
 
+    public double LiveSnrDb => throw NotExercised();
+
+    public double ReceptionSnrDb => throw NotExercised();
+
     public double RawInputPeakLevel => throw NotExercised();
 
     public bool IsLevelOverdriven => throw NotExercised();
@@ -195,6 +199,8 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
     public void RequestAutoStopEnabled(bool enabled) => throw NotExercised();
 
     public void RequestAutoSlantEnabled(bool enabled) => throw NotExercised();
+
+    public void RequestSnrMeasurementEnabled(bool enabled) => throw NotExercised();
 
     public void RequestAfcEnabled(bool enabled) => throw NotExercised();
 

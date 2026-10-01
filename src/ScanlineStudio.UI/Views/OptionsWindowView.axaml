@@ -124,7 +124,7 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Config.Label}" />
                                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding ConfigDirectoryInput}"
-                                                     Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
+                                                     PlaceholderText="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
                                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseConfigDirectoryCommand}" />
                                         </Grid>
@@ -146,7 +146,7 @@
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.General.Storage.Database.Label}" />
                                         <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
                                             <TextBox Classes="Industry IndustryInput" Text="{Binding PendingDatabaseDirectory}"
-                                                     Watermark="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
+                                                     PlaceholderText="{loc:Translate Options.General.Storage.NewFolderWatermark}" />
                                             <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
                                                     Content="{loc:Translate Options.General.Storage.BrowseButton}" Command="{Binding BrowseDatabaseDirectoryCommand}" />
                                         </Grid>
@@ -446,7 +446,7 @@
                                             <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Radio.Hamlib.LibraryPath}" />
                                             <TextBlock Grid.Column="1" Classes="IndustryHelpGlyph" Margin="{StaticResource IndustryPaddingHairline}" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Radio.Hamlib.LibraryPath.Help}" />
                                             <TextBox Grid.Column="2" Classes="Industry IndustryInput" Text="{Binding HamlibLibraryPath}"
-                                                      Watermark="{loc:Translate Options.Radio.Hamlib.LibraryPath.Watermark}" IsEnabled="{Binding !IsProbingHamlib}" />
+                                                      PlaceholderText="{loc:Translate Options.Radio.Hamlib.LibraryPath.Watermark}" IsEnabled="{Binding !IsProbingHamlib}" />
                                         </Grid>
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.Hamlib.LibraryPath.Caption}" TextWrapping="Wrap" />
                                         <WrapPanel>
@@ -717,7 +717,7 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.Callsign}" />
                                         <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Tx.Callsign.Help}" />
                                     </StackPanel>
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding Callsign}" Watermark="{Binding CallsignWatermark}" HorizontalAlignment="Stretch" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding Callsign}" PlaceholderText="{Binding CallsignWatermark}" HorizontalAlignment="Stretch" />
                                 </StackPanel>
                             </ContentControl>
 
@@ -731,11 +731,11 @@
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorName}" />
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorName}" Watermark="{Binding OperatorNameWatermark}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorName}" PlaceholderText="{Binding OperatorNameWatermark}" />
                                     </Grid>
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Tx.OperatorGrid}" />
-                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" Watermark="{Binding OperatorGridWatermark}" />
+                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding OperatorGrid}" PlaceholderText="{Binding OperatorGridWatermark}" />
                                     </Grid>
                                     <Grid ColumnDefinitions="Auto,*">
                                         <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
@@ -853,6 +853,10 @@
                                          Auto Slant has no effect with RX buffering off. -->
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.AutoSlant}"
                                               IsChecked="{Binding AutoSlantEnabled}" IsEnabled="{Binding IsAutoSlantRowEnabled}" />
+                                    <!-- Sync-pulse SNR measurement: read-only, decoded pixels identical either way. -->
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.MeasureSnr}"
+                                              ToolTip.Tip="{loc:Translate Options.Decode.MeasureSnr.Tooltip}"
+                                              IsChecked="{Binding SnrMeasurementEnabled}" />
 
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetDecodeToDefaultCommand}" />
                                 </StackPanel>
@@ -932,7 +936,7 @@
                                               IsChecked="{Binding NrRstEnabled}" />
                                     <StackPanel IsVisible="{Binding NrRstEnabled}" Spacing="{StaticResource IndustrySpacingSnug}">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Identification.NrRstText}" />
-                                        <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Identification.NrRstTextWatermark}" Text="{Binding NrRstText}" />
+                                        <TextBox Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Options.Identification.NrRstTextWatermark}" Text="{Binding NrRstText}" />
                                     </StackPanel>
                                 </StackPanel>
                             </HeaderedContentControl>
@@ -1129,16 +1133,24 @@
                                     <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Qrz.QrzLookupEnabled}"
                                               IsChecked="{Binding QrzLookupEnabled}" />
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Qrz.UsernameLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Qrz.QrzLookupUsernameWatermark}"
+                                    <TextBox Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Options.Qrz.QrzLookupUsernameWatermark}"
                                              Text="{Binding QrzLookupUsername}" />
                                     <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Qrz.PasswordLabel}" />
-                                    <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Qrz.QrzLookupPasswordWatermark}"
-                                             Text="{Binding QrzLookupPassword}" PasswordChar="•" />
-                                    <!-- A real QRZ account password (not a scoped/revocable API key like the
-                                         separate QRZ Logbook upload feature) is stored in plaintext local
-                                         settings: no scoped-credential mode exists for this API, so a hint
-                                         is the mitigation, not a fix. -->
-                                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Qrz.QrzLookupPasswordHint}" TextWrapping="Wrap" />
+                                    <Grid ColumnDefinitions="*,Auto">
+                                        <TextBox Grid.Column="0" Classes="Industry IndustryInput" PlaceholderText="{Binding QrzLookupPasswordWatermark}"
+                                                 Text="{Binding QrzLookupPassword}" PasswordChar="•" />
+                                        <!-- The only Options control allowed to show a keyring unlock prompt. -->
+                                        <Button Grid.Column="1" Margin="6,0,0,0" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0"
+                                                Content="{loc:Translate Options.Qrz.UnlockKeyringButton}"
+                                                IsVisible="{Binding IsQrzKeyringLocked}"
+                                                Command="{Binding UnlockQrzKeyringCommand}" />
+                                    </Grid>
+                                    <!-- Hint text depends on where the password is stored: system keyring or plaintext settings.json. -->
+                                    <TextBlock Classes="IndustryRowLabel" Text="{Binding QrzLookupPasswordHint}" TextWrapping="Wrap" />
+                                    <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{loc:Translate Options.Qrz.KeyringUnavailableHint}"
+                                               TextWrapping="Wrap" IsVisible="{Binding IsQrzKeyringUnreachable}" />
+                                    <TextBlock Classes="IndustryRowLabel" Foreground="{DynamicResource IndustryDanger}" Text="{loc:Translate Options.Qrz.PlaintextWarning}"
+                                               TextWrapping="Wrap" IsVisible="{Binding ShowQrzPlaintextWarning}" />
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.Qrz.TestButton}"
                                                 Command="{Binding TestQrzLookupCommand}" />
@@ -1207,9 +1219,9 @@
                                                     <Grid ColumnDefinitions="Auto,*,*,Auto,Auto" RowDefinitions="Auto" >
                                                         <CheckBox Grid.Column="0" Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
                                                                   IsChecked="{Binding Enabled}" VerticalAlignment="Center" Margin="0,0,6,0" />
-                                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Forwarding.NameWatermark}"
+                                                        <TextBox Grid.Column="1" Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Options.Forwarding.NameWatermark}"
                                                                  Text="{Binding Name}" Margin="0,0,4,0" />
-                                                        <TextBox Grid.Column="2" Classes="Industry IndustryInput" Watermark="{loc:Translate Options.Forwarding.HostWatermark}"
+                                                        <TextBox Grid.Column="2" Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Options.Forwarding.HostWatermark}"
                                                                  Text="{Binding Host}" Margin="0,0,4,0" />
                                                         <!-- No Watermark here: NumericUpDown doesn't visibly render one in this
                                                              theme (see the column-header Grid above, which is the real fix). -->

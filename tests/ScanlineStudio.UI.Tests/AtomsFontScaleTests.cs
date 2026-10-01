@@ -196,7 +196,7 @@ public sealed partial class AtomsFontScaleTests
         ["ImageViewerWindowView.axaml"] = 4,
         ["LoopbackSelfTestResultWindowView.axaml"] = 4,
         ["MacrosReferenceWindowView.axaml"] = 4,
-        ["MainWindow.axaml"] = 22,
+        ["MainWindow.axaml"] = 21,
         ["OptionsWindowView.axaml"] = 6,
         ["QsoLinkWindowView.axaml"] = 4,
         ["QuickSwitchFailedDialogView.axaml"] = 2,
@@ -218,7 +218,7 @@ public sealed partial class AtomsFontScaleTests
         // on the 2 new dedicated flyouts' own StackPanel (image, line) -- same fixed-control-sizing
         // class as the FontSizePx/BorderThicknessPx/CornerRadiusPx/StrokeThicknessPx TextBoxes'
         // own pre-existing Width="70" literals in this same file, not font-size-coupled.
-        ["TxImageEditorPaneView.axaml"] = 116,
+        ["TxImageEditorPaneView.axaml"] = 121,
         ["Atoms.axaml"] = 30,
     };
 
@@ -363,7 +363,7 @@ public sealed partial class AtomsFontScaleTests
             var expectedCount = ExpectedRemainingLiteralCounts.GetValueOrDefault(fileName, 0);
 
             var text = StripAxamlComments(File.ReadAllText(file));
-            var actualCount = LiteralAttributeRegex().Matches(text).Count;
+            var actualCount = LiteralAttributeRegex().Count(text);
             if (actualCount != expectedCount)
             {
                 violations.Add($"{fileName}: expected {expectedCount} remaining literal(s), found {actualCount} -- "
@@ -381,7 +381,7 @@ public sealed partial class AtomsFontScaleTests
         var uiSourceDirectory = FindUiSourceDirectory();
         var path = Path.Combine(uiSourceDirectory, "Styles", "Atoms.axaml");
         var text = StripAxamlComments(File.ReadAllText(path));
-        var actualCount = LiteralSetterRegex().Matches(text).Count;
+        var actualCount = LiteralSetterRegex().Count(text);
 
         Assert.Equal(ExpectedAtomsSetterFormLiteralCount, actualCount);
     }

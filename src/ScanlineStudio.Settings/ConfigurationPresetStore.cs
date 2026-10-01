@@ -345,7 +345,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
     }
 
     // T0-8: presets are user-shareable files -- QrzLookup.Password and QrzUpload.ApiKey must never
-    // round-trip through one. Field-level (not whole-section, unlike ExcludedSectionKeys above):
+    // round-trip through one, nor the machine-local QrzLookup.PasswordInCredentialStore flag. Field-level (not whole-section, unlike ExcludedSectionKeys above):
     // Enabled/Username stay, so applying a preset doesn't force re-entering them, only the secret
     // needs re-entering (user decision; the live secret itself is carried forward on preset APPLY
     // by ConfigurationPresetService in the Application layer, not duplicated here). Field names
@@ -357,6 +357,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
     private static readonly (string SectionKey, string FieldName)[] RedactedFields =
     [
         ("QrzLookup", "Password"),
+        ("QrzLookup", "PasswordInCredentialStore"),
         ("QrzUpload", "ApiKey"),
     ];
 

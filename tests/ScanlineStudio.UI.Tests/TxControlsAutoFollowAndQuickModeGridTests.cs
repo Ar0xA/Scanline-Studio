@@ -425,7 +425,7 @@ public sealed class TxControlsAutoFollowAndQuickModeGridTests
     }
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
-    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // uses: a disposed instance throws ObjectDisposedException from
     // any real operation, here .Lock().
     private static bool IsWriteableBitmapDisposed(WriteableBitmap bitmap)
     {
@@ -437,7 +437,7 @@ public sealed class TxControlsAutoFollowAndQuickModeGridTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }

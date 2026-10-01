@@ -50,7 +50,7 @@
                         <ItemsControl.ItemTemplate>
                             <DataTemplate x:DataType="vm:FrequencyPresetEditorRowViewModel">
                                 <Grid ColumnDefinitions="*,90,100,Auto,Auto" ColumnSpacing="{StaticResource IndustrySpacingTight}" Margin="0,0,0,3">
-                                    <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate FavouritesEditor.LabelWatermark}" Text="{Binding Label}" />
+                                    <TextBox Classes="Industry IndustryInput" PlaceholderText="{loc:Translate FavouritesEditor.LabelWatermark}" Text="{Binding Label}" />
                                     <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FrequencyMhzText}" />
                                     <!-- Mode=TwoWay written out, not left to SelectedValue's default: the
                                          precedent this copies (MainWindow.axaml's Logbook mode picker) states

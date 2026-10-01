@@ -94,7 +94,7 @@
                                  FontSize="{DynamicResource IndustryFrequencyEditFontSize}" Margin="0,2,0,0" Width="{DynamicResource IndustryFrequencyEditWidth}"
                                  Height="{DynamicResource IndustryFrequencyEditHeight}" MinHeight="{DynamicResource IndustryFrequencyEditMinHeight}"
                                  Text="{Binding FrequencyInputMhz}"
-                                 Watermark="{loc:Translate RadioStatus.FrequencyEntry.Watermark}"
+                                 PlaceholderText="{loc:Translate RadioStatus.FrequencyEntry.Watermark}"
                                  IsVisible="{Binding IsEditingFrequency}"
                                  KeyDown="OnFrequencyEntryKeyDown"
                                  LostFocus="OnFrequencyEntryLostFocus" />

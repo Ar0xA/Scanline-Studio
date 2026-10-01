@@ -235,10 +235,12 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
             {
                 try
                 {
-                    var livePassword = current.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings)?.Password;
+                    // The credential-store flag is live machine state like the password itself, never preset content.
+                    var liveQrzLookup = current.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
                     var mergedQrzLookup = System.Text.Json.JsonSerializer.Deserialize(merged[QrzLookupSettings.SectionKey], QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
                     merged[QrzLookupSettings.SectionKey] = System.Text.Json.JsonSerializer.SerializeToElement(
-                        mergedQrzLookup with { Password = livePassword }, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+                        mergedQrzLookup with { Password = liveQrzLookup?.Password, PasswordInCredentialStore = liveQrzLookup?.PasswordInCredentialStore },
+                        QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
                 }
                 catch (System.Text.Json.JsonException ex)
                 {
@@ -351,6 +353,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         _sstvSession.RequestAutoSyncEnabled(newResolved.AutoSyncEnabled);
         _sstvSession.RequestAutoStopEnabled(newResolved.AutoStopEnabled);
         _sstvSession.RequestAutoSlantEnabled(newResolved.AutoSlantEnabled);
+        _sstvSession.RequestSnrMeasurementEnabled(newResolved.SnrMeasurementEnabled);
         _sstvSession.RequestAfcEnabled(newResolved.AfcEnabled);
         _sstvSession.RequestSyncRestartEnabled(newResolved.SyncRestartEnabled);
         _sstvSession.RequestReconfiguration(newResolved.RxBpfPreset, newResolved.DemodType, newResolved.RxBufferMode);

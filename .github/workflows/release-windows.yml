@@ -1,0 +1,61 @@
+name: Release Windows build
+
+# Manual only -- never runs on push/PR. Trigger by hand (Actions tab, or
+# `gh workflow run release-windows.yml -f tag=<tag>`) when a Windows asset is needed for a release.
+# The tag and its GitHub release must already exist.
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag to attach the Windows build to (e.g. v0.9.1-beta)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Publish (${{ matrix.rid }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        rid: [win-x64]
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag }}
+
+      # SDK 10 builds (Avalonia 12's source generators need its compiler); the app still targets net8.0.
+      - name: Setup .NET SDK 10 and runtime 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      # ScanlineStudio.Core.Audio.MiniAudio's BuildNativeShimWindows target needs cl.exe on PATH.
+      - name: Set up MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+
+      # msvc-dev-cmd exports Platform=x64 as an env var, which MSBuild would read as a project
+      # property -- override it on the publish call (same reason ci.yml does for the solution).
+      - name: Publish
+        run: dotnet publish src/ScanlineStudio.Host -c Release -r ${{ matrix.rid }} /p:Platform=AnyCPU -o publish/${{ matrix.rid }}
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $version = "${{ github.event.inputs.tag }}".TrimStart('v')
+          $name = "ScanlineStudio-$version-${{ matrix.rid }}"
+          New-Item -ItemType Directory -Path "dist/$name" -Force | Out-Null
+          Copy-Item -Recurse -Path "publish/${{ matrix.rid }}/*" -Destination "dist/$name"
+          Compress-Archive -Path "dist/$name" -DestinationPath "$name.zip"
+          "ASSET=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.event.inputs.tag }}" "${{ env.ASSET }}" --clobber

@@ -559,6 +559,16 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         AutoSlantEnabled = enabled;
     }
 
+    public int RequestSnrMeasurementEnabledCallCount { get; private set; }
+
+    public bool? LastRequestedSnrMeasurementEnabled { get; private set; }
+
+    public void RequestSnrMeasurementEnabled(bool enabled)
+    {
+        RequestSnrMeasurementEnabledCallCount++;
+        LastRequestedSnrMeasurementEnabled = enabled;
+    }
+
     public int RequestAfcEnabledCallCount { get; private set; }
 
     public bool? LastRequestedAfcEnabled { get; private set; }
@@ -944,6 +954,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public int? SyncOffsetSamples { get; set; }
 
     public double SignalPeakLevel { get; set; }
+
+    public double LiveSnrDb { get; set; } = double.NaN;
+
+    public double ReceptionSnrDb { get; set; } = double.NaN;
 
     public double RawInputPeakLevel { get; set; }
 

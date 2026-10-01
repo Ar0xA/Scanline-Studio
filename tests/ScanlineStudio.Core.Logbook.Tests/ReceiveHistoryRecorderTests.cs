@@ -692,6 +692,96 @@ public sealed class ReceiveHistoryRecorderTests
     }
 
     [Fact]
+    public async Task CompletedImage_StoresTheSnrSampledAtItsLastLine()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var settingsStore = TempImagesDirectorySettings();
+        var loadGate = new TaskCompletionSource();
+        settingsStore.LoadGate = loadGate;
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, settingsStore, new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(MakeMode(imageHeight: 4));
+        for (var line = 0; line < 4; line++)
+        {
+            decoder.ReceptionSnrDb = 10 + line;
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        // A later value (next reception, or the decoder resetting) must not leak into the queued save.
+        decoder.ReceptionSnrDb = double.NaN;
+        decoder.RaiseModeDetected(MakeMode(imageHeight: 4));
+        loadGate.SetResult();
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(13.0, entry.SnrDb);
+    }
+
+    [Fact]
+    public async Task CompletedImage_WithNoMeasurement_StoresNull()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(MakeMode(imageHeight: 4));
+        for (var line = 0; line < 4; line++)
+        {
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Null(entry.SnrDb);
+    }
+
+    [Fact]
+    public async Task DecodeRestarted_DominantOrdering_AbandonedImage_StoresItsOwnLastLineSnr()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var mode = MakeMode(imageHeight: 100);
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(mode);
+        for (var line = 0; line < 66; line++)
+        {
+            decoder.ReceptionSnrDb = line;
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        decoder.ReceptionSnrDb = double.NaN; // the abandon resets the decoder's figure
+        decoder.RaiseDecodeRestarted(mode);
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(65.0, entry.SnrDb);
+    }
+
+    [Fact]
+    public async Task DecodeRestarted_MinorityOrdering_MidReceptionRestart_StoresTheStashedSnr_NotTheNewReceptions()
+    {
+        var decoder = new FakeSstvDecoder();
+        var historyStore = new FakeReceiveHistoryStore();
+        var abandonedMode = MakeMode(imageHeight: 100, modeId: "abandoned-mode");
+        var newMode = MakeMode(imageHeight: 50, modeId: "new-mode");
+        _ = new ReceiveHistoryRecorder(decoder, new FakeReceivedImageBuffer(), historyStore, TempImagesDirectorySettings(), new FakeRadioStateProvider(), NullLogger<ReceiveHistoryRecorder>.Instance);
+
+        decoder.RaiseModeDetected(abandonedMode);
+        for (var line = 0; line < 66; line++)
+        {
+            decoder.ReceptionSnrDb = 21.5;
+            decoder.RaiseLineDecoded(new DecodedImageUpdate(line, FakeImage));
+        }
+
+        decoder.ReceptionSnrDb = 3.0; // the new reception's own figure is live now
+        decoder.RaiseModeDetected(newMode);
+        decoder.RaiseDecodeRestarted(abandonedMode);
+
+        var entry = await historyStore.WaitForRecordAsync();
+        Assert.Equal(abandonedMode.Id, entry.ModeId);
+        Assert.Equal(21.5, entry.SnrDb);
+    }
+
+    [Fact]
     public async Task DecodeRestarted_TwoBackToBackMinorityOrderingRestarts_SecondNeverConsumesTheFirstsStash()
     {
         // The round-1 data-corruption regression: a stashed _pendingAbandon* entry from one restart

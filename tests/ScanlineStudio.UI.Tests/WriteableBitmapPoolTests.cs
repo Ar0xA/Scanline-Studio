@@ -88,9 +88,8 @@ public sealed class WriteableBitmapPoolTests
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique this codebase's own
     // RxDiskLineStagingBuffer.cs uses for SemaphoreSlim: a disposed instance throws from any real
-    // operation, here .Lock(). Empirically NullReferenceException (Dispose() nulls the internal
-    // platform impl rather than setting a checked flag), not ObjectDisposedException -- confirmed
-    // by running this test against a real disposed instance, not assumed.
+    // operation, here .Lock(). Avalonia 12 throws ObjectDisposedException (11 threw
+    // NullReferenceException) -- confirmed by running this test against a real disposed instance.
     private static bool IsDisposed(WriteableBitmap bitmap)
     {
         try
@@ -101,7 +100,7 @@ public sealed class WriteableBitmapPoolTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }

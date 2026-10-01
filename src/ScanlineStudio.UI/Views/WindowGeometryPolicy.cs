@@ -1,4 +1,6 @@
 using Avalonia;
+using Avalonia.Controls;
+using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.Views;
 
@@ -93,5 +95,31 @@ public static class WindowGeometryPolicy
         var x = workingArea.X + ((workingArea.Width - (widthDip * scaling)) / 2);
         var y = workingArea.Y + ((workingArea.Height - (heightDip * scaling)) / 2);
         return new PixelPoint((int)x, (int)y);
+    }
+
+    /// <summary>True when the backend can place a window (everything except native Wayland). A missing
+    /// <paramref name="backend"/> means "not registered", which is every non-Wayland launch.</summary>
+    public static bool CanPlaceWindow(WindowingBackendInfo? backend) => backend?.SupportsWindowPosition ?? true;
+
+    /// <summary>True when saved geometry can be applied: remembering is on, a size exists, and a position exists
+    /// unless the backend cannot place windows (a Wayland-first install never saves Left/Top).</summary>
+    public static bool HasRestorableGeometry(WindowGeometrySettings? geometry, bool canPlaceWindow) =>
+        geometry is { RememberWindowPosition: true, Width: not null, Height: not null }
+        && (!canPlaceWindow || (geometry.Left is not null && geometry.Top is not null));
+
+    /// <summary>The geometry to persist when the window closes. Left/Top/Width/Height only update when closing
+    /// Normal (a maximized window's bounds are not a "restore to" size), and Left/Top never update when the
+    /// backend cannot place windows, so a Wayland session leaves the X11/Windows position untouched.</summary>
+    public static WindowGeometrySettings BuildClosingGeometry(
+        WindowGeometrySettings current, WindowState closingState, double left, double top, double width, double height, bool canPlaceWindow)
+    {
+        if (closingState != WindowState.Normal)
+        {
+            return current with { WasMaximized = true };
+        }
+
+        return canPlaceWindow
+            ? current with { Left = left, Top = top, Width = width, Height = height, WasMaximized = false }
+            : current with { Width = width, Height = height, WasMaximized = false };
     }
 }

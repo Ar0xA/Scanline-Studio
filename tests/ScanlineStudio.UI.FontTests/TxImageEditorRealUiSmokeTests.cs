@@ -247,6 +247,61 @@ public sealed class TxImageEditorRealUiSmokeTests
     }
 
     [AvaloniaFact]
+    public void ContextBarSaveButton_IsEnabledOnlyWhileTheUnsavedEditsChipShows()
+    {
+        var (window, vm, _) = BuildRealWindow(CreateSource(DefaultSourceWidth, DefaultSourceHeight));
+        try
+        {
+            var view = (TxImageEditorPaneView)window.Content!;
+            var saveButton = view.FindControl<Button>("ContextBarSaveButton")
+                ?? throw new InvalidOperationException("ContextBarSaveButton not found in the real View's visual tree.");
+
+            Assert.False(vm.IsDirtySinceLastCheckpoint);
+            Assert.False(saveButton.IsEnabled);
+
+            vm.AddOverlayElementCommand.Execute(null);
+            PumpDispatcher();
+
+            Assert.True(vm.IsDirtySinceLastCheckpoint);
+            Assert.True(saveButton.IsEnabled);
+            Assert.Contains("IndustryBtnPrimary", saveButton.Classes);
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(442)] // MainWindow.MinHeight (640) minus the fixed bands and tab chrome
+    [InlineData(700)]
+    [InlineData(1032)]
+    public void HostedLikeMainWindow_TransmitButtonStaysInsideTheViewport_AtEveryTabHeight(int tabContentHeight)
+    {
+        EnsureAppServices();
+        var vm = CreateEditor(CreateSource(DefaultSourceWidth, DefaultSourceHeight), TestMode);
+        var view = new TxImageEditorPaneView { DataContext = vm };
+        // Same shape as MainWindow's Transmit tab: a vertical-scroll-disabled ScrollViewer around the editor.
+        var host = new ScrollViewer { VerticalScrollBarVisibility = Avalonia.Controls.Primitives.ScrollBarVisibility.Disabled, Content = view };
+        var window = new Window { Content = host, Width = 1280, Height = tabContentHeight };
+        window.Show();
+        PumpDispatcher();
+        try
+        {
+            var transmit = view.FindControl<Button>("TransmitButton")
+                ?? throw new InvalidOperationException("TransmitButton not found in the real View's visual tree.");
+            var bottom = transmit.TranslatePoint(new Point(0, transmit.Bounds.Height), window)!.Value.Y;
+
+            Assert.True(transmit.Bounds.Height > 0);
+            Assert.True(bottom <= tabContentHeight + 0.5, $"TRANSMIT bottom {bottom} is below the {tabContentHeight}px viewport.");
+        }
+        finally
+        {
+            window.Close();
+        }
+    }
+
+    [AvaloniaFact]
     public void CancelButton_RendersExactlyOneLabel_NotTwoStackedOnes()
     {
         // Auditor-found blocker (2026-09-15): migrating Cancel from an in-row two-click arm/confirm
@@ -547,7 +602,7 @@ public sealed class TxImageEditorRealUiSmokeTests
             // own doc comment ("harmless +0.02 seed offset is immediately overridden by the drag that
             // follows" -- overridden by an ADDITIONAL delta on top, not replaced).
             const double CloneSeedOffset = 0.02;
-            var clone = Assert.Single(vm.OverlayElements.Where(e => !ReferenceEquals(e, original)));
+            var clone = Assert.Single(vm.OverlayElements, e => !ReferenceEquals(e, original));
             AssertClose(originalXBefore + CloneSeedOffset + dragVector.X / vm.CanvasDisplayWidth, clone.X);
             AssertClose(originalYBefore + CloneSeedOffset + dragVector.Y / vm.CanvasDisplayHeight, clone.Y);
 

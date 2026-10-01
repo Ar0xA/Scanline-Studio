@@ -18,7 +18,7 @@ public sealed class AstraOptionsRegressionTests
         FakeSstvSessionService? sstv = null, FakeSettingsStore? settings = null)
     {
         settings ??= new FakeSettingsStore();
-        var vm = new OptionsWindowViewModel(new OptionsSettingsService(settings, NullLogger<OptionsSettingsService>.Instance),
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settings),
             new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settings,
             radio ?? new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(),
             sstv ?? new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(),

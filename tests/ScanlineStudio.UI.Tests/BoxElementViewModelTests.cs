@@ -21,7 +21,7 @@ public sealed class BoxElementViewModelTests
     private static BoxElementViewModel MakeElement() => new() { ImageWidth = 100, ImageHeight = 100 };
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique
-    // ImageElementViewModelTests uses: a disposed instance throws NullReferenceException from any
+    // ImageElementViewModelTests uses: a disposed instance throws ObjectDisposedException from any
     // real operation, here .Lock().
     private static bool IsDisposed(WriteableBitmap bitmap)
     {
@@ -33,7 +33,7 @@ public sealed class BoxElementViewModelTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }

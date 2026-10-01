@@ -563,6 +563,7 @@
                                 <StackPanel Classes="Industry IndustryRows">
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.ClipLoHi}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ClipLoHiDisplay}" /></Grid></Border>
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.SyncTone}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SyncToneDisplay}" /></Grid></Border>
+                                    <Border Classes="IndustryRow" ToolTip.Tip="{loc:Translate Panes.RxSignal.SnrTooltip}"><Grid ColumnDefinitions="Auto,*"><TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxSignal.Snr}" /><TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SnrDisplay}" /></Grid></Border>
                                 </StackPanel>
                             </HeaderedContentControl>
                         </StackPanel>
@@ -1018,12 +1019,12 @@
                                      IReceiveHistoryStore.SetNoteAsync write the Gallery tab's own
                                      Note field already used, just reachable from here too now.
                                      CanEditFrameMetadata is false until that correlation lands. -->
-                                <TextBox Classes="Industry IndustryInput" Text="{Binding Note}" Watermark="{loc:Translate Panes.RxFrameMeta.NoteWatermark}" IsEnabled="{Binding CanEditFrameMetadata}" />
+                                <TextBox Classes="Industry IndustryInput" Text="{Binding Note}" PlaceholderText="{loc:Translate Panes.RxFrameMeta.NoteWatermark}" IsEnabled="{Binding CanEditFrameMetadata}" />
                                 <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxFrameMeta.OverrideCallsignLabel}" />
                                 <!-- Fable UX-review finding, 2026-08-30: was bound to
                                      Panes.RxFrameMeta.CallsignValue (localized value "EA7KDT"),
                                      which read as a prefilled real contact, not a placeholder. -->
-                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxFrameMeta.OverrideCallsignWatermark}" Text="{Binding OverrideCallsign}" />
+                                <TextBox Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Panes.RxFrameMeta.OverrideCallsignWatermark}" Text="{Binding OverrideCallsign}" />
                                 <!-- Flag toggle removed 2026-08-27 (direct user request) — Gallery's
                                      own flag toggle (SelectedEntryIsFlagged, a separate
                                      RxHistoryPaneViewModel property/control) remains the real,
@@ -1202,8 +1203,11 @@
                          on a real machine even though it fit exactly at the declared default. This
                          LOWERS the SEND-bar risk from the 2026-09-16 finding above, it does not
                          reopen it — trimming leaves MORE headroom before SEND, never less. -->
-                    <ScrollViewer Grid.Column="1">
-                    <ContentControl Height="810" Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
+                    <!-- User-requested (2026-09-29): the editor now fills the tab height instead of a pinned 810,
+                         so the QSO FILL / SEND bar (root Grid.Row="3") always stays on screen. The canvas row
+                         (the "*" row) absorbs any shortfall and its own ScrollViewer scrolls instead. -->
+                    <ScrollViewer Grid.Column="1" VerticalScrollBarVisibility="Disabled">
+                    <ContentControl Margin="0,6,0,0" Content="{Binding ActiveEditor}" />
                     </ScrollViewer>
                 </Grid>
             </TabItem>
@@ -1247,7 +1251,7 @@
                                  padding + 1px border, this WrapPanel needs no additional top
                                  offset of its own. -->
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-                                <TextBox Classes="Industry IndustryInput" Width="230" Margin="0,0,4,4" Text="{Binding SearchText}" Watermark="{loc:Translate Panes.RxHistory.SearchWatermark}" />
+                                <TextBox Classes="Industry IndustryInput" Width="230" Margin="0,0,4,4" Text="{Binding SearchText}" PlaceholderText="{loc:Translate Panes.RxHistory.SearchWatermark}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding !ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterAll}" />
                                 <RadioButton Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniRadioTheme}" GroupName="GalleryFilter" Margin="0,0,4,4" IsChecked="{Binding ShowTodayOnly}" Content="{loc:Translate Panes.RxHistory.FilterToday}" />
                                 <!-- "14 MHz" frequency filter removed 2026-08-26 (user decision, "maybe
@@ -1281,6 +1285,7 @@
                                  gap between the filter row and the thumbnail grid, on top of the
                                  filter row's own 4px bottom margin above. -->
                             <ScrollViewer Margin="0,3,0,0">
+                              <StackPanel>
                                 <!-- UniformGrid Columns=6 (mock2's own grid-template-columns:repeat(6,1fr)),
                                      not WrapPanel/fixed-Width thumbs — same fix class as the Receive
                                      tab's Previous-frames card. ListBox retained (not a bare
@@ -1355,6 +1360,13 @@
                                         </DataTemplate>
                                     </ListBox.ItemTemplate>
                                 </ListBox>
+                                <!-- The grid renders only the newest DisplayPageSize matches; this pages in older ones. -->
+                                <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" Margin="0,0,7,0"
+                                        HorizontalAlignment="Center"
+                                        Content="{loc:Translate Panes.RxHistory.ShowOlder}"
+                                        Command="{Binding ShowOlderCommand}"
+                                        IsVisible="{Binding CanShowOlder}" />
+                              </StackPanel>
                             </ScrollViewer>
                         </DockPanel>
                     </HeaderedContentControl>
@@ -1399,12 +1411,8 @@
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" TextTrimming="CharacterEllipsis" Text="{Binding SelectedEntry.Entry.FilePath}" />
                                     </Grid></Border>
                                     <!-- Combined rows matching mock2's own layout: Mode is real
-                                         (Entry.ModeId). SNR removed outright 2026-08-26 (user
-                                         decision) — no per-frame SNR is tracked anywhere today and
-                                         it needs a real noise-floor-estimation subsystem this port
-                                         doesn't have (scoped as a real backlog item, spec/14-roadmap.md,
-                                         not a quick wire); row's own label renamed from "Mode / SNR"
-                                         to "Mode" to match. Time is real (Entry.ReceivedAt); the
+                                         (Entry.ModeId). SNR has its own row below it (sync-pulse
+                                         SNR, ReceiveHistoryEntry.SnrDb). Time is real (Entry.ReceivedAt); the
                                          Frequency half was removed outright, stub sweep 2026-08-26 —
                                          ReceiveHistoryEntry has no captured-frequency field, so it was
                                          a literal em-dash, and the row's own label renamed from
@@ -1412,6 +1420,11 @@
                                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.ModeSnrLabel}" />
                                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntry.Entry.ModeId}" />
+                                    </Grid></Border>
+                                    <!-- Per-picture sync-pulse SNR (ReceiveHistoryEntry.SnrDb); VM-side "—" when absent. -->
+                                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.RxHistory.SnrLabel}" />
+                                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" HorizontalAlignment="Right" Text="{Binding SelectedEntrySnrDisplay}" />
                                     </Grid></Border>
                                     <!-- Date row added 2026-08-26 (user decision), above Time — same
                                          real Entry.ReceivedAt value as the Time row below, just the
@@ -1473,7 +1486,7 @@
                                      (see spec/16-gui-wiring-survey.md's "Discovered 2026-08-11" note).
                                      Both disabled with nothing selected. -->
                                 <TextBlock Classes="IndustryRowLabel" Margin="0,2,0,0" Text="{loc:Translate Panes.RxHistory.NoteLabel}" />
-                                <TextBox Classes="Industry IndustryInput" Watermark="{loc:Translate Panes.RxHistory.NoteWatermark}"
+                                <TextBox Classes="Industry IndustryInput" PlaceholderText="{loc:Translate Panes.RxHistory.NoteWatermark}"
                                          Text="{Binding SelectedEntryNote}"
                                          IsEnabled="{Binding SelectedEntry, Converter={x:Static ObjectConverters.IsNotNull}}" />
                                 <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Panes.RxHistory.FlagLabel}"
@@ -1608,7 +1621,7 @@
                         </HeaderedContentControl.Header>
                         <DockPanel LastChildFill="True">
                             <WrapPanel DockPanel.Dock="Top" Margin="0,0,0,4">
-                                <TextBox Classes="Industry IndustryInput" Width="180" Margin="0,0,4,4" Text="{Binding CallsignFilter}" Watermark="{loc:Translate Panes.Logbook.CallsignFilterWatermark}" />
+                                <TextBox Classes="Industry IndustryInput" Width="180" Margin="0,0,4,4" Text="{Binding CallsignFilter}" PlaceholderText="{loc:Translate Panes.Logbook.CallsignFilterWatermark}" />
                                 <!-- TextBox, not DatePicker (containment fix): the default
                                      FluentTheme DatePicker template is a month/day/year spinner
                                      triplet whose own internal MinWidth ignores an explicit Width
@@ -1618,8 +1631,8 @@
                                      use, ConverterParameter=AllowNull since both filter bounds are
                                      optional) for a consistent, compact text-entry convention across
                                      the whole tab instead. -->
-                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" Watermark="{loc:Translate Panes.Logbook.FromWatermark}" Text="{Binding FromDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
-                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" Watermark="{loc:Translate Panes.Logbook.ToWatermark}" Text="{Binding ToDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
+                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" PlaceholderText="{loc:Translate Panes.Logbook.FromWatermark}" Text="{Binding FromDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
+                                <TextBox Classes="Industry IndustryInput" Width="140" Margin="0,0,4,4" PlaceholderText="{loc:Translate Panes.Logbook.ToWatermark}" Text="{Binding ToDate, Converter={x:Static conv:UtcTimestampTextConverter.Instance}, ConverterParameter=AllowNull}" />
                                 <Button Classes="Industry IndustryMini" Theme="{StaticResource IndustryMiniButtonTheme}" Margin="0,0,0,4" Content="{loc:Translate Panes.Logbook.Refresh}" Command="{Binding RefreshCommand}" />
                             </WrapPanel>
                             <TextBlock DockPanel.Dock="Top" Classes="IndustryRowLabel"
@@ -1718,7 +1731,7 @@
                                          form body instead. -->
                                     <Button Classes="Industry IndustryBtn IndustryBtn22 IndustryBtnSecondary" Padding="7,0" HorizontalAlignment="Right" Content="{loc:Translate Panes.Logbook.New}" Command="{Binding NewCommand}" />
 
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCallsign}" Watermark="{loc:Translate Panes.Logbook.Form.CallsignWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCallsign}" PlaceholderText="{loc:Translate Panes.Logbook.Form.CallsignWatermark}" />
 
                                     <Grid ColumnDefinitions="Auto,*">
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.StartLabel}" />
@@ -1767,11 +1780,11 @@
                                         <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.Logbook.Form.RstReceivedLabel}" />
                                         <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding FormRstReceived}" />
                                     </Grid>
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormName}" Watermark="{loc:Translate Panes.Logbook.Form.NameWatermark}" />
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormQth}" Watermark="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormGridSquare}" Watermark="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCountry}" Watermark="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
-                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" Watermark="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="{DynamicResource IndustryLogbookNotesHeight}" TextWrapping="Wrap" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormName}" PlaceholderText="{loc:Translate Panes.Logbook.Form.NameWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormQth}" PlaceholderText="{loc:Translate Panes.Logbook.Form.QthWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormGridSquare}" PlaceholderText="{loc:Translate Panes.Logbook.Form.GridSquareWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormCountry}" PlaceholderText="{loc:Translate Panes.Logbook.Form.CountryWatermark}" />
+                                    <TextBox Classes="Industry IndustryInput" Text="{Binding FormNotes}" PlaceholderText="{loc:Translate Panes.Logbook.Form.NotesWatermark}" AcceptsReturn="True" Height="{DynamicResource IndustryLogbookNotesHeight}" TextWrapping="Wrap" />
 
                                     <!-- ui_transition_plan.md step 15, piece (b) — plain booleans
                                          (see QsoRecord.QslSent's own doc comment), same CheckBox
@@ -1873,13 +1886,9 @@
              spec/17-rx-telemetry-feasibility.md). Buffer's own "· N XRUN" half (a separate
              audio-engine dropped-frame counter, not this decoder's own sample buffer) is real too
              now, recombined into mock2's original single format; see
-             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. SNR was a
-             literal placeholder matching mock2's own exact wording, same precedent as the Receive
-             tab's own scaffolding cards — removed outright 2026-08-26 (user decision, along with
-             the identical Gallery/tab-strip SNR chips): no per-line/per-frame SNR is tracked
-             anywhere today, and it needs a real noise-floor-estimation subsystem this port doesn't
-             have, scoped as a real backlog item (spec/14-roadmap.md), not left as a placeholder
-             indefinitely. The Memory chip that used to sit here (same placeholder
+             RxImagePaneViewModel.BufferedSampleCountStatusBarDisplay's own doc comment. The SNR chip is
+             real (RxImage.SnrStatusBarDisplay, live sync-pulse SNR) and only visible while a
+             reception is being measured. The Memory chip that used to sit here (same placeholder
              class) was removed outright in the earlier stub sweep — no memory-channel concept exists
              anywhere in IRadioSessionService to back it, unlike Disk below. Disk is now real
              (RxHistory.DiskFreeDisplay, DriveInfo-based, stub sweep 2026-08-26) — no longer a
@@ -1983,6 +1992,9 @@
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.SlantPpmStatusBarDisplay}" />
+                    </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding RxImage.IsSnrChipVisible}">
+                        <TextBlock Text="{Binding RxImage.SnrStatusBarDisplay}" />
                     </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" />

@@ -180,6 +180,45 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SwitchToPresetAsync_PresetCarriesQrzLookupSection_LiveCredentialStoreFlagSurvivesTheSwitch()
+    {
+        // The flag is machine state: losing it would make a keyring-less session report "no password" instead of "keyring unavailable".
+        var initial = DefaultSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N0CALL", PasswordInCredentialStore = true },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(initial);
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N9NEW", PasswordInCredentialStore = false },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings));
+
+        var result = await service.SwitchToPresetAsync("Test");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        var qrz = settingsStore.Settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
+        Assert.Equal("N9NEW", qrz?.Username);
+        Assert.True(qrz?.PasswordInCredentialStore);
+    }
+
+    [Fact]
+    public async Task SavePresetAsync_WithTheCredentialStoreFlagSet_NeverWritesItToTheRawPresetFile()
+    {
+        var presetsDirectory = Directory.CreateTempSubdirectory("yoniq-preset-qrz-flag-tests-").FullName;
+        _presetDirectories.Add(presetsDirectory);
+        var presetStore = new ConfigurationPresetStore(Microsoft.Extensions.Logging.Abstractions.NullLogger<ConfigurationPresetStore>.Instance, presetsDirectory);
+
+        await presetStore.SavePresetAsync("Test", new AppSettings().WithSection(
+            QrzLookupSettings.SectionKey,
+            new QrzLookupSettings { Enabled = true, Username = "N0CALL", PasswordInCredentialStore = true },
+            QrzLookupSettingsJsonContext.Default.QrzLookupSettings));
+
+        var rawText = await File.ReadAllTextAsync(Path.Combine(presetsDirectory, "Test.json"));
+        Assert.DoesNotContain(nameof(QrzLookupSettings.PasswordInCredentialStore), rawText, StringComparison.Ordinal);
+        Assert.Contains("N0CALL", rawText, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public async Task SwitchToPresetAsync_PresetCarriesQrzUploadSection_LiveApiKeySurvivesTheSwitch()
     {
         var initial = DefaultSettings().WithSection(

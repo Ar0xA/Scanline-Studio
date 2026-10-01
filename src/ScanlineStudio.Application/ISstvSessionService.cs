@@ -301,6 +301,11 @@ public interface ISstvSessionService : IAsyncDisposable
     /// any thread.</summary>
     void RequestAutoSlantEnabled(bool enabled);
 
+    /// <summary>Live-applies the sync-pulse SNR measurement toggle (Options → Decode "Measure reception
+    /// SNR"). Safe from any thread; the decoder picks it up at its next sample push. Measurement only:
+    /// decoded pixels are identical either way.</summary>
+    void RequestSnrMeasurementEnabled(bool enabled);
+
     /// <summary>Applies <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.AfcEnabled"/> to the
     /// live decoder. It takes effect mid-image, matching legacy -- see that property's own doc comment.
     /// Like <see cref="RequestSenseLevel"/>, this does NOT write anything to disk; call
@@ -776,6 +781,16 @@ public interface ISstvSessionService : IAsyncDisposable
     int? SyncOffsetSamples { get; }
 
     double SignalPeakLevel { get; }
+
+    /// <summary>See <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.LiveSnrDb"/>: live sync-pulse
+    /// SNR in dB, <see cref="double.NaN"/> when there is none. Lock-free, safe from any thread; for a GUI
+    /// timer to poll.</summary>
+    double LiveSnrDb { get; }
+
+    /// <summary>See <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder.ReceptionSnrDb"/>: the current
+    /// or just-finished reception's per-picture sync-pulse SNR in dB, <see cref="double.NaN"/> when there
+    /// is none. Lock-free, safe from any thread.</summary>
+    double ReceptionSnrDb { get; }
 
     /// <summary>User-reported fix (2026-08-23, round 2): <see cref="SignalPeakLevel"/> is NOT a
     /// general-purpose audio-input meter -- it's <c>LevelAgc.CurMax</c>, computed from samples that

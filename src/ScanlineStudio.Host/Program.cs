@@ -13,6 +13,7 @@ using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
 using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
@@ -27,11 +28,14 @@ using ScanlineStudio.Core.Radio.Hamlib;
 using ScanlineStudio.Core.Radio.OmniRig;
 using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
+using ScanlineStudio.Credentials.SecretService;
+using ScanlineStudio.Credentials.Windows;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
+using ScanlineStudio.UI.Views;
 
 namespace ScanlineStudio.Host;
 
@@ -137,6 +141,10 @@ internal static partial class Program
         // real resolve in a real run. Same extraction shape RegisterSstvServices already established
         // for the SSTV DSP core registrations below.
         RegisterServices(hostBuilder.Services);
+
+        // Chosen this early so MainWindow can learn, via DI, whether the backend can place windows.
+        var backend = WindowingBackendSelector.Choose(OperatingSystem.IsLinux(), Environment.GetEnvironmentVariable);
+        hostBuilder.Services.AddSingleton(new WindowingBackendInfo(SupportsWindowPosition: backend != WindowingBackendChoice.Wayland));
 
         // RegisterServices above already registered NoneLogFileRelocator as the ILogFileRelocator
         // default (so SstvCompositionRootTests, which calls RegisterServices alone, always has one
@@ -391,8 +399,57 @@ internal static partial class Program
             }
         });
 
+        // Background, never prompts: moves a plaintext QRZ password into the OS keyring if one exists.
+        // Also starts the credential-store probe early so Options never waits on it.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                await host.Services.GetRequiredService<QrzCredentialService>().MigrateAsync().ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                Log.QrzCredentialMigrationThrew(logger, ex);
+            }
+        });
+
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
-        BuildAvaloniaApp().SetupWithLifetime(lifetime);
+        var appBuilder = BuildAvaloniaApp();
+        if (backend == WindowingBackendChoice.Wayland)
+        {
+            appBuilder = appBuilder.UseWayland();
+        }
+        else if (backend == WindowingBackendChoice.WaylandRequestedWithoutSession)
+        {
+            Log.WaylandRequestedWithoutSession(logger, WindowingBackendSelector.OptInVariable, WindowingBackendSelector.WaylandDisplayVariable);
+        }
+
+        Log.WindowingBackendChosen(logger, backend);
+        try
+        {
+            appBuilder.SetupWithLifetime(lifetime);
+        }
+        catch (Exception ex) when (backend == WindowingBackendChoice.Wayland)
+        {
+            // The user opted in explicitly, so fail loudly instead of silently falling back to X11.
+            Log.WaylandStartFailed(logger, ex);
+            Console.Error.WriteLine(WaylandStartFailureMessage(ex));
+            try
+            {
+                if (!Task.Run(() => ((IAsyncDisposable)host).DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(10)))
+                {
+                    Log.TeardownTimedOut(logger);
+                }
+            }
+            catch (Exception disposeEx)
+            {
+                Log.TeardownThrew(logger, disposeEx);
+            }
+
+            Environment.ExitCode = 1;
+            return;
+        }
+
         Log.AvaloniaLifetimeStarted(logger);
 
         // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
@@ -446,6 +503,12 @@ internal static partial class Program
         // releasing the lock while the app is still genuinely running.
         GC.KeepAlive(singleInstanceMutex);
     }
+
+    /// <summary>The stderr text for a failed native Wayland start; names the opt-in variable so the user can undo it.</summary>
+    internal static string WaylandStartFailureMessage(Exception ex) =>
+        $"Scanline Studio could not start the native Wayland backend ({WindowingBackendSelector.OptInVariable}=1). " +
+        "The compositor must offer xdg-shell version 3 or later (for example sway 1.11). " +
+        $"Unset {WindowingBackendSelector.OptInVariable} to use the default X11/XWayland backend. Details: {ex.Message}";
 
     /// <summary>Runs on the <c>ClassicDesktopStyleApplicationLifetime.Exit</c> event -- extracted
     /// from <c>Main</c> so the dispose-then-<c>ClearAllPools</c>-then-conditional-restart-spawn
@@ -1152,6 +1215,11 @@ internal static partial class Program
         // (spec/01-architecture.md's layering rule); everything above is UI-invisible plumbing.
         services.AddSingleton<IRadioSessionService, RadioSessionService>();
         services.AddSingleton<ISstvSessionService>(CreateSstvSessionService);
+        services.AddSingleton(sp => new CredentialStoreResolver(
+            ct => ProbeCredentialStoreAsync(sp.GetRequiredService<ILoggerFactory>(), ct),
+            CredentialStoreResolver.DefaultProbeTimeout,
+            sp.GetRequiredService<ILogger<CredentialStoreResolver>>()));
+        services.AddSingleton<QrzCredentialService>();
         services.AddSingleton<ILogbookSessionService, LogbookSessionService>();
 
         // Configurations-preset backlog, Phase 3 (2026-08-28) -- orchestrates across both session
@@ -1274,7 +1342,7 @@ internal static partial class Program
         // construction, see that method's own doc comment for why a second independent copy here
         // would have been a real drift risk.
         var resolved = decoderSettings.Resolve();
-        return new RestartableSstvDecoder(
+        var decoder = new RestartableSstvDecoder(
             afcEnabled: resolved.AfcEnabled,
             syncRestartEnabled: resolved.SyncRestartEnabled,
             autoSyncEnabled: resolved.AutoSyncEnabled,
@@ -1295,6 +1363,8 @@ internal static partial class Program
             zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz,
             sampleRate: sampleRate,
             loggerFactory: loggerFactory);
+        decoder.SnrMeasurementEnabled = resolved.SnrMeasurementEnabled;
+        return decoder;
     }
 
     // Restart-required-settings backlog item 4 (2026-08-27): RestartableSstvEncoder, not the plain
@@ -1309,8 +1379,38 @@ internal static partial class Program
     // Avalonia configuration, don't remove; also used by the visual designer.
     public static AppBuilder BuildAvaloniaApp() => App.BuildAvaloniaApp();
 
+    /// <summary>Linux: Secret Service; Windows: Credential Manager; anything else (macOS is unsupported) or
+    /// an unusable backend: <see langword="null"/>, which <see cref="CredentialStoreResolver"/> turns into the
+    /// plaintext settings.json fallback.</summary>
+    private static async Task<ICredentialStore?> ProbeCredentialStoreAsync(ILoggerFactory loggerFactory, CancellationToken ct)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return WindowsCredentialStore.IsAvailable() ? new WindowsCredentialStore(loggerFactory.CreateLogger<WindowsCredentialStore>()) : null;
+        }
+
+        if (OperatingSystem.IsLinux())
+        {
+            return await SecretServiceCredentialStore.TryCreateAsync(loggerFactory.CreateLogger<SecretServiceCredentialStore>(), ct).ConfigureAwait(false);
+        }
+
+        return null;
+    }
+
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ credential migration threw")]
+        public static partial void QrzCredentialMigrationThrew(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Windowing backend: {Backend}")]
+        public static partial void WindowingBackendChosen(ILogger logger, WindowingBackendChoice backend);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "{OptInVariable}=1 is set but {WaylandDisplayVariable} is not; starting the default backend instead")]
+        public static partial void WaylandRequestedWithoutSession(ILogger logger, string optInVariable, string waylandDisplayVariable);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "Native Wayland backend failed to start")]
+        public static partial void WaylandStartFailed(ILogger logger, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
         public static partial void ImagePersistenceDrainIncomplete(ILogger logger);
 

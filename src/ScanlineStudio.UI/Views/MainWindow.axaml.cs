@@ -58,15 +58,13 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-#if DEBUG
-        this.AttachDevTools();
-#endif
         // Views aren't DI-constructed (Avalonia builds them via `new`, not the container) -- resolved
         // from App.Services directly, same pattern this project already uses for other code-behind
         // needs (e.g. FilePickerService). Null-tolerant: a headless/design-time construction with no
         // App.Services set must not throw here.
         var logger = App.Services?.GetService<ILogger<MainWindow>>();
         _settingsStore = App.Services?.GetService<ISettingsStore>();
+        var canPlaceWindow = WindowGeometryPolicy.CanPlaceWindow(App.Services?.GetService<WindowingBackendInfo>());
 
         // Restore window geometry BEFORE the window is ever shown (App.axaml.cs constructs this
         // window, then hands it to the desktop lifetime -- no visible "jump" this way).
@@ -132,12 +130,12 @@ public partial class MainWindow : Window
             double width;
             double height;
             bool isRestoredGeometry;
-            if (geometry is { RememberWindowPosition: true, Left: { } restoredLeft, Top: { } restoredTop, Width: { } restoredWidth, Height: { } restoredHeight })
+            if (WindowGeometryPolicy.HasRestorableGeometry(geometry, canPlaceWindow))
             {
-                left = restoredLeft;
-                top = restoredTop;
-                width = restoredWidth;
-                height = restoredHeight;
+                left = geometry!.Left ?? 0;
+                top = geometry.Top ?? 0;
+                width = geometry.Width!.Value;
+                height = geometry.Height!.Value;
                 isRestoredGeometry = true;
             }
             else
@@ -189,7 +187,25 @@ public partial class MainWindow : Window
             // clamp below regardless of this check's result.
             var startPosition = new PixelPoint((int)left, (int)top);
             var screenBounds = Screens.All.Select(s => s.Bounds).ToList();
-            if (!isRestoredGeometry || WindowGeometryPolicy.ShouldRestorePosition(startPosition, screenBounds))
+            if (!canPlaceWindow)
+            {
+                // Native Wayland: size only, the compositor places the window (Screens is usually empty this early).
+                var sizeScreen = Screens.Primary;
+                if (sizeScreen is not null)
+                {
+                    var scaling = sizeScreen.Scaling;
+                    var requested = new PixelRect(sizeScreen.WorkingArea.Position, new PixelSize((int)Math.Round(width * scaling), (int)Math.Round(height * scaling)));
+                    var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, sizeScreen.WorkingArea);
+                    Width = clamped.Width / scaling;
+                    Height = clamped.Height / scaling;
+                }
+                else
+                {
+                    Width = width;
+                    Height = height;
+                }
+            }
+            else if (!isRestoredGeometry || WindowGeometryPolicy.ShouldRestorePosition(startPosition, screenBounds))
             {
                 // User-reported bug (2026-09-03): ShouldRestorePosition above only ever validated
                 // the top-left POINT, never whether the saved/default Width/Height actually fit
@@ -257,6 +273,15 @@ public partial class MainWindow : Window
             // "don't remember my window" should mean don't remember this either.
             shouldStartMaximized = geometry is { RememberWindowPosition: true, WasMaximized: true };
         }
+
+        // Independent proof of the backend Avalonia really started ("XID" = X11/XWayland), not what Host asked for.
+        Opened += (_, _) =>
+        {
+            if (logger is not null)
+            {
+                Log.PlatformHandleDescriptor(logger, TryGetPlatformHandle()?.HandleDescriptor ?? "(none)");
+            }
+        };
 
         // Code-review finding (2026-09-03): the constructor's own clamp above compares the
         // DIP-valued CLIENT Width/Height against the working area -- it has no way to know the
@@ -370,9 +395,7 @@ public partial class MainWindow : Window
                     // own already-persisted values (the last real Normal-state size, or still null if
                     // this window has never once closed Normal) pass through unchanged, exactly the
                     // "restore to" fallback WasMaximized's own doc comment describes.
-                    var updated = closingState == WindowState.Normal
-                        ? current with { Left = left, Top = top, Width = width, Height = height, WasMaximized = false }
-                        : current with { WasMaximized = true };
+                    var updated = WindowGeometryPolicy.BuildClosingGeometry(current, closingState, left, top, width, height, canPlaceWindow);
                     return settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
                 })).GetAwaiter().GetResult();
             }
@@ -1208,7 +1231,7 @@ public partial class MainWindow : Window
     /// popup opens (not a Click), so <see cref="RxHistoryPaneViewModel.SelectedEntry"/> is already
     /// the right-clicked photo by the time any of its menu items run, matching the same
     /// SelectedEntry-only contract every other per-entry command in that class already has.</summary>
-    private void OnGalleryThumbnailContextRequested(object? sender, Avalonia.Controls.ContextRequestedEventArgs e)
+    private void OnGalleryThumbnailContextRequested(object? sender, Avalonia.Input.ContextRequestedEventArgs e)
     {
         if (sender is Control { DataContext: RxHistoryEntryViewModel entry } && DataContext is MainViewModel vm)
         {
@@ -1271,6 +1294,9 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing OptionsWindowView")]
         public static partial void ConstructingOptionsWindow(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Main window opened; platform handle descriptor: {Descriptor}")]
+        public static partial void PlatformHandleDescriptor(ILogger logger, string descriptor);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OptionsWindowView opened: Position={Position}, Screen={Screen}")]
         public static partial void OptionsWindowOpened(ILogger logger, string position, string screen);

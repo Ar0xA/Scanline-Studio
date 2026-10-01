@@ -2,6 +2,7 @@ using System.Text;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Settings;
 
@@ -27,6 +28,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
     private readonly IQrzCallsignLookup _qrzLookup;
     private readonly ISettingsStore _settingsStore;
     private readonly IReceiveHistoryStore _receiveHistoryStore;
+    private readonly QrzCredentialService _qrzCredentials;
     private readonly ILogger<LogbookSessionService> _logger;
 
     public LogbookSessionService(
@@ -38,6 +40,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         IQrzCallsignLookup qrzLookup,
         ISettingsStore settingsStore,
         IReceiveHistoryStore receiveHistoryStore,
+        QrzCredentialService qrzCredentials,
         ILogger<LogbookSessionService> logger)
     {
         _repository = repository;
@@ -48,6 +51,7 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         _qrzLookup = qrzLookup;
         _settingsStore = settingsStore;
         _receiveHistoryStore = receiveHistoryStore;
+        _qrzCredentials = qrzCredentials;
         _logger = logger;
     }
 
@@ -227,12 +231,21 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
             var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
             var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
-            if (!IsQrzLookupConfigured(qrzLookupSettings))
+            if (!IsQrzLookupEnabledWithUsername(qrzLookupSettings))
             {
                 return new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options.");
             }
 
-            return await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username!, qrzLookupSettings.Password!, ct).ConfigureAwait(false);
+            // User-started lookup: the only non-Options path allowed to show a keyring unlock prompt.
+            var password = await _qrzCredentials.ReadAsync(allowPrompt: true, ct).ConfigureAwait(false);
+            return password.Status switch
+            {
+                CredentialReadStatus.Found when !string.IsNullOrEmpty(password.Secret) =>
+                    await _qrzLookup.LookupAsync(callsign, qrzLookupSettings.Username!, password.Secret, ct).ConfigureAwait(false),
+                CredentialReadStatus.Unavailable =>
+                    new QrzCallsignLookupResult(false, null, null, null, "The QRZ password is in the system keyring, which is locked or unavailable."),
+                _ => new QrzCallsignLookupResult(false, null, null, null, "QRZ lookup is not configured in Options."),
+            };
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -247,7 +260,8 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         {
             var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
             var qrzLookupSettings = appSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-            return IsQrzLookupConfigured(qrzLookupSettings);
+            // IsPresentAsync never prompts: this runs from a background UI gate, not a user action.
+            return IsQrzLookupEnabledWithUsername(qrzLookupSettings) && await _qrzCredentials.IsPresentAsync(ct).ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
         {
@@ -260,10 +274,10 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
     }
 
     /// <summary>Shared by <see cref="LookupCallsignAsync"/> and
-    /// <see cref="IsQrzLookupConfiguredAsync"/> -- one source of truth for what "configured" means,
-    /// so the button-gating check and the actual lookup's own gate can never drift apart.</summary>
-    private static bool IsQrzLookupConfigured(QrzLookupSettings settings) =>
-        settings.Enabled == true && !string.IsNullOrEmpty(settings.Username) && !string.IsNullOrEmpty(settings.Password);
+    /// <see cref="IsQrzLookupConfiguredAsync"/> -- one source of truth for the settings.json half of
+    /// "configured"; the password half is <see cref="QrzCredentialService"/>'s.</summary>
+    private static bool IsQrzLookupEnabledWithUsername(QrzLookupSettings settings) =>
+        settings.Enabled == true && !string.IsNullOrEmpty(settings.Username);
 
     public Task<QrzLoginResult> TestQrzLookupCredentialsAsync(string username, string password, CancellationToken ct = default) =>
         _qrzLookup.TestCredentialsAsync(username, password, ct);

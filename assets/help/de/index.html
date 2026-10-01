@@ -240,7 +240,7 @@
         <div class="note"><strong>Automatischer Verlauf.</strong> Vollständig empfangene Bilder werden als PNG-Dateien im konfigurierten Ordner für RX-Bilder gespeichert und in der Galerie indiziert. Die JPEG-Qualität beim manuellen Export ändert diese Verlaufs-PNG-Dateien nicht.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="receive-controls" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="sync synchronisation schräglauf ppm neu synchronisieren resync schräglauf korrigieren schräglaufkorrektur squelch rauschsperre bpf bandpass notch agc puffer clipping übersteuerung auto stop neustart sync-quelle eingangskette dsp afc automatische frequenznachführung signalqualität gehörte stationen bereits gearbeitet worked before fsk cw id neue station rufzeichen">
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Empfangen" data-keywords="sync synchronisation schräglauf ppm neu synchronisieren resync schräglauf korrigieren schräglaufkorrektur squelch rauschsperre bpf bandpass notch agc puffer clipping übersteuerung auto stop neustart sync-quelle eingangskette dsp afc automatische frequenznachführung signalqualität snr signal-rausch-abstand rauschabstand gehörte stationen bereits gearbeitet worked before fsk cw id neue station rufzeichen">
         <p class="topic-category">Empfangen</p>
         <h2>Empfangs-Bedienelemente und Telemetrie</h2>
         <p>Die Registerkarte Empfang zeigt, was der Decoder gerade tut. Hier muss nur selten etwas verstellt werden.</p>
@@ -278,6 +278,17 @@
           <li>Die Änderung wirkt während des laufenden Bildes. Ab der nächsten Zeile wird die Korrektur nicht mehr hinzugerechnet, und die Tondetektoren kehren zu ihren Nennfrequenzen zurück. Bereits decodierte Zeilen behalten die Korrektur, die sie erhalten haben.</li>
           <li>Bei ausgeschalteter AFC zeigt die Zeile <strong>Sync-Ton</strong> in der Karte Signalqualität einen Strich, weil keine Korrektur gemessen wird.</li>
           <li>Der AVT-Modus verwendet nie AFC, unabhängig von dieser Einstellung.</li>
+        </ul>
+
+        <h3>Signalqualität: SNR</h3>
+        <p>Die Zeile <strong>SNR</strong> in der Karte Signalqualität und, während ein Bild empfangen wird, der Chip <strong>SNR</strong> in der Statusleiste zeigen den <a class="term" href="#glossary-snr">Signal-Rausch-Abstand</a> des empfangenen Signals in Dezibel. Höher ist besser. Als Anhaltspunkt aus echten Empfangsaufnahmen: lesbare Bilder lagen bei etwa 5–14 dB, Bilder aus reinem Rauschen unter 0 dB. Den Wert zum Vergleich von Bildern und Bedingungen verwenden, nicht als feste Grenze.</p>
+        <ul>
+          <li>Gemessen wird am Synchronimpuls jeder Zeile (in den meisten Modi am Zeilenanfang, in Scottie-Modi in der Zeilenmitte). Dieser Impuls ist ein gleichbleibender Ton, daher kann die Anwendung den Ton vom Rauschen um ihn herum trennen. Das Rauschen wird in einem festen Referenzband von 400–2500 Hz gezählt, das das ganze SSTV-Signal enthält.</li>
+          <li>Der Live-Wert ist der Median der letzten 16 Zeilen. Am Bildende wird ein Wert für das ganze Bild (der Median über alle seine Zeilen) mit dem Bild gespeichert und in der <a href="#gallery">Galerie</a> angezeigt.</li>
+          <li>Werte unter −10 dB erscheinen als <strong>&lt; −10 dB</strong>, Werte über 50 dB als <strong>&gt; 50 dB</strong>.</li>
+          <li>Ein Strich erscheint im Leerlauf, wenn <strong>Empfangs-SNR messen</strong> unter Optionen → Decodierung ausgeschaltet ist (siehe <a href="#decode-options">Decodierungsoptionen</a>), in den ersten Zeilen jedes Bildes, solange der Synchronimpuls gesucht wird, und im AVT-Modus, der keine Synchronimpulse hat.</li>
+          <li>Es wird nur gemessen. Die decodierten Bilder sind mit und ohne Messung identisch.</li>
+          <li>Bei ausgeschaltetem Auto-Schräglauf kann ein großer Taktfehler der Soundkarte den Synchronimpuls aus dem Messbereich wandern lassen. Der Wert ist dann zu niedrig oder verschwindet. Auto-Schräglauf wieder einschalten.</li>
         </ul>
 
         <div class="warning"><strong>Nicht nur nach Zahlen abstimmen.</strong> Wird ein Bild sauber decodiert, Squelch, BPF oder erweiterte Demodulator-Einstellungen nicht allein deshalb ändern, damit eine Anzeige anders aussieht.</div>
@@ -471,7 +482,7 @@
         <div class="warning"><strong>Die vorschriftsmäßige Kennung bleibt Ihre Verantwortung.</strong> Prüfen Sie, ob gewählter Text, Rufzeichen, Verfahren und Zeitpunkt den für Ihre Station geltenden Vorschriften entsprechen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="gallery" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="galerie empfang verlauf historie bilder miniaturansichten vorschaubilder filter heute nicht geloggt markiert suche notiz exportieren ausgewähltes bild speicherort speicher festplatte frei bildbetrachter kopieren">
+      <article id="gallery" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="galerie empfang verlauf historie bilder miniaturansichten vorschaubilder filter heute nicht geloggt markiert suche notiz exportieren ausgewähltes bild speicherort speicher festplatte frei bildbetrachter kopieren ältere anzeigen snr signal-rausch-abstand">
         <p class="topic-category">Bilder und Logbuch</p>
         <h2>Empfangene Bilder durchsuchen</h2>
         <p>Die Galerie ist der durchsuchbare Verlauf abgeschlossener Empfänge. Eine Miniaturansicht auswählen, um dieses Bild zu prüfen und zu verwalten.</p>
@@ -481,11 +492,13 @@
           <li>Filtern nach <strong>Alle</strong>, <strong>Heute</strong>, <strong>Nicht geloggt</strong> oder <strong>Markiert</strong>.</li>
           <li>Das Suchfeld für Modus- oder Notiztext verwenden.</li>
           <li><strong>Aktualisieren</strong> wählen, um den Verlauf neu zu laden, und <strong>Neuestes</strong>, um zum neuesten Bild zurückzukehren.</li>
+          <li>Das Raster zeigt die neuesten 300 passenden Bilder. <strong>Ältere anzeigen</strong> unter dem Raster wählen, um die nächsten 300 hinzuzufügen. Suche und die Filter <strong>Nicht geloggt</strong>/<strong>Markiert</strong> umfassen den gesamten Verlauf, wenn <strong>Alle</strong> gewählt ist (<strong>Heute</strong> schränkt weiterhin auf die heutigen Bilder ein), sodass ein älteres Bild auch gefunden wird, wenn es noch nicht angezeigt wird.</li>
         </ul>
 
         <h3>Mit der Auswahl arbeiten</h3>
         <ul>
           <li>Eine Notiz hinzufügen oder wichtige Bilder markieren.</li>
+          <li>Die Zeile <strong>SNR</strong> zeigt den beim Empfang gemessenen Signal-Rausch-Abstand des Bildes (siehe <a href="#receive-controls">Signalqualität: SNR</a>). Einen Strich zeigt sie bei Bildern, die vor dieser Funktion, bei ausgeschalteter Messung oder im AVT-Modus empfangen wurden.</li>
           <li><strong>Exportieren</strong> wählen, um eine Kopie in einem gewählten Bildformat zu schreiben. Bei der Wahl von JPEG gilt die JPEG-Qualität aus der Registerkarte „Allgemein“.</li>
           <li><strong>Im Logbuch öffnen</strong> wählen, um das Bild mit einem bestehenden QSO zu verknüpfen oder ein neues QSO anzulegen und zu verknüpfen.</li>
           <li>Den Bildbetrachter öffnen für Einpassen/100 % Zoom, Navigation vorheriges/nächstes Bild, Kopieren in die Zwischenablage und Öffnen des Dateispeicherorts.</li>
@@ -517,7 +530,7 @@
         <p><strong>Importieren…</strong> verwenden, um Einträge aus einer ADIF-Datei hinzuzufügen, und <strong>Exportieren…</strong>, um passende Einträge zu schreiben. Eine Warnung über einen unvollständigen Import bedeutet, dass bereits verarbeitete Einträge möglicherweise hinzugefügt wurden, bevor der fehlerhafte Eintrag erreicht wurde.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="qrz.com abfrage lookup rufzeichen zugangsdaten benutzername passwort weiterleitung udp wsjt-x loggedadif gridtracker n1mm log4om port datenschutz">
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Bilder und Logbuch" data-keywords="qrz.com abfrage lookup rufzeichen zugangsdaten benutzername passwort schlüsselbund anmeldeinformationsverwaltung weiterleitung udp wsjt-x loggedadif gridtracker n1mm log4om port datenschutz">
         <p class="topic-category">Bilder und Logbuch</p>
         <h2>QRZ.com-Abfrage und UDP-Weiterleitung</h2>
         <p>Beide Integrationen sind optional. Sie nur dann in den Optionen konfigurieren, wenn sie Teil Ihres Logbuch-Arbeitsablaufs sind.</p>
@@ -529,7 +542,8 @@
           <li>Auf der Karte <strong>BILDMETADATEN</strong> auf der Registerkarte Empfang neben einem empfangenen Rufzeichen <strong>QRZ abfragen</strong> wählen, um Name, QTH und Locator abzurufen. Siehe <a href="#receive-controls">Empfangs-Bedienelemente und Telemetrie</a>.</li>
         </ul>
         <p>Diese Seite konfiguriert nur die Rufzeichenabfrage. Die aktuelle Anwendung bietet in den Optionen keine Einstellung für Uploads in das QRZ-Logbuch.</p>
-        <div class="warning"><strong>Speicherung der Zugangsdaten.</strong> Die aktuelle Anwendung speichert das QRZ.com-Passwort lokal unverschlüsselt in ihrer Einstellungsdatei. Ein eigenes Passwort verwenden, nicht eines, das auch für andere Konten genutzt wird.</div>
+        <div class="warning"><strong>Speicherung der Zugangsdaten.</strong> Unter Windows liegt das QRZ.com-Passwort in der Windows-Anmeldeinformationsverwaltung, unter Linux im Schlüsselbund des Systems (Secret Service, zum Beispiel GNOME Keyring oder KWallet). Ein von einer früheren Version gespeichertes Passwort wird beim Start automatisch dorthin verschoben. Ist kein System-Schlüsselbund verfügbar (unter macOS immer), bleibt das Passwort unverschlüsselt in der Einstellungsdatei, und die Registerkarte QRZ.com zeigt eine Warnung. Ein eigenes Passwort verwenden, nicht eines, das auch für andere Konten genutzt wird.</div>
+        <p>Ist der Schlüsselbund gesperrt, zeigt das Passwortfeld <strong>Schlüsselbund gesperrt</strong> und eine Schaltfläche <strong>Schlüsselbund entsperren</strong>. Sie wählen, um den Schlüsselbund zu entsperren und das Passwort anzuzeigen. Wird das Feld nicht verändert und gespeichert, bleibt das gespeicherte Passwort unverändert und wird nicht gelöscht. Kann der Schlüsselbund das Passwort nicht speichern, zeigt <strong>Speichern</strong> einen Fehler, und auch die übrigen Einstellungen werden nicht gespeichert. Wurde das Passwort in einem Schlüsselbund gespeichert, der in dieser Sitzung nicht verfügbar ist, zeigt das Feld <strong>System-Schlüsselbund nicht verfügbar</strong>; ein dort eingegebenes Passwort wird unverschlüsselt in der Einstellungsdatei gespeichert.</p>
 
         <h3>ADIF über UDP</h3>
         <p>Unter <strong>Optionen → Weiterleitung</strong> für jedes Ziel Name, Host und Port hinzufügen. Jedes neu geloggte QSO wird als <code>LoggedADIF</code>-Nachricht im WSJT-X-Protokoll an die aktivierten Ziele gesendet. Übliche lokale Ports sind 2237 für GridTracker und 2333 für manche Konfigurationen von N1MM Logger+ oder Log4OM. Den Port in der Dokumentation der empfangenden Anwendung nachschlagen.</p>
@@ -612,7 +626,7 @@
         <div class="tip"><strong>Gerätenamen können sich ändern.</strong> USB-Audiogeräte werden nach einem Wechsel des Anschlusses oder einem Betriebssystem-Update möglicherweise anders aufgelistet. Verschwinden die Pegel nach einer Hardware-Änderung, beide Geräteauswahlen erneut prüfen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="decode-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="decodierung decoder decodieren optionen empfindlichkeit squelch rauschsperre bpf bandpass demodulator hilbert pll nulldurchgang puffer pufferung aus ein erweitert auto stopp neustart sync synchronisation schräglauf slant">
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="decodierung decoder decodieren optionen empfindlichkeit squelch rauschsperre bpf bandpass demodulator hilbert pll nulldurchgang puffer pufferung aus ein erweitert auto stopp neustart sync synchronisation schräglauf slant snr signal-rausch-abstand messen">
         <p class="topic-category">Referenz der Optionen</p>
         <h2>Decodieroptionen</h2>
         <p>Die Registerkarte „Decodierung“ ändert das Verhalten des Empfängers. Mit den Standardwerten beginnen und beim Lösen eines konkreten Empfangsproblems jeweils nur eine Einstellung ändern. Es sind dieselben Einstellungen, die auf der Registerkarte „Empfang“ in der <a href="#receive-controls">Eingangskette</a> angezeigt werden. Eine Änderung an einer der beiden Stellen wirkt sich auf beide aus.</p>
@@ -629,6 +643,7 @@
               <tr><td>Auto-Neustart</td><td>Kann bei einem während des Empfangs erkannten stärkeren Synchronimpuls neu starten.</td></tr>
               <tr><td>Auto-Sync</td><td>Versucht, die Synchronisation während der Decodierung wiederherzustellen.</td></tr>
               <tr><td>Auto-Schräglauf</td><td>Korrigiert den vom Soundtakt verursachten Schräglauf während des Empfangs. Erfordert RX-Pufferung.</td></tr>
+              <tr><td>Empfangs-SNR messen</td><td>Misst den Signal-Rausch-Abstand am Synchronimpuls jeder Zeile und zeigt ihn live und pro Bild an (siehe <a href="#receive-controls">Signalqualität: SNR</a>). Standardmäßig eingeschaltet. Nur eine Messung. Gilt ab der nächsten empfangenen Zeile.</td></tr>
             </tbody>
           </table>
         </div>
@@ -874,12 +889,13 @@
         <ul>
           <li>Scanline Studio benötigt für den normalen Betrieb weder Produkttelemetrie noch ein Cloud-Konto.</li>
           <li>QRZ.com und die konfigurierte UDP-Weiterleitung senden nur dann Daten, wenn diese Integrationen aktiviert und verwendet werden.</li>
-          <li>Das aktuelle QRZ.com-Passwort wird unverschlüsselt lokal in den Einstellungen gespeichert.</li>
+          <li>Das QRZ.com-Passwort liegt im Schlüsselbund des Systems (Windows-Anmeldeinformationsverwaltung oder Linux Secret Service), wenn einer verfügbar ist. Eine Kopie von <code>settings.json</code> enthält es dann nicht, und nach dem Wiederherstellen einer Sicherung muss das Passwort erneut eingegeben werden. Ohne System-Schlüsselbund (unter macOS immer) wird es unverschlüsselt in <code>settings.json</code> gespeichert.</li>
+          <li>Eine ältere Scanline-Studio-Version zeigt ein leeres QRZ.com-Passwort, nachdem das Passwort in den Schlüsselbund verschoben wurde. Dort das Passwort erneut eingeben oder weiter die neuere Version verwenden.</li>
           <li><strong>Hilfe → Anwendungsprotokoll öffnen</strong> öffnet den aktuellen Speicherort des Diagnoseprotokolls. Ein Protokoll vor der Weitergabe durchsehen, da es Pfade, Rufzeichen, Hostnamen oder Betriebsdetails enthalten kann.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="fehlersuche fehlerbehebung probleme keine decodierung kein audio kein ton schräges bild schräglauf übersteuerung clipping ptt fehlgeschlagen cat getrennt sendefehler senden fehler fehlende datei galerie absturz logs protokolle">
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="fehlersuche wayland x11 xwayland fehlerbehebung probleme keine decodierung kein audio kein ton schräges bild schräglauf übersteuerung clipping ptt fehlgeschlagen cat getrennt sendefehler senden fehler fehlende datei galerie absturz logs protokolle">
         <p class="topic-category">Support</p>
         <h2>Fehlerbehebung</h2>
         <p>Beim sichtbaren Symptom beginnen, immer nur eine Sache auf einmal ändern und bei sporadischen Fehlern eine WAV-Aufnahme oder ein Anwendungsprotokoll aufbewahren.</p>
@@ -951,6 +967,16 @@
           <li>Die Liste füllt sich nur mit Stationen, die tatsächlich empfangen wurden. Sie ist kein Verzeichnis darüber, wer gerade auf dem Band aktiv ist.</li>
         </ul>
 
+        <h3>Linux: natives Wayland (experimentell)</h3>
+        <ul>
+          <li>Standardmäßig läuft Scanline Studio über X11 (XWayland auf einem Wayland-Desktop). Dafür ist keine Einstellung nötig.</li>
+          <li>Um stattdessen das native Wayland-Backend zu starten, starten Sie die Anwendung aus einer Wayland-Sitzung mit der Umgebungsvariable <code>SCANLINE_WAYLAND=1</code>, zum Beispiel <code>SCANLINE_WAYLAND=1 ./ScanlineStudio.Host</code>. Entfernen Sie die Variable, um zu X11 zurückzukehren.</li>
+          <li>Der Compositor muss xdg-shell ab Version 3 anbieten. Getestet wurde mit sway 1.11 und Weston 14. Zwei Compositors sind zu alt: sway 1.9 und labwc 0.7 bieten nur Version 2.</li>
+          <li>Kann das native Backend nicht starten, gibt Scanline Studio eine Meldung mit dem Namen <code>SCANLINE_WAYLAND</code> aus und beendet sich. Es wechselt nicht stillschweigend zu X11.</li>
+          <li>Unter Wayland platziert der Compositor das Fenster, nicht die Anwendung. <strong>Fensterposition und -größe merken</strong> speichert und stellt dann nur die Größe und den maximierten Zustand wieder her. Die aus einer X11-Sitzung gespeicherte Position bleibt unverändert.</li>
+          <li>Die Kiosk-Shell von Weston erzwingt eine Vollbildgröße, die kleiner als das Fenster ist, und beendet Scanline Studio mit einem Protokollfehler.</li>
+        </ul>
+
         <div class="tip"><strong>Sinnvolles Support-Paket.</strong> Anwendungsversion aus Hilfe → Über Scanline Studio…, Betriebssystem, gewähltes Audio- und CAT-Backend, genauen Fehlertext, Schritte zur Reproduktion und den relevanten Auszug aus dem Anwendungsprotokoll notieren. Eine kurze WAV-Datei nur beilegen, wenn sie zur Reproduktion eines Decodierproblems nötig ist.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
@@ -981,6 +1007,7 @@
           <dt id="glossary-qso">QSO</dt><dd>Eine Funkverbindung zwischen Stationen.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Bestätigung einer Funkverbindung; häufig in Form einer gestalteten Karte oder eines SSTV-Bildes.</dd>
           <dt id="glossary-rst">RST</dt><dd>Rapport aus Lesbarkeit (Readability), Signalstärke (Strength) und Ton (Tone). Bei SSTV-Verbindungen können verwandte Rapport-Konventionen verwendet werden.</dd>
+          <dt id="glossary-snr">SNR</dt><dd>Signal-Rausch-Abstand (Signal-to-Noise Ratio) in Dezibel: wie viel stärker das Signal ist als das Rauschen um es herum. Scanline Studio misst ihn am Synchronimpuls jeder Zeile gegenüber dem Rauschen im Band 400–2500 Hz.</dd>
           <dt id="glossary-sstv">SSTV</dt><dd>Slow-Scan Television (Schmalbandfernsehen): Standbilder, die als Töne im NF-Bereich über einen Funkkanal übertragen werden.</dd>
           <dt id="glossary-swr">SWR</dt><dd>Stehwellenverhältnis (Standing Wave Ratio); ein Maß für die Fehlanpassung der Impedanz im HF-Pfad.</dd>
           <dt id="glossary-utc">UTC</dt><dd>Koordinierte Weltzeit; die einheitliche Zeitzone, in der Funkamateure ihre Verbindungen loggen, damit Aufzeichnungen aus verschiedenen Zeitzonen vergleichbar bleiben.</dd>

@@ -83,7 +83,7 @@ public sealed class IndustryFontResolutionTests
         Assert.NotSame(medium, bold);
     }
 
-    private static IGlyphTypeface ResolveOrThrow(string fontFamilyUri, FontWeight weight)
+    private static GlyphTypeface ResolveOrThrow(string fontFamilyUri, FontWeight weight)
     {
         var typeface = new Typeface(FontFamily.Parse(fontFamilyUri), FontStyle.Normal, weight);
         Assert.True(FontManager.Current.TryGetGlyphTypeface(typeface, out var glyphTypeface));

@@ -4777,8 +4777,7 @@ public sealed class PaneViewModelTests
         // WriteableBitmapPool.Dispose() disposes SYNCHRONOUSLY (no Dispatcher.UIThread.Post needed
         // for this one, unlike each element's own bitmap) -- Lock() on the captured reference throws
         // the instant Dispose() has run. WriteableBitmapPoolTests' own established convention:
-        // NullReferenceException (Dispose() nulls the internal platform impl), not
-        // ObjectDisposedException.
+        // ObjectDisposedException from Lock().
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
         var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
@@ -4788,7 +4787,7 @@ public sealed class PaneViewModelTests
         editor.CancelCommand.Execute(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+        Assert.Throws<ObjectDisposedException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
     }
 
     [AvaloniaFact]
@@ -4836,7 +4835,7 @@ public sealed class PaneViewModelTests
         var realEditor = await OpenEditorAsync(vm, () => vm.CopyReceivedImageToTxCommand.ExecuteAsync(null));
 
         Assert.NotSame(blankEditor, realEditor);
-        Assert.Throws<NullReferenceException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
+        Assert.Throws<ObjectDisposedException>(() => ((WriteableBitmap)discardedBitmap!).Lock());
     }
 
     // User-requested (2026-09-15): "even if there are elements on the canvas, if no background has
@@ -4936,7 +4935,7 @@ public sealed class PaneViewModelTests
         await editor.CancelCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
-        Assert.Throws<NullReferenceException>(() => elementBitmap.Lock());
+        Assert.Throws<ObjectDisposedException>(() => elementBitmap.Lock());
     }
 
     [AvaloniaFact]
@@ -5928,7 +5927,7 @@ public sealed class PaneViewModelTests
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         var notInList = new RxHistoryEntryViewModel(
-            new ReceiveHistoryEntry("gone", DateTimeOffset.UtcNow, "robot36", "/tmp/gone.png", null, ReceiveDecodeState.Completed), Thumbnail: null);
+            new ReceiveHistoryEntry("gone", DateTimeOffset.UtcNow, "robot36", "/tmp/gone.png", null, ReceiveDecodeState.Completed), thumbnail: null);
 
         var raised = false;
         vm.ImageViewerRequested += _ => raised = true;
@@ -6142,8 +6141,8 @@ public sealed class PaneViewModelTests
     public void RxHistoryPaneViewModel_RecordedEvent_PreservesTheCurrentSelectionAcrossTheRefresh()
     {
         // Regression test for a real UX regression the live-update fix would otherwise introduce:
-        // every refresh builds brand-new RxHistoryEntryViewModel instances (a record, no identity
-        // beyond reference equality), so without re-selecting by Entry.Id after repopulating, a user
+        // a refresh rebuilds the instance of any changed row (no identity beyond reference), so
+        // without re-selecting by Entry.Id after repopulating, a user
         // actively browsing history would have their selection (and its preview) silently wiped every
         // time an unrelated new frame lands.
         //
@@ -6168,6 +6167,9 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         var unrelatedNewEntry = new ReceiveHistoryEntry("unrelated", DateTimeOffset.Now.AddSeconds(1), "robot36", "/tmp/unrelated.png", null, ReceiveDecodeState.Completed);
+        // A refresh keeps an unchanged row's instance; the selected row also changed here (callsign
+        // attached), so it is rebuilt and only the re-select-by-Id logic can keep it selected.
+        historyStore.EntriesToReturn[0] = selectedEntry with { DecodedCallsign = "N0CALL" };
         historyStore.EntriesToReturn.Add(unrelatedNewEntry);
         historyStore.RaiseRecorded(unrelatedNewEntry);
         Dispatcher.UIThread.RunJobs();
@@ -6601,7 +6603,9 @@ public sealed class PaneViewModelTests
         {
             // A real RefreshAsync (e.g. IReceiveHistoryStore.Recorded firing for an unrelated new
             // frame) landing WHILE the dialog is open, reselecting entry "1" by Id with a brand-new
-            // RxHistoryEntryViewModel instance -- NOT the same reference as originalEntry.
+            // RxHistoryEntryViewModel instance -- NOT the same reference as originalEntry. A refresh
+            // keeps an unchanged row's instance, so the row changes (callsign attached) to force one.
+            historyStore.EntriesToReturn[0] = historyStore.EntriesToReturn[0] with { DecodedCallsign = "N0CALL" };
             await vm.RefreshCommand.ExecuteAsync(null);
             Dispatcher.UIThread.RunJobs();
             var reselected = vm.SelectedEntry;
@@ -8275,7 +8279,7 @@ public sealed class PaneViewModelTests
     }
 
     // Avalonia's WriteableBitmap has no public IsDisposed -- same technique WriteableBitmapPoolTests
-    // uses: a disposed instance throws NullReferenceException (not ObjectDisposedException) from
+    // uses: a disposed instance throws ObjectDisposedException from
     // any real operation, here .Lock().
     private static bool IsWriteableBitmapDisposed(WriteableBitmap bitmap)
     {
@@ -8287,13 +8291,28 @@ public sealed class PaneViewModelTests
 
             return false;
         }
-        catch (NullReferenceException)
+        catch (ObjectDisposedException)
         {
             return true;
         }
     }
 
-    private static RxHistoryPaneViewModel CreateRxHistoryPaneViewModel(
+    /// <summary>Waits until the Gallery search debounce has published (polls, 10 s cap) — no fixed sleep,
+    /// so a loaded test host cannot race the 200 ms window.</summary>
+    internal static async Task SettleGallerySearchAsync(RxHistoryPaneViewModel vm)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        do
+        {
+            await Task.Delay(20);
+            Dispatcher.UIThread.RunJobs();
+        }
+        while (vm.IsSearchPublishPending && DateTime.UtcNow < deadline);
+
+        Assert.False(vm.IsSearchPublishPending, "Gallery search debounce did not publish within 10 s.");
+    }
+
+    internal static RxHistoryPaneViewModel CreateRxHistoryPaneViewModel(
         FakeReceiveHistoryStore historyStore,
         FakeReceivedFrameExporter? frameExporter = null,
         FakeFilePickerService? filePicker = null,
@@ -8404,12 +8423,15 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         vm.SearchText = "w1aw";
+        await SettleGallerySearchAsync(vm);
         Assert.Equal(["by-note"], vm.FilteredEntries.Select(e => e.Entry.Id));
 
         vm.SearchText = "SCOTTIE";
+        await SettleGallerySearchAsync(vm);
         Assert.Equal(["by-mode"], vm.FilteredEntries.Select(e => e.Entry.Id));
 
         vm.SearchText = null;
+        await SettleGallerySearchAsync(vm);
         Assert.Equal(3, vm.FilteredEntries.Count);
     }
 
