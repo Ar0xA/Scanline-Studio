@@ -291,7 +291,7 @@ opt-in via `SCANLINE_WAYLAND=1`. Local plan (gitignored): `docs/plans/avalonia-1
    file picker portal, external file drag-drop, Hyprland/GNOME/KDE, real input devices.
 4. **macOS**: skipped for the spike (user, 2026-09-26); decide before release — the manual `release-macos.yml` run
    needs explicit user OK.
-5. **Release metadata:** `Directory.Build.props` still `0.9.0-beta`.
+5. **Release metadata:** DONE — `Directory.Build.props` is `0.9.1-beta`.
 
 Friend test build (not a release): `0.9.1-avalonia12-test+0f63fd6`, Linux x64 tarball in local `publish/dist/`.
 
