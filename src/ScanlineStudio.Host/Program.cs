@@ -35,6 +35,7 @@ using ScanlineStudio.UI;
 using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.ViewModels;
+using ScanlineStudio.UI.Views;
 
 namespace ScanlineStudio.Host;
 
@@ -140,6 +141,10 @@ internal static partial class Program
         // real resolve in a real run. Same extraction shape RegisterSstvServices already established
         // for the SSTV DSP core registrations below.
         RegisterServices(hostBuilder.Services);
+
+        // Chosen this early so MainWindow can learn, via DI, whether the backend can place windows.
+        var backend = WindowingBackendSelector.Choose(OperatingSystem.IsLinux(), Environment.GetEnvironmentVariable);
+        hostBuilder.Services.AddSingleton(new WindowingBackendInfo(SupportsWindowPosition: backend != WindowingBackendChoice.Wayland));
 
         // RegisterServices above already registered NoneLogFileRelocator as the ILogFileRelocator
         // default (so SstvCompositionRootTests, which calls RegisterServices alone, always has one
@@ -410,7 +415,6 @@ internal static partial class Program
 
         var lifetime = new ClassicDesktopStyleApplicationLifetime { Args = args };
         var appBuilder = BuildAvaloniaApp();
-        var backend = WindowingBackendSelector.Choose(OperatingSystem.IsLinux(), Environment.GetEnvironmentVariable);
         if (backend == WindowingBackendChoice.Wayland)
         {
             appBuilder = appBuilder.UseWayland();
@@ -421,7 +425,31 @@ internal static partial class Program
         }
 
         Log.WindowingBackendChosen(logger, backend);
-        appBuilder.SetupWithLifetime(lifetime);
+        try
+        {
+            appBuilder.SetupWithLifetime(lifetime);
+        }
+        catch (Exception ex) when (backend == WindowingBackendChoice.Wayland)
+        {
+            // The user opted in explicitly, so fail loudly instead of silently falling back to X11.
+            Log.WaylandStartFailed(logger, ex);
+            Console.Error.WriteLine(WaylandStartFailureMessage(ex));
+            try
+            {
+                if (!Task.Run(() => ((IAsyncDisposable)host).DisposeAsync().AsTask()).Wait(TimeSpan.FromSeconds(10)))
+                {
+                    Log.TeardownTimedOut(logger);
+                }
+            }
+            catch (Exception disposeEx)
+            {
+                Log.TeardownThrew(logger, disposeEx);
+            }
+
+            Environment.ExitCode = 1;
+            return;
+        }
+
         Log.AvaloniaLifetimeStarted(logger);
 
         // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
@@ -475,6 +503,12 @@ internal static partial class Program
         // releasing the lock while the app is still genuinely running.
         GC.KeepAlive(singleInstanceMutex);
     }
+
+    /// <summary>The stderr text for a failed native Wayland start; names the opt-in variable so the user can undo it.</summary>
+    internal static string WaylandStartFailureMessage(Exception ex) =>
+        $"Scanline Studio could not start the native Wayland backend ({WindowingBackendSelector.OptInVariable}=1). " +
+        "The compositor must offer xdg-shell version 3 or later (for example sway 1.11). " +
+        $"Unset {WindowingBackendSelector.OptInVariable} to use the default X11/XWayland backend. Details: {ex.Message}";
 
     /// <summary>Runs on the <c>ClassicDesktopStyleApplicationLifetime.Exit</c> event -- extracted
     /// from <c>Main</c> so the dispose-then-<c>ClearAllPools</c>-then-conditional-restart-spawn
@@ -1373,6 +1407,9 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "{OptInVariable}=1 is set but {WaylandDisplayVariable} is not; starting the default backend instead")]
         public static partial void WaylandRequestedWithoutSession(ILogger logger, string optInVariable, string waylandDisplayVariable);
+
+        [LoggerMessage(Level = LogLevel.Critical, Message = "Native Wayland backend failed to start")]
+        public static partial void WaylandStartFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "RX image/history persistence did not drain successfully before shutdown")]
         public static partial void ImagePersistenceDrainIncomplete(ILogger logger);

@@ -1,4 +1,6 @@
 using Avalonia;
+using Avalonia.Controls;
+using ScanlineStudio.UI.Settings;
 using ScanlineStudio.UI.Views;
 
 namespace ScanlineStudio.UI.Tests;
@@ -195,5 +197,67 @@ public sealed class WindowGeometryPolicyTests
         var centered = WindowGeometryPolicy.CenterInWorkArea(workingArea, widthDip: 800, heightDip: 600, scaling: 1.0);
 
         Assert.Equal(new PixelPoint(1920 + 560, 220), centered);
+    }
+
+    [Theory]
+    [InlineData(null, true)]
+    [InlineData(true, true)]
+    [InlineData(false, false)]
+    public void CanPlaceWindow_OnlyFalseWhenBackendSaysSo(bool? supportsPosition, bool expected)
+    {
+        var info = supportsPosition is { } value ? new WindowingBackendInfo(value) : null;
+
+        Assert.Equal(expected, WindowGeometryPolicy.CanPlaceWindow(info));
+    }
+
+    private static readonly WindowGeometrySettings Saved = new() { Left = 120, Top = 80, Width = 1500, Height = 900, WasMaximized = false };
+
+    [Fact]
+    public void BuildClosingGeometry_NormalWithPlacement_SavesPositionAndSize()
+    {
+        var result = WindowGeometryPolicy.BuildClosingGeometry(Saved, WindowState.Normal, 10, 20, 1600, 1000, canPlaceWindow: true);
+
+        Assert.Equal(new WindowGeometrySettings { Left = 10, Top = 20, Width = 1600, Height = 1000, WasMaximized = false }, result);
+    }
+
+    [Fact]
+    public void BuildClosingGeometry_NormalWithoutPlacement_KeepsSavedPositionButSavesSize()
+    {
+        var result = WindowGeometryPolicy.BuildClosingGeometry(Saved, WindowState.Normal, 0, 0, 1918, 1078, canPlaceWindow: false);
+
+        Assert.Equal(120, result.Left);
+        Assert.Equal(80, result.Top);
+        Assert.Equal(1918, result.Width);
+        Assert.Equal(1078, result.Height);
+        Assert.False(result.WasMaximized);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void BuildClosingGeometry_Maximized_OnlySetsFlag(bool canPlaceWindow)
+    {
+        var result = WindowGeometryPolicy.BuildClosingGeometry(Saved, WindowState.Maximized, 0, 0, 1920, 1080, canPlaceWindow);
+
+        Assert.Equal(Saved with { WasMaximized = true }, result);
+    }
+
+    [Fact]
+    public void HasRestorableGeometry_WaylandFirstInstall_SizeOnlyIsEnough()
+    {
+        var sizeOnly = new WindowGeometrySettings { Width = 1300, Height = 800 };
+
+        Assert.True(WindowGeometryPolicy.HasRestorableGeometry(sizeOnly, canPlaceWindow: false));
+        Assert.False(WindowGeometryPolicy.HasRestorableGeometry(sizeOnly, canPlaceWindow: true));
+    }
+
+    [Fact]
+    public void HasRestorableGeometry_RememberOffOrMissing_ReturnsFalse()
+    {
+        Assert.False(WindowGeometryPolicy.HasRestorableGeometry(null, canPlaceWindow: false));
+        Assert.False(WindowGeometryPolicy.HasRestorableGeometry(new WindowGeometrySettings { Width = 1300 }, canPlaceWindow: false));
+        Assert.False(WindowGeometryPolicy.HasRestorableGeometry(new WindowGeometrySettings { Height = 800 }, canPlaceWindow: false));
+        Assert.False(WindowGeometryPolicy.HasRestorableGeometry(Saved with { RememberWindowPosition = false }, canPlaceWindow: true));
+        Assert.True(WindowGeometryPolicy.HasRestorableGeometry(Saved, canPlaceWindow: true));
     }
 }

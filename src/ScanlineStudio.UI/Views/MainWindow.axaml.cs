@@ -64,6 +64,7 @@ public partial class MainWindow : Window
         // App.Services set must not throw here.
         var logger = App.Services?.GetService<ILogger<MainWindow>>();
         _settingsStore = App.Services?.GetService<ISettingsStore>();
+        var canPlaceWindow = WindowGeometryPolicy.CanPlaceWindow(App.Services?.GetService<WindowingBackendInfo>());
 
         // Restore window geometry BEFORE the window is ever shown (App.axaml.cs constructs this
         // window, then hands it to the desktop lifetime -- no visible "jump" this way).
@@ -129,12 +130,12 @@ public partial class MainWindow : Window
             double width;
             double height;
             bool isRestoredGeometry;
-            if (geometry is { RememberWindowPosition: true, Left: { } restoredLeft, Top: { } restoredTop, Width: { } restoredWidth, Height: { } restoredHeight })
+            if (WindowGeometryPolicy.HasRestorableGeometry(geometry, canPlaceWindow))
             {
-                left = restoredLeft;
-                top = restoredTop;
-                width = restoredWidth;
-                height = restoredHeight;
+                left = geometry!.Left ?? 0;
+                top = geometry.Top ?? 0;
+                width = geometry.Width!.Value;
+                height = geometry.Height!.Value;
                 isRestoredGeometry = true;
             }
             else
@@ -186,7 +187,25 @@ public partial class MainWindow : Window
             // clamp below regardless of this check's result.
             var startPosition = new PixelPoint((int)left, (int)top);
             var screenBounds = Screens.All.Select(s => s.Bounds).ToList();
-            if (!isRestoredGeometry || WindowGeometryPolicy.ShouldRestorePosition(startPosition, screenBounds))
+            if (!canPlaceWindow)
+            {
+                // Native Wayland: size only, the compositor places the window (Screens is usually empty this early).
+                var sizeScreen = Screens.Primary;
+                if (sizeScreen is not null)
+                {
+                    var scaling = sizeScreen.Scaling;
+                    var requested = new PixelRect(sizeScreen.WorkingArea.Position, new PixelSize((int)Math.Round(width * scaling), (int)Math.Round(height * scaling)));
+                    var clamped = WindowGeometryPolicy.ClampToWorkArea(requested, sizeScreen.WorkingArea);
+                    Width = clamped.Width / scaling;
+                    Height = clamped.Height / scaling;
+                }
+                else
+                {
+                    Width = width;
+                    Height = height;
+                }
+            }
+            else if (!isRestoredGeometry || WindowGeometryPolicy.ShouldRestorePosition(startPosition, screenBounds))
             {
                 // User-reported bug (2026-09-03): ShouldRestorePosition above only ever validated
                 // the top-left POINT, never whether the saved/default Width/Height actually fit
@@ -376,9 +395,7 @@ public partial class MainWindow : Window
                     // own already-persisted values (the last real Normal-state size, or still null if
                     // this window has never once closed Normal) pass through unchanged, exactly the
                     // "restore to" fallback WasMaximized's own doc comment describes.
-                    var updated = closingState == WindowState.Normal
-                        ? current with { Left = left, Top = top, Width = width, Height = height, WasMaximized = false }
-                        : current with { WasMaximized = true };
+                    var updated = WindowGeometryPolicy.BuildClosingGeometry(current, closingState, left, top, width, height, canPlaceWindow);
                     return settings.WithSection(WindowGeometrySettings.SectionKey, updated, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
                 })).GetAwaiter().GetResult();
             }

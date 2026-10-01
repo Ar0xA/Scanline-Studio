@@ -925,7 +925,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="troubleshoot problems no decode no audio slanted image clipping ptt failed cat disconnected transmit error missing file gallery crash logs">
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="troubleshoot wayland x11 xwayland problems no decode no audio slanted image clipping ptt failed cat disconnected transmit error missing file gallery crash logs">
         <p class="topic-category">Support</p>
         <h2>Troubleshooting</h2>
         <p>Start with the visible symptom, change one thing at a time, and preserve a WAV recording or application log when the failure is intermittent.</p>
@@ -995,6 +995,16 @@
           <li>Confirm <strong>FSK decode</strong> and/or <strong>CW decode</strong> are turned on in Options → Identification. Both are on by default, but either can be turned off there.</li>
           <li>Not every station sends identification the application recognizes: a station may be using FSK/CW at a speed, tone, or format Scanline Studio doesn't decode, or may not be identifying by tone at all.</li>
           <li>The list only fills from stations you actually receive. It is not a directory of who is active on the band.</li>
+        </ul>
+
+        <h3>Linux: native Wayland (experimental)</h3>
+        <ul>
+          <li>By default Scanline Studio runs through X11 (XWayland on a Wayland desktop). This needs no setting.</li>
+          <li>To start the native Wayland backend instead, launch the application from a Wayland session with the environment variable <code>SCANLINE_WAYLAND=1</code>, for example <code>SCANLINE_WAYLAND=1 ./ScanlineStudio.Host</code>. Remove the variable to go back to X11.</li>
+          <li>The compositor must offer xdg-shell version 3 or later. This was tested on sway 1.11 and Weston 14. Two compositors that are too old: sway 1.9 and labwc 0.7 offer only version 2.</li>
+          <li>If the native backend cannot start, Scanline Studio prints a message that names <code>SCANLINE_WAYLAND</code> and exits. It does not fall back to X11 silently.</li>
+          <li>On Wayland the compositor places the window, not the application. <strong>Remember window position and size</strong> then saves and restores only the size and the maximized state. The position saved from an X11 session stays unchanged.</li>
+          <li>Weston's kiosk shell, which forces a fullscreen size smaller than the window, closes Scanline Studio with a protocol error.</li>
         </ul>
 
         <div class="tip"><strong>Useful support bundle.</strong> Note the application version from Help → About, the operating system, selected audio and CAT backend, exact error text, reproduction steps, and the relevant application-log excerpt. Include a short WAV only when it is needed to reproduce a decode issue.</div>

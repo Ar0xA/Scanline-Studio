@@ -260,47 +260,38 @@ Today a live `Directory.EnumerateFiles` scan with no index and no import path. "
 untouched" is de facto, not decided. Decide and document, or build the migration.
 `spec/07-image-pipeline.md:411`.
 
-### AV12. IN PROGRESS on branch `avalonia-12` — Avalonia 12.1 migration + opt-in native Wayland
+### AV12. MERGED into `0.9.1-beta` (`0f63fd67`), release blockers below — Avalonia 12.1 + opt-in native Wayland
 
-Avalonia 11 has no Wayland backend, so Linux runs through XWayland today. 12.1 adds an experimental
-native one. Local plan (gitignored): `docs/plans/avalonia-12-migration-plan.md`.
+Avalonia 11 has no Wayland backend, so Linux ran through XWayland. 12.1 adds an experimental native one,
+opt-in via `SCANLINE_WAYLAND=1`. Local plan (gitignored): `docs/plans/avalonia-12-migration-plan.md`.
 
-**Done on the branch (`0f63fd67`, yoniq-auditor plan-review x2 + code-review round 1 go):** Avalonia
-12.1.3, Tmds.DBus.Protocol 0.94.1 port of the Secret Service store, DispatcherTimers on
-`Dispatcher.UIThread`, UI test projects on xUnit v3, DevTools removed, compiled bindings pinned off,
-opt-in `SCANLINE_WAYLAND=1` (`WindowingBackendSelector`), real backend logged from the platform handle
-descriptor. All 14 test projects green. Native Wayland verified in nested weston (desktop-shell).
+**Done (verified 2026-10-01 on nested sway 1.11 + weston 14, headless, native Wayland):**
+- Build toolchain: `global.json` (10.0.100, latestFeature), `ci.yml` and `release-macos.yml` install SDK 10 +
+  runtime 8, README/`build_*.md` updated. The CI change itself is unproven until a CI run.
+- `Watermark=` → `PlaceholderText=` (Release build: 0 warnings). `LostFocus` handlers need no change (no warning).
+- Visual pass: Avalonia 11 (`16c7103b`) vs 12 (`0f63fd67`) on X11, same click-through of all main tabs and all
+  10 Options tabs: main screens differ by ≤156 blurred px (clock/live state), Options tabs ≈0.
+- Wayland Phase B: `WindowingBackendInfo` + `WindowGeometryPolicy.CanPlaceWindow/BuildClosingGeometry` (position
+  never saved/restored under Wayland, size still is); fail-loud on `UseWayland()` failure (stderr names
+  `SCANLINE_WAYLAND`, exit 1); help guide (en + de) Troubleshooting section.
+- Live Wayland checks: menus, popups, modal dialog, typing, clipboard text + image both directions, Alt+F access
+  key, drag, context menu, scale 1.5 and 2, size restore/save. Alt+F/Alt+C also verified on the X11 backend
+  (Xwayland) and `TxImageEditorQuickStyleFlyoutRealClickTests` is green.
 
-**Must be done before merging to master:**
-1. **Build toolchain.** Avalonia 12's generators need the .NET 10 SDK (CS9057 on 8.0.x); target stays
-   `net8.0`. Move `ci.yml` and `release-macos.yml` `setup-dotnet` to 10.0.x (tests also need the 8.0
-   runtime), add a `global.json`, update `docs/`/build notes that name the .NET 8 SDK.
-2. **Locked-keyring prompt check (manual).** No test reaches `RunPromptAsync` (all use `allowPrompt: false`).
-   Lock the login keyring in Seahorse → open Options (QRZ password load prompts) → unlock. The field must
-   fill within seconds, and the log must have no "dismissed or timed out" line.
-3. **Windows hardware check** of the maximize workaround, `MainWindow.axaml.cs` (Avalonia#19434 block):
-   12 made `WindowState` a direct property and reworked Windows decorations. Remove only if proven unneeded.
-4. **Visual pass** of every Industry-styled control: `Atoms.axaml` selectors reach into Fluent template
-   parts (`#PART_Indicator`, `#PART_SelectedPipe`, `#PART_ItemsPresenter`, `ComboBox /template/ TextBox`,
-   `/template/ ContentPresenter`) and fail silently if Fluent 12 renamed them. Include TextBox placeholders.
-5. **Re-verify:** Alt access keys (`_File`, `Cali_bration`, … now trigger by symbol);
-   `TxImageEditorQuickStyleFlyoutRealClickTests` (relies on a private Avalonia `Open` overload).
-6. **Cleanup:** `Watermark=` → `PlaceholderText=` in 6 AXAML files (AVLN5001 warnings in Release);
-   `LostFocus` handlers → `FocusChangedEventArgs`; stale ColorPicker comment in `ScanlineStudio.UI.csproj`.
-7. **Wayland Phase B**, so the opt-in is safe to ship:
-   - Under Wayland, do not save/restore window **position** (Wayland has none; it would corrupt the next X11
-     launch). Host registers a UI-owned `WindowingBackendInfo` in DI; `MainWindow` reads it; decision in a
-     unit-tested `WindowGeometryPolicy` function. Restore block needs restructuring (size clamp sits inside
-     the position branch).
-   - If `UseWayland()` fails: catch at the `SetupWithLifetime` and `lifetime.Start` sites in `Program.cs`,
-     write a message naming `SCANLINE_WAYLAND` to stderr + log, exit non-zero. (`UseWaylandWithFallback()`
-     exists; fail-loud was chosen because the user opted in explicitly.)
-   - Known crash: weston kiosk-shell (forced fullscreen smaller than the 1920×1032 surface) → xdg_wm_base
-     error 4. Test sway/Hyprland-style tiling before advertising Wayland support.
-   - Help guide: document `SCANLINE_WAYLAND=1` (Linux section) + `node assets/help/check-help.mjs`.
-8. **macOS**: skipped for the spike (user, 2026-09-26); decide before merge — the manual
-   `release-macos.yml` run needs explicit user OK.
-9. **Code review** of items 1-7 (full yoniq-auditor cadence), then merge.
+**Still open:**
+1. **Windows hardware check** of the maximize workaround, `MainWindow.axaml.cs` (Avalonia#19434 block): 12 made
+   `WindowState` a direct property and reworked Windows decorations. Remove only if proven unneeded. (User, other box.)
+2. **Locked-keyring prompt check (manual, Linux).** No test reaches `RunPromptAsync`. Lock the login keyring in
+   Seahorse → open Options (QRZ password load prompts) → unlock. Field must fill within seconds, no
+   "dismissed or timed out" log line.
+3. **Wayland known limits:** (a) weston kiosk-shell (forced fullscreen smaller than the fixed 1920×1032 size) → protocol
+   error 4; leaving Width/Height unset avoids it but floating windows then open at the 1280×640 minimum. Decision
+   pending. (b) wlroots 0.17 compositors (sway 1.9, labwc 0.7, Ubuntu 24.04) advertise xdg_wm_base v2, Avalonia needs
+   ≥3 → documented, fails loudly. (c) `app_id` is empty on Wayland (no desktop-file/icon matching). (d) Not tested:
+   file picker portal, external file drag-drop, Hyprland/GNOME/KDE, real input devices.
+4. **macOS**: skipped for the spike (user, 2026-09-26); decide before release — the manual `release-macos.yml` run
+   needs explicit user OK.
+5. **Release metadata:** `Directory.Build.props` still `0.9.0-beta`.
 
 Friend test build (not a release): `0.9.1-avalonia12-test+0f63fd6`, Linux x64 tarball in local `publish/dist/`.
 

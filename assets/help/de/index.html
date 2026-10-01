@@ -895,7 +895,7 @@
         </ul>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="fehlersuche fehlerbehebung probleme keine decodierung kein audio kein ton schräges bild schräglauf übersteuerung clipping ptt fehlgeschlagen cat getrennt sendefehler senden fehler fehlende datei galerie absturz logs protokolle">
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="fehlersuche wayland x11 xwayland fehlerbehebung probleme keine decodierung kein audio kein ton schräges bild schräglauf übersteuerung clipping ptt fehlgeschlagen cat getrennt sendefehler senden fehler fehlende datei galerie absturz logs protokolle">
         <p class="topic-category">Support</p>
         <h2>Fehlerbehebung</h2>
         <p>Beim sichtbaren Symptom beginnen, immer nur eine Sache auf einmal ändern und bei sporadischen Fehlern eine WAV-Aufnahme oder ein Anwendungsprotokoll aufbewahren.</p>
@@ -965,6 +965,16 @@
           <li>Sicherstellen, dass <strong>FSK decodieren</strong> und/oder <strong>CW decodieren</strong> unter Optionen → Kennung eingeschaltet sind. Beide sind standardmäßig aktiv, können dort aber einzeln abgeschaltet werden.</li>
           <li>Nicht jede Station sendet eine Kennung, die die Anwendung erkennt: Eine Station kann FSK/CW mit einer Geschwindigkeit, einem Ton oder einem Format verwenden, das Scanline Studio nicht decodiert, oder sie identifiziert sich gar nicht per Ton.</li>
           <li>Die Liste füllt sich nur mit Stationen, die tatsächlich empfangen wurden. Sie ist kein Verzeichnis darüber, wer gerade auf dem Band aktiv ist.</li>
+        </ul>
+
+        <h3>Linux: natives Wayland (experimentell)</h3>
+        <ul>
+          <li>Standardmäßig läuft Scanline Studio über X11 (XWayland auf einem Wayland-Desktop). Dafür ist keine Einstellung nötig.</li>
+          <li>Um stattdessen das native Wayland-Backend zu starten, starten Sie die Anwendung aus einer Wayland-Sitzung mit der Umgebungsvariable <code>SCANLINE_WAYLAND=1</code>, zum Beispiel <code>SCANLINE_WAYLAND=1 ./ScanlineStudio.Host</code>. Entfernen Sie die Variable, um zu X11 zurückzukehren.</li>
+          <li>Der Compositor muss xdg-shell ab Version 3 anbieten. Getestet wurde mit sway 1.11 und Weston 14. Zwei Compositors sind zu alt: sway 1.9 und labwc 0.7 bieten nur Version 2.</li>
+          <li>Kann das native Backend nicht starten, gibt Scanline Studio eine Meldung mit dem Namen <code>SCANLINE_WAYLAND</code> aus und beendet sich. Es wechselt nicht stillschweigend zu X11.</li>
+          <li>Unter Wayland platziert der Compositor das Fenster, nicht die Anwendung. <strong>Fensterposition und -größe merken</strong> speichert und stellt dann nur die Größe und den maximierten Zustand wieder her. Die aus einer X11-Sitzung gespeicherte Position bleibt unverändert.</li>
+          <li>Die Kiosk-Shell von Weston erzwingt eine Vollbildgröße, die kleiner als das Fenster ist, und beendet Scanline Studio mit einem Protokollfehler.</li>
         </ul>
 
         <div class="tip"><strong>Sinnvolles Support-Paket.</strong> Anwendungsversion aus Hilfe → Über Scanline Studio…, Betriebssystem, gewähltes Audio- und CAT-Backend, genauen Fehlertext, Schritte zur Reproduktion und den relevanten Auszug aus dem Anwendungsprotokoll notieren. Eine kurze WAV-Datei nur beilegen, wenn sie zur Reproduktion eines Decodierproblems nötig ist.</div>

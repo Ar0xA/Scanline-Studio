@@ -20,4 +20,13 @@ public class WindowingBackendSelectorTests
     [InlineData(false, "1", "wayland-0", WindowingBackendChoice.PlatformDetect)]
     public void Choose_OnlyOptsIntoWaylandWithBothVariablesOnLinux(bool isLinux, string? optIn, string? waylandDisplay, WindowingBackendChoice expected)
         => Assert.Equal(expected, WindowingBackendSelector.Choose(isLinux, Env(optIn, waylandDisplay)));
+
+    [Fact]
+    public void WaylandStartFailureMessage_NamesTheOptInVariableAndTheCause()
+    {
+        var message = Program.WaylandStartFailureMessage(new InvalidOperationException("xdg_wm_base (>=3) not found"));
+
+        Assert.Contains(WindowingBackendSelector.OptInVariable, message);
+        Assert.Contains("xdg_wm_base (>=3) not found", message);
+    }
 }
