@@ -249,7 +249,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality stations heard worked before fsk cw id new station callsign">
+      <article id="receive-controls" class="help-topic" data-help-topic data-category="Receiving" data-keywords="sync slant ppm resync correct slant squelch bpf bandpass notch agc buffer clipping auto stop restart sync source input chain dsp afc automatic frequency control signal quality snr signal to noise ratio noise level stations heard worked before fsk cw id new station callsign">
         <p class="topic-category">Receiving</p>
         <h2>Reception controls and telemetry</h2>
         <p>The Receive tab shows what the decoder is doing. You rarely need to adjust anything here.</p>
@@ -287,6 +287,17 @@
           <li>The change applies during the current picture. From the next line onward the correction is no longer added, and the tone detectors return to their nominal frequencies. Lines already decoded keep the correction they were given.</li>
           <li>While AFC is off, the <strong>Sync tone</strong> row on the Signal quality card shows a dash, because no correction is being measured.</li>
           <li>AVT mode never uses AFC, whatever this is set to.</li>
+        </ul>
+
+        <h3>Signal quality: SNR</h3>
+        <p>The <strong>SNR</strong> row on the Signal quality card, and the <strong>SNR</strong> chip in the status bar while a picture is being received, show the <a class="term" href="#glossary-snr">signal-to-noise ratio</a> of the incoming signal in decibels. Higher is better. As a guide from real off-air recordings: readable pictures measured about 5–14 dB, and pictures that were pure noise measured below 0 dB. Use it to compare pictures and conditions rather than as a fixed pass mark.</p>
+        <ul>
+          <li>It is measured on the sync pulse of every line (in most modes at the start of the line; in Scottie modes in the middle). That pulse is a steady tone, so the application can separate the tone from the noise around it. The noise is counted over a fixed 400–2500 Hz reference band, which contains the whole SSTV signal.</li>
+          <li>The live figure is the median over the last 16 lines. When the picture ends, one figure for the whole picture (the median over all of its lines) is stored with the image and shown in the <a href="#gallery">Gallery</a>.</li>
+          <li>Readings below −10 dB show as <strong>&lt; −10 dB</strong> and above 50 dB as <strong>&gt; 50 dB</strong>.</li>
+          <li>It shows a dash while idle, when <strong>Measure reception SNR</strong> is off in Options → Decode (see <a href="#decode-options">Decode options</a>), during the first lines of each picture while the sync pulse is being located, and in AVT mode, which has no sync pulses.</li>
+          <li>It measures only. Decoded pictures are identical with it on or off.</li>
+          <li>With Auto-slant off, a large sound-card clock error can make the sync pulse drift away from where it is measured. The figure then reads low or disappears. Switch Auto-slant back on.</li>
         </ul>
 
         <div class="warning"><strong>Do not tune by numbers alone.</strong> If a picture decodes cleanly, avoid changing squelch, BPF, or advanced demodulator settings merely to make a readout look different.</div>
@@ -377,6 +388,7 @@
           <li><strong>Lock</strong> an element to stop it from being dragged by accident. <strong>Duplicate</strong> makes a copy, which is a quick way to build a related element.</li>
           <li><strong>Copy</strong>, <strong>Cut</strong>, and <strong>Paste</strong> move or duplicate elements through the clipboard. <strong>Copy Style</strong> and <strong>Paste Style</strong> carry a text, box, or line element's appearance (color, outline, font, and similar) onto another element of the <em>same type</em>, without changing its position or content. They are greyed out for image elements and when the copied and target types do not match.</li>
           <li>The right-click menu's <strong>Arrange</strong> submenu reorders layers: <strong>Bring to front</strong>, <strong>Bring forward</strong>, <strong>Send backward</strong>, <strong>Send to back</strong>. A separate item on that same right-click menu, <strong>Flatten into image</strong>, permanently merges one element into the background photo. After that you cannot move or restyle it.</li>
+          <li>The right-click menu's <strong>Rotate</strong> submenu turns a text, box, line, or picture element. <strong>Rotate 90° Clockwise</strong>, <strong>Rotate 90° Counterclockwise</strong>, and <strong>Rotate 180°</strong> turn it immediately. <strong>Rotate…</strong> opens a small field for an exact angle in degrees. Rotate is greyed out while the element is locked, and for a box or picture element while <strong>Perspective</strong> is active on it — turn perspective off first.</li>
           <li>A picture element's right-click <strong>Fit</strong> submenu has two groups. <strong>Stretch</strong>, <strong>Contain</strong>, and <strong>Cover</strong> change how the image's pixels fill its <em>current</em> box. <strong>Fit safe area</strong>, <strong>Fit width</strong>, and <strong>Fit height</strong> resize the box to match the <strong>Safe area</strong> guide (its full size, its width only, or its height only), centered. Both groups are greyed out while the element is locked.</li>
           <li><strong>Undo</strong>/<strong>Redo</strong> cover the editing session.</li>
         </ul>
@@ -398,8 +410,8 @@
         <h3>Finish or discard</h3>
         <ul>
           <li><strong>TRANSMIT</strong> (the large, distinctly colored button) applies the editor state to the prepared TX frame and starts transmission immediately. The same card stays open and unchanged afterward, so you can send it again, keep editing, or set it aside while you resend an older frame from <strong>Sent frames</strong>. This is the only way to send a picture. There is no separate Transmit button elsewhere.</li>
-          <li><strong>Revert</strong> returns to the last applied state.</li>
-          <li><strong>New template</strong> is the only action that closes the current card. It discards the card and starts a fresh blank editor, every time. A confirmation dialog appears when unsaved edits would be lost.</li>
+          <li><strong>Undo all</strong> undoes every edit in one click, back to the earliest kept step (the undo history holds 50 steps). <strong>Redo all</strong> is the inverse: it redoes every undone edit in one click.</li>
+          <li><strong>New template</strong> (in the bar above the canvas, next to Undo, Redo, Undo all and Redo all) is the only action that closes the current card. It discards the card and starts a fresh blank editor, every time. A confirmation dialog appears when unsaved edits would be lost.</li>
         </ul>
 
         <div class="warning"><strong>Preview limit.</strong> The preview is accurate for crop, scale, adjustments, and overlay placement. It does not simulate the chroma loss or other color effects introduced by a complete transmit-and-receive path for every SSTV mode.</div>
@@ -439,7 +451,7 @@
 
         <h3>Save and recall templates</h3>
         <ol class="steps">
-          <li>Enter a template name and select <strong>SAVE</strong>. Right-clicking the canvas, or the background/backdrop image, also offers <strong>Save Template</strong>. If you have already typed a name, it saves immediately with that name. Otherwise it fills in the next free "tmp0", "tmp1", … name and saves right away.</li>
+          <li>Enter a template name and select <strong>SAVE</strong>. The <strong>SAVE</strong> button in the bar above the canvas (next to Undo, Redo, Undo all and Redo all) does the same without a typed name, and it is only available, and blue, while the <strong>UNSAVED EDITS</strong> tag shows. Right-clicking the canvas, or the background/backdrop image, also offers <strong>Save Template</strong>. If you have already typed a name, it saves immediately with that name. Otherwise it fills in the next free "tmp0", "tmp1", … name and saves right away.</li>
           <li>Use the Template Library filter to find saved layouts. Switch between <strong>LIST</strong> and <strong>GRID</strong> view with the toggle at the top of the panel. Your choice is remembered. Click a row or tile once to select it and show its Load, Pin, Export, and Delete buttons. Double-click to load it, or right-click for the same actions as a menu. Right-click and select <strong>Rename</strong> to edit the name in place (Enter commits, Esc reverts). A pinned template shows a <strong>PINNED</strong> badge. Select <strong>Pin</strong> on a template to place it in the <strong>TEMPLATES</strong> rack, the strip of nine slots elsewhere in the TX editor.</li>
           <li>In the Templates rack, click a slot once to select it and show its Load, Unpin, Export, and Delete buttons. Double-click a slot to load it, or right-click it for the same actions as a menu. Right-click and select <strong>Rename</strong> to edit the name in place (Enter commits, Esc reverts). Number keys 1–9 recall a slot directly when the editor has keyboard focus. This is the fastest way to reply mid-QSO without touching the mouse.</li>
           <li>Loading over unsaved work asks first: <strong>Discard unsaved changes?</strong>, naming the template that would replace them. A slot showing <strong>Loaded</strong> is the one the canvas currently came from. It reads <strong>Loaded • edited</strong> once you have changed anything since.</li>
@@ -487,7 +499,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="gallery" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="gallery receive history images thumbnails filter today unlogged flagged search note export selected frame storage disk free image viewer copy">
+      <article id="gallery" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="gallery receive history images thumbnails filter today unlogged flagged search note export selected frame storage disk free image viewer copy show older snr signal to noise">
         <p class="topic-category">Images and logging</p>
         <h2>Browse received images</h2>
         <p>The Gallery is the searchable history of completed receptions. Select a thumbnail to inspect and manage that frame.</p>
@@ -497,11 +509,13 @@
           <li>Filter by <strong>All</strong>, <strong>Today</strong>, <strong>Unlogged</strong>, or <strong>Flagged</strong>.</li>
           <li>Use the search field for mode or note text.</li>
           <li>Select <strong>Refresh</strong> to reload the history and <strong>Latest</strong> to return to the newest frame.</li>
+          <li>The grid shows the newest 300 matching frames. Select <strong>Show older</strong> below the grid to add the next 300. Search and the <strong>Unlogged</strong>/<strong>Flagged</strong> filters cover your whole history when <strong>All</strong> is selected (<strong>Today</strong> still narrows it to today's frames), so an older frame is still found even when it is not on screen yet.</li>
         </ul>
 
         <h3>Work with the selection</h3>
         <ul>
           <li>Add a note or flag important frames.</li>
+          <li>The <strong>SNR</strong> row shows the picture's signal-to-noise ratio as measured while it was received (see <a href="#receive-controls">Signal quality: SNR</a>). It shows a dash for pictures received before this feature existed, with measurement off, or in AVT mode.</li>
           <li>Select <strong>Export</strong> to write a copy in a chosen image format. The General tab's JPEG quality applies when you choose JPEG.</li>
           <li>Select <strong>Open in log</strong> to link the frame to an existing QSO or create and link a new QSO.</li>
           <li>Open the image viewer for Fit/100% zoom, previous/next navigation, clipboard copy, and opening the file location.</li>
@@ -535,7 +549,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="qrz.com lookup callsign credentials username password forwarding udp wsjt-x loggedadif gridtracker n1mm log4om port privacy">
+      <article id="qrz-forwarding" class="help-topic" data-help-topic data-category="Images and logging" data-keywords="qrz.com lookup callsign credentials username password keyring credential manager forwarding udp wsjt-x loggedadif gridtracker n1mm log4om port privacy">
         <p class="topic-category">Images and logging</p>
         <h2>QRZ.com lookup and UDP forwarding</h2>
         <p>Both integrations are optional. Configure them in Options only if they are part of your logging workflow.</p>
@@ -547,7 +561,8 @@
           <li>On the Receive tab's Frame metadata card, select <strong>Lookup QRZ</strong> next to a received callsign to pull name, QTH, and grid. See <a href="#receive-controls">Reception controls and telemetry</a>.</li>
         </ul>
         <p>This screen configures callsign lookup only. The current application does not provide an Options control for QRZ Logbook uploads.</p>
-        <div class="warning"><strong>Credential storage.</strong> The current application stores the QRZ.com password locally in its settings file without encryption. Use a unique password rather than one reused for other accounts.</div>
+        <div class="warning"><strong>Credential storage.</strong> On Windows the QRZ.com password is kept in Windows Credential Manager, and on Linux in the system keyring (Secret Service, for example GNOME Keyring or KWallet). A password saved by an earlier version is moved there automatically at startup. If no system keyring is available (always on macOS), the password stays in the settings file without encryption and the QRZ.com tab shows a warning. Use a unique password rather than one reused for other accounts.</div>
+        <p>If the keyring is locked, the password field shows <strong>Keyring locked</strong> and an <strong>Unlock keyring</strong> button. Select it to unlock the keyring and show the password. Leaving the field untouched and saving does not change or delete the stored password. If the keyring cannot store the password, <strong>Save</strong> shows an error and the other settings are not saved either. If the password was stored in a keyring that is not available in this session, the field shows <strong>System keyring not available</strong>; a password typed there is stored unencrypted in the settings file.</p>
 
         <h3>ADIF over UDP</h3>
         <p>Under <strong>Options → Forwarding</strong>, add each destination's name, host, and port. Every newly logged QSO is sent to enabled destinations as a WSJT-X protocol <code>LoggedADIF</code> message. Common local ports include 2237 for GridTracker and 2333 for some N1MM Logger+ or Log4OM arrangements. Check the receiving application's documentation for its port.</p>
@@ -634,7 +649,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant">
+      <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant snr signal to noise measure">
         <p class="topic-category">Options reference</p>
         <h2>Decode options</h2>
         <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. These are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing it in either place changes both.</p>
@@ -651,6 +666,7 @@
               <tr><td>Auto-restart</td><td>Can restart on a stronger sync detected during reception.</td></tr>
               <tr><td>Auto-sync</td><td>Attempts to re-establish synchronization during decode.</td></tr>
               <tr><td>Auto-slant</td><td>Corrects sound-clock slant while receiving. Requires RX buffering.</td></tr>
+              <tr><td>Measure reception SNR</td><td>Measures the signal-to-noise ratio on each line's sync pulse and shows it live and per picture (see <a href="#receive-controls">Signal quality: SNR</a>). On by default. Measurement only. It applies from the next received line.</td></tr>
             </tbody>
           </table>
         </div>
@@ -906,13 +922,14 @@
         <ul>
           <li>Scanline Studio does not require product telemetry or a cloud account for core use.</li>
           <li>QRZ.com and configured UDP forwarding send data only when you enable and use those integrations.</li>
-          <li>The current QRZ.com password is stored locally without encryption in settings.</li>
+          <li>The QRZ.com password is kept in the system keyring (Windows Credential Manager or the Linux Secret Service) when one is available, so a copy of <code>settings.json</code> does not include it and a restored backup needs the password entered again. Without a system keyring (always on macOS) it is stored without encryption in <code>settings.json</code>.</li>
+          <li>An older Scanline Studio build started after the password moved to the keyring shows an empty QRZ.com password. Enter it again there, or keep using the newer build.</li>
           <li><strong>Help → Open application log</strong> opens the current diagnostic log location. Review a log before sharing it because paths, callsigns, hosts, or operating details may be present.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="troubleshoot problems no decode no audio slanted image clipping ptt failed cat disconnected transmit error missing file gallery crash logs">
+      <article id="troubleshooting" class="help-topic" data-help-topic data-category="Support" data-keywords="troubleshoot wayland x11 xwayland problems no decode no audio slanted image clipping ptt failed cat disconnected transmit error missing file gallery crash logs">
         <p class="topic-category">Support</p>
         <h2>Troubleshooting</h2>
         <p>Start with the visible symptom, change one thing at a time, and preserve a WAV recording or application log when the failure is intermittent.</p>
@@ -984,6 +1001,16 @@
           <li>The list only fills from stations you actually receive. It is not a directory of who is active on the band.</li>
         </ul>
 
+        <h3>Linux: native Wayland (experimental)</h3>
+        <ul>
+          <li>By default Scanline Studio runs through X11 (XWayland on a Wayland desktop). This needs no setting.</li>
+          <li>To start the native Wayland backend instead, launch the application from a Wayland session with the environment variable <code>SCANLINE_WAYLAND=1</code>, for example <code>SCANLINE_WAYLAND=1 ./ScanlineStudio.Host</code>. Remove the variable to go back to X11.</li>
+          <li>The compositor must offer xdg-shell version 3 or later. This was tested on sway 1.11 and Weston 14. Two compositors that are too old: sway 1.9 and labwc 0.7 offer only version 2.</li>
+          <li>If the native backend cannot start, Scanline Studio prints a message that names <code>SCANLINE_WAYLAND</code> and exits. It does not fall back to X11 silently.</li>
+          <li>On Wayland the compositor places the window, not the application. <strong>Remember window position and size</strong> then saves and restores only the size and the maximized state. The position saved from an X11 session stays unchanged.</li>
+          <li>Weston's kiosk shell, which forces a fullscreen size smaller than the window, closes Scanline Studio with a protocol error.</li>
+        </ul>
+
         <div class="tip"><strong>Useful support bundle.</strong> Note the application version from Help → About, the operating system, selected audio and CAT backend, exact error text, reproduction steps, and the relevant application-log excerpt. Include a short WAV only when it is needed to reproduce a decode issue.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -1015,6 +1042,7 @@
           <dt id="glossary-qso">QSO</dt><dd>A radio contact between stations.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Confirmation of a radio contact; often represented by a designed card or SSTV picture.</dd>
           <dt id="glossary-rst">RST</dt><dd>Readability, strength, and tone signal report. SSTV exchanges may use related reporting conventions.</dd>
+          <dt id="glossary-snr">SNR</dt><dd>Signal-to-noise ratio, in decibels: how much stronger the signal is than the noise around it. Scanline Studio measures it on each line's sync pulse, against the noise in 400–2500 Hz.</dd>
           <dt id="glossary-sstv">SSTV</dt><dd>Slow-scan television: still images carried as audio-frequency tones over a radio channel.</dd>
           <dt id="glossary-swr">SWR</dt><dd>Standing wave ratio; an indication of impedance mismatch in the RF path.</dd>
           <dt id="glossary-utc">UTC</dt><dd>Coordinated Universal Time; the single time zone radio operators use to log contacts so records from different time zones stay comparable.</dd>

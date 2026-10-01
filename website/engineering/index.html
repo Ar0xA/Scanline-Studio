@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Scanline Studio is built and tested</title>
+<meta name="description" content="How Scanline Studio is checked against YONIQ and MMSSTV, with the Scottie channel-order mistake as a worked example.">
+<link rel="canonical" href="https://scanlinestudio.app/engineering/">
+<link rel="icon" href="../favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="../images/icon-192.png" sizes="192x192">
+<link rel="apple-touch-icon" href="../images/apple-touch-icon.png">
+<style>
+  :root {
+    --paper: #f5f4ef;
+    --card: #ffffff;
+    --ink: #201f1a;
+    --muted: #66655c;
+    --line: #ddddd1;
+    --accent: #2c6e63;
+    --accent-ink: #1f4f47;
+    --radius: 6px;
+    --max: 880px;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+
+  h1, h2 {
+    font-family: Georgia, "Times New Roman", serif;
+    font-weight: normal;
+    margin: 0;
+    line-height: 1.2;
+  }
+
+  p { margin: 0; }
+
+  a { color: var(--accent-ink); }
+  a:hover { color: var(--ink); }
+
+  .wrap {
+    max-width: var(--max);
+    margin: 0 auto;
+    padding: 0 24px;
+  }
+
+  header { border-bottom: 1px solid var(--line); }
+
+  header .wrap {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 16px 24px;
+    gap: 10px 24px;
+    flex-wrap: wrap;
+  }
+
+  .site-name {
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 1.15rem;
+    font-weight: bold;
+    color: var(--ink);
+    text-decoration: none;
+  }
+
+  header nav {
+    display: flex;
+    gap: 22px;
+    font-size: 0.92rem;
+  }
+
+  header nav a {
+    color: var(--muted);
+    text-decoration: none;
+  }
+
+  header nav a:hover { color: var(--ink); }
+
+  main { padding: 48px 0 56px; }
+
+  h1 {
+    font-size: clamp(1.8rem, 4vw, 2.3rem);
+    letter-spacing: -0.01em;
+    margin-bottom: 14px;
+  }
+
+  .lede {
+    color: var(--muted);
+    font-size: 1.05rem;
+    margin-bottom: 8px;
+  }
+
+  h2 {
+    font-size: 1.4rem;
+    margin: 40px 0 10px;
+    padding-top: 28px;
+    border-top: 1px solid var(--line);
+  }
+
+  main p + p,
+  main p + ul,
+  main ul + p { margin-top: 12px; }
+
+  main p, main li { color: var(--muted); }
+  main li strong { color: var(--ink); }
+  main li { margin-bottom: 8px; }
+  main ul { margin: 0; padding-left: 22px; }
+
+  .order {
+    background: var(--card);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-top: 12px;
+  }
+
+  .order + p { margin-top: 12px; }
+
+  .order p { margin: 0; }
+  .order p + p { margin-top: 8px; }
+  .order strong { color: var(--ink); }
+
+  footer {
+    border-top: 1px solid var(--line);
+    padding: 24px 0 44px;
+  }
+
+  footer .wrap {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    color: var(--muted);
+    font-size: 0.85rem;
+  }
+
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--ink); }
+
+  footer .foot-links { display: flex; gap: 16px; }
+</style>
+</head>
+<body>
+
+  <header>
+    <div class="wrap">
+      <a class="site-name" href="../">Scanline Studio</a>
+      <nav>
+        <a href="../">Home</a>
+        <a href="../help/index.html">User guide</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <div class="wrap">
+
+      <h1>How Scanline Studio is built and tested</h1>
+      <p class="lede">
+        Scanline Studio has to send pictures that other stations can read, and read the pictures they
+        send. That means matching YONIQ and MMSSTV exactly on the air. This page explains how that is
+        checked, using one real mistake as the worked example.
+      </p>
+
+      <h2>AI-assisted development</h2>
+      <p>
+        Scanline Studio is developed with heavy use of AI-assisted engineering (Claude Code),
+        including help with porting the C++ code to C#. The AI doesn't decide what is correct.
+        YONIQ's own source code decides, and recordings from a running copy of the legacy program
+        back it up.
+      </p>
+
+      <h2>The rule: read the matching code</h2>
+      <p>
+        YONIQ transmits and receives through separate code. Transmitting is done by the
+        <code>TMmsstv::Line…</code> functions in <code>Main.cpp</code>, for example
+        <code>LineMRT</code> for Martin and <code>LineSCT</code> for Scottie. Receiving uses a
+        different per-pixel decode switch. Each mode here is ported from the code that does that
+        job: the transmit code for the encoder and the receive code for the decoder. One is never
+        inferred from the other.
+      </p>
+
+      <h2>A worked example: Scottie</h2>
+      <p>
+        In July 2026 the Scottie S1, S2 and DX modes were first added. The transmit structure was
+        worked out from the widths of the receive code's decode branches, not from the transmit
+        function.
+      </p>
+      <p>
+        That gave the right line duration. The duration was cross-checked against YONIQ's timing
+        table (<code>CSSTVSET::GetTiming</code>) and the test passed. It also gave the wrong
+        channel order and the wrong sync position:
+      </p>
+      <div class="order">
+        <p><strong>What the receive code suggested:</strong> sync pulse, red, green, blue.</p>
+        <p>
+          <strong>What <code>LineSCT</code>, the real transmit function, sends:</strong> separator,
+          green, separator, blue, sync pulse (in the middle of the line, not at the start),
+          separator, red.
+        </p>
+      </div>
+      <p>
+        The round-trip test passed the whole time. It encodes a picture and decodes it again, and
+        the encoder and decoder agreed with each other. Both were wrong about how Scottie is really
+        framed. Other stations would not have been able to read our Scottie pictures, and our own
+        tests would not have told us.
+      </p>
+      <p>
+        The mistake was found by reading <code>LineSCT</code> directly. Martin was checked against
+        its own transmit function, <code>LineMRT</code>, at the same time and was already correct.
+        Scottie was then rebuilt from the real function.
+      </p>
+      <p>
+        Two lessons became project rules. Read the matching legacy function for each direction. And
+        treat "the duration matches" and "the round trip passes" as necessary checks, never as
+        sufficient ones.
+      </p>
+
+      <h2>What the tests compare against</h2>
+      <p>
+        A round trip can't catch a mistake that both halves share. So the tests also use reference
+        data taken from a running copy of the legacy program. These are called golden vectors.
+      </p>
+      <ul>
+        <li><strong>Receiving.</strong> For eight modes, audio was recorded from the legacy program
+          while it transmitted a known picture, and the legacy program's own decode of that audio
+          was saved. Scanline Studio decodes the same audio and the result is compared with the
+          source picture. The allowed difference is set from what the legacy program itself
+          achieves on the same audio, because its own decode isn't perfect either.</li>
+        <li><strong>Transmitting.</strong> For eleven modes, Scanline Studio's encoder output was
+          played into the legacy program, and its decode was compared with the source picture.
+          Those captures were made before some later encoder changes. Re-capturing them needs a
+          person with a legacy install, and it is still to do.</li>
+      </ul>
+      <p>
+        The data and the tests that use it are in the
+        <a href="https://github.com/Ar0xA/Scanline-Studio/tree/master/tests/ScanlineStudio.Core.Sstv.Tests">source repository</a>.
+      </p>
+
+      <h2>Found a mismatch?</h2>
+      <p>
+        If a mode decodes differently from MMSSTV or YONIQ, or sends something another station can't
+        read, that's a bug. Please
+        <a href="https://github.com/Ar0xA/Scanline-Studio/issues">open an issue</a>.
+      </p>
+
+    </div>
+  </main>
+
+  <footer>
+    <div class="wrap">
+      <span>
+        © 2026 Scanline Studio · LGPL-3.0-or-later · a rewrite of
+        <a href="https://github.com/w0eeemst/YONIQ">YONIQ</a>, a fork of MMSSTV
+      </span>
+      <div class="foot-links">
+        <a href="../">Home</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio">GitHub</a>
+        <a href="https://github.com/Ar0xA/Scanline-Studio/releases">Releases</a>
+        <a href="../help/index.html">User guide</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

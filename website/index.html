@@ -334,6 +334,11 @@
   .copy li { margin-bottom: 6px; }
   .copy li strong { color: var(--ink); }
 
+  .copy > p.note {
+    font-size: 0.85rem;
+    margin: 12px 0 0;
+  }
+
   /* Compact feature grid */
 
   .features {
@@ -547,10 +552,10 @@
     <div class="wrap">
       <a class="site-name" href="#top">Scanline Studio</a>
       <nav>
-        <a href="#modes">Modes</a>
-        <a href="#cat">Radio control</a>
         <a href="#tx-editor">TX Editor</a>
         <a href="#gallery">Gallery</a>
+        <a href="#modes">Modes</a>
+        <a href="#cat">Radio control</a>
         <a href="#download">Download</a>
         <a href="#about">About</a>
         <a href="help/index.html" data-guide-link>User guide</a>
@@ -563,14 +568,13 @@
 
     <div class="hero" id="top">
       <div class="wrap">
-        <p class="eyebrow">A rewrite of YONIQ</p>
+        <p class="eyebrow">SSTV for amateur radio</p>
         <h1>Slow-scan TV on Windows, Linux and macOS</h1>
         <p class="lede">
-          Scanline Studio sends and receives SSTV pictures over amateur radio. It handles all 43
-          MMSSTV-family modes, so you can swap pictures with stations already using them. It's a
-          rewrite of YONIQ, which is a fork of MMSSTV, the long-running Windows SSTV program. Tune
-          your radio to an SSTV frequency and it picks out the mode and draws the picture as it
-          comes in.
+          Scanline Studio sends and receives SSTV pictures over amateur radio. Build a QSL-style
+          card once and reuse it for every contact. Every picture you receive goes into a searchable
+          history linked to your logbook. All 43 MMSSTV-family modes work, so you can swap pictures
+          with stations already using them. It's a rewrite of YONIQ, the MMSSTV fork.
         </p>
         <div class="buttons">
           <a class="btn btn-primary" data-download-btn href="https://github.com/Ar0xA/Scanline-Studio/releases">Download</a>
@@ -596,6 +600,65 @@
         </figure>
       </div>
     </div>
+
+    <section id="tx-editor">
+      <div class="wrap">
+        <div class="spotlight">
+          <button type="button" class="shot shot-photo" data-lightbox-trigger>
+            <img src="images/txeditor.jpg" loading="lazy"
+                 alt="Scanline Studio TX Template Editor: text, box, image and line elements on a QSL-style layout">
+            <span class="shot-hint">Click to enlarge</span>
+          </button>
+          <div class="copy">
+            <h3>A template editor for QSL-style pictures</h3>
+            <p>
+              Set a layout up once, then reuse it whenever you need it, even in the middle of a
+              contact.
+            </p>
+            <ul>
+              <li><strong>Text, box, image and line elements.</strong> Each one has its own style,
+                stacking order and position on the canvas.</li>
+              <li><strong>Macros</strong> fill in your callsign, grid square and the current
+                frequency and mode.</li>
+              <li><strong>Ready Rack</strong> is a strip of nine pinned slots for quick recall. It
+                sits on top of a searchable <strong>Template Library</strong> that you can view as a
+                grid or a list.</li>
+              <li>Your existing <strong>YONIQ <code>.mtm</code> templates</strong> import directly.</li>
+              <li>Distort boxes and images in perspective, and let text grow to fill its box.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="gallery">
+      <div class="wrap">
+        <div class="spotlight spotlight-reverse">
+          <button type="button" class="shot shot-photo" data-lightbox-trigger>
+            <img src="images/gallery.jpg" loading="lazy"
+                 alt="Scanline Studio Gallery tab: searchable receive history with Send to TX, Logged status and re-decode">
+            <span class="shot-hint">Click to enlarge</span>
+          </button>
+          <div class="copy">
+            <h3>Search everything you've received</h3>
+            <p>
+              Every picture you receive is kept in a history linked to your logbook, so you can find
+              it again later.
+            </p>
+            <ul>
+              <li><strong>Search and filter</strong> your whole history, for example to find
+                pictures you haven't logged yet.</li>
+              <li><strong>Send to TX</strong> moves a received image straight into the Template
+                Editor and looks up the QSO it belongs to.</li>
+              <li>A <strong>Logged</strong> indicator shows whether a picture already has a log
+                entry.</li>
+              <li><strong>Re-decode this frame</strong> runs the decoder again on a saved recording.
+                <strong>Open audio file location</strong> takes you to the raw capture.</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
 
     <section id="modes">
       <div class="wrap">
@@ -628,78 +691,26 @@
             <span class="shot-hint">Click to enlarge</span>
           </button>
           <div class="copy">
-            <h3>Works with any rig Hamlib supports</h3>
+            <h3>Radio control through Hamlib, rigctld, flrig and OmniRig</h3>
             <p>
-              Rig control goes through Hamlib, the open-source rig-control library, so any radio it
-              knows works here. YONIQ used its own serial code for a fixed list of rigs, plus
-              OmniRig on Windows.
+              Control your radio from the program with whichever backend fits your setup. Hamlib
+              supports many transceivers, where YONIQ had its own serial code for a fixed list of
+              rigs plus OmniRig on Windows.
             </p>
             <ul>
-              <li><strong>Linked Hamlib</strong> loads the <code>libhamlib</code> installed on your
-                system and runs inside the app. It has the widest rig list.</li>
-              <li><strong>rigctld</strong> connects to a Hamlib daemon running on this machine or
-                elsewhere on your network, so several programs can share one rig.</li>
-              <li><strong>flrig</strong> and <strong>OmniRig</strong> (Windows), if you use them.</li>
-              <li>Rig polling runs in the background, so a slow radio never freezes the decoder.</li>
+              <li><strong>Linked Hamlib</strong> has the widest choice of radios and needs no extra
+                program running.</li>
+              <li><strong>rigctld</strong> lets several programs share one rig, on this machine or
+                over your network.</li>
+              <li><strong>flrig</strong> and <strong>OmniRig</strong> (Windows only), if you already
+                use them.</li>
+              <li>A slow radio never freezes the decoder.</li>
             </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="tx-editor">
-      <div class="wrap">
-        <div class="spotlight spotlight-reverse">
-          <button type="button" class="shot shot-photo" data-lightbox-trigger>
-            <img src="images/txeditor.jpg" loading="lazy"
-                 alt="Scanline Studio TX Template Editor: text, box, image and line elements on a QSL-style layout">
-            <span class="shot-hint">Click to enlarge</span>
-          </button>
-          <div class="copy">
-            <h3>A template editor for QSL-style pictures</h3>
-            <p>
-              Set a layout up once, then reuse it whenever you need it, even in the middle of a
-              contact.
+            <p class="note">
+              What works depends on the backend you pick. For example, flrig and OmniRig can't set
+              the filter bandwidth, and direct serial access can fail while another program holds
+              the port. The <a href="help/index.html#radio-cat">user guide</a> has the details.
             </p>
-            <ul>
-              <li><strong>Text, box, image and line elements.</strong> Each one has its own style,
-                stacking order and position on the canvas.</li>
-              <li><strong>Macros</strong> fill in your callsign, grid square and the current
-                frequency and mode.</li>
-              <li><strong>Ready Rack</strong> is a strip of nine pinned slots for quick recall. It
-                sits on top of a searchable <strong>Template Library</strong> that you can view as a
-                grid or a list.</li>
-              <li>Your existing <strong>YONIQ <code>.mtm</code> templates</strong> import directly.</li>
-              <li>Distort boxes and images in perspective, and let text grow to fill its box.</li>
-            </ul>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <section id="gallery">
-      <div class="wrap">
-        <div class="spotlight">
-          <button type="button" class="shot shot-photo" data-lightbox-trigger>
-            <img src="images/gallery.jpg" loading="lazy"
-                 alt="Scanline Studio Gallery tab: searchable receive history with Send to TX, Logged status and re-decode">
-            <span class="shot-hint">Click to enlarge</span>
-          </button>
-          <div class="copy">
-            <h3>Search everything you've received</h3>
-            <p>
-              Every picture you receive goes into a history that's linked to your logbook, in place
-              of YONIQ's single binary history file.
-            </p>
-            <ul>
-              <li>It's a standard SQLite database, so you can browse it and search it.</li>
-              <li><strong>Send to TX</strong> moves a received image straight into the Template
-                Editor and looks up the QSO it belongs to.</li>
-              <li>A <strong>Logged</strong> indicator shows whether a picture already has a log
-                entry.</li>
-              <li><strong>Re-decode this frame</strong> runs the decoder again on a saved recording.
-                <strong>Open audio file location</strong> takes you to the raw capture.</li>
-            </ul>
           </div>
         </div>
       </div>
@@ -754,7 +765,7 @@
               <!-- Hand-written: edit the bullets and data-release together at each release. The script hides the list when the newest release differs. -->
               <ul class="release-notes" data-release="0.9.1-beta">
                 <li>Live reception signal-to-noise readout</li>
-                <li>QRZ password kept in the operating system's credential store</li>
+                <li>QRZ password kept in Windows Credential Manager or the Linux system keyring. macOS still keeps it in the settings file.</li>
                 <li>TX editor: Undo All, Redo All, and Save and New Template in the context bar</li>
                 <li>Experimental native Wayland on Linux, opt-in. <a href="https://github.com/Ar0xA/Scanline-Studio/releases/tag/v0.9.1-beta">See the release notes</a> for how to turn it on.</li>
               </ul>
@@ -794,10 +805,8 @@
           <p>
             Scanline Studio is developed with heavy use of AI-assisted engineering (Claude Code),
             which helped with the C++ to C# port. The AI doesn't decide what's correct, though:
-            every mode is checked against YONIQ's own code. That rule exists because an early
-            Scottie port got its channel order wrong by inferring it from the receive code, and a
-            round-trip test passed anyway because the encoder and decoder were wrong in the same
-            way.
+            every mode is checked against YONIQ's own code.
+            <a href="engineering/index.html">How it's tested, with a worked example</a>.
           </p>
         </div>
 
