@@ -32,7 +32,7 @@ what has shipped since.
 
 ## Building
 
-Requires the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0), plus a native C
+Requires the [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (Avalonia 12 needs it to build; the app still targets `net8.0`, so also install the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to run the tests), plus a native C
 toolchain for the audio backend's shim (`gcc`/`clang`/MSVC depending on OS — see the per-OS guide
 below for exact prerequisites and troubleshooting):
 

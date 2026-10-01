@@ -32,10 +32,14 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag }}
 
-      - name: Setup .NET 8 SDK
+      # SDK 10 builds (Avalonia 12's source generators need its compiler); the app still targets
+      # net8.0, so the 8.0 runtime must also be present to run the tests.
+      - name: Setup .NET SDK 10 and runtime 8
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: "8.0.x"
+          dotnet-version: |
+            8.0.x
+            10.0.x
 
       # Self-contained + single-file are opt-in in ScanlineStudio.Host.csproj, gated on
       # RuntimeIdentifier being set -- same publish shape as the verified linux-x64 release build.

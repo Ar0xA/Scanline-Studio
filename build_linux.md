@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (Avalonia 12 needs it to build; the app still targets `net8.0`, so also install the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to run the tests).
 - A C compiler toolchain for the native audio shim
   (`src/ScanlineStudio.Core.Audio.MiniAudio/native/scanline_audio.c`): `gcc` and `ld` — on Debian/Ubuntu,
   `sudo apt install build-essential`; on Fedora, `sudo dnf install gcc make`; on Arch,

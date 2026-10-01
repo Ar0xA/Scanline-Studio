@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
+- [.NET 10 SDK](https://dotnet.microsoft.com/download/dotnet/10.0) (Avalonia 12 needs it to build; the app still targets `net8.0`, so also install the [.NET 8 runtime](https://dotnet.microsoft.com/download/dotnet/8.0) to run the tests).
 - The MSVC C++ build tools, for `cl.exe` (the native audio shim's compiler on this platform):
   - Easiest: install **Visual Studio** (any edition, including Community) with the "Desktop
     development with C++" workload, then build from a **Developer Command Prompt for VS** (or
