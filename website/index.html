@@ -117,11 +117,9 @@
     font-size: clamp(1.9rem, 4vw, 2.5rem);
     letter-spacing: -0.01em;
     margin-bottom: 16px;
-    max-width: 20ch;
   }
 
   .hero .lede {
-    max-width: 58ch;
     color: var(--muted);
     font-size: 1.05rem;
     margin-bottom: 26px;
@@ -186,6 +184,14 @@
     margin-top: 4px;
   }
 
+  .release-line {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: -8px 0 14px;
+  }
+
+  .release-line[hidden] { display: none; }
+
   /* Info strips (why-switch, migration) */
 
   .strip {
@@ -205,7 +211,7 @@
 
   section { padding: 44px 0; border-top: 1px solid var(--line); }
 
-  .section-head { max-width: 62ch; margin-bottom: 26px; }
+  .section-head { margin-bottom: 26px; }
 
   .section-head h2 { font-size: 1.4rem; margin-bottom: 6px; }
 
@@ -385,6 +391,13 @@
     margin-top: 4px;
   }
 
+  .download-card .release-notes {
+    color: var(--muted);
+    font-size: 0.9rem;
+    margin: 8px 0 10px 1.2em;
+    padding: 0;
+  }
+
   .link-row {
     display: flex;
     gap: 22px;
@@ -396,7 +409,7 @@
 
   /* About */
 
-  .about-block { max-width: 66ch; margin-bottom: 26px; }
+  .about-block { margin-bottom: 26px; }
   .about-block:last-child { margin-bottom: 0; }
 
   .about-block h3 {
@@ -560,9 +573,14 @@
           comes in.
         </p>
         <div class="buttons">
-          <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
+          <a class="btn btn-primary" data-download-btn href="https://github.com/Ar0xA/Scanline-Studio/releases">Download</a>
           <a class="btn btn-secondary" href="https://github.com/Ar0xA/Scanline-Studio">View on GitHub</a>
         </div>
+        <p class="release-line" id="release-line" hidden>
+          Latest: <strong id="release-version"></strong><span id="release-date"></span>
+          · <a id="release-notes-link" href="https://github.com/Ar0xA/Scanline-Studio/releases">What's new</a>
+          · <a href="https://github.com/Ar0xA/Scanline-Studio/releases">All downloads</a>
+        </p>
         <p class="platforms">Free and open source for Windows, Linux and macOS</p>
         <figure class="demo">
           <video autoplay muted loop playsinline controls
@@ -732,10 +750,17 @@
         <div class="download-card">
           <div class="row">
             <div>
-              <h3 style="font-family: inherit; font-size: 1.05rem; font-weight: 600;">Latest release</h3>
-              <p>Pick the file for your system on the releases page. To go on the air you need a radio and a sound card connected to it, and rig control is optional. No radio handy? Open a saved .wav recording and decode that.</p>
+              <h3 style="font-family: inherit; font-size: 1.05rem; font-weight: 600;">Latest release<span id="card-release"></span></h3>
+              <!-- Hand-written: edit the bullets and data-release together at each release. The script hides the list when the newest release differs. -->
+              <ul class="release-notes" data-release="0.9.1-beta">
+                <li>Live reception signal-to-noise readout</li>
+                <li>QRZ password kept in the operating system's credential store</li>
+                <li>TX editor: Undo All, Redo All, and Save and New Template in the context bar</li>
+                <li>Experimental native Wayland on Linux, opt-in. <a href="https://github.com/Ar0xA/Scanline-Studio/releases/tag/v0.9.1-beta">See the release notes</a> for how to turn it on.</li>
+              </ul>
+              <p>The releases page has a file for Windows, Linux and macOS. To go on the air you need a radio and a sound card connected to it, and rig control is optional. No radio handy? Open a saved .wav recording and decode that.</p>
             </div>
-            <a class="btn btn-primary" href="https://github.com/Ar0xA/Scanline-Studio/releases/latest">Download latest release</a>
+            <a class="btn btn-primary" data-download-btn href="https://github.com/Ar0xA/Scanline-Studio/releases">Download</a>
           </div>
           <div class="link-row">
             <a href="https://github.com/Ar0xA/Scanline-Studio/releases">Older releases</a>
@@ -897,6 +922,77 @@
         video.removeAttribute('autoplay');
         video.pause();
       }
+    })();
+  </script>
+
+  <script>
+    // Fills the download buttons and the release line from the newest GitHub release. The static
+    // markup already links to the releases list, so a failed request leaves a working page.
+    (function () {
+      var API = 'https://api.github.com/repos/Ar0xA/Scanline-Studio/releases?per_page=1';
+      var TARGETS = {
+        windows: { label: 'Windows (x64)', pattern: /-win-x64\.zip$/ },
+        macos: { label: 'macOS (Apple Silicon)', pattern: /-osx-arm64\.tar\.gz$/ },
+        linux: { label: 'Linux (x64)', pattern: /-linux-x64\.tar\.gz$/ }
+      };
+
+      function detectOs() {
+        var platform = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+        var ua = navigator.userAgent || '';
+        if (/android|iphone|ipad|ipod|cros/i.test(ua)) return null;
+        if (/^mac/i.test(platform) && navigator.maxTouchPoints > 1) return null; // iPad reports a Mac platform
+        if (/^win/i.test(platform) || /windows/i.test(ua)) return 'windows';
+        if (/^mac/i.test(platform) || /macintosh/i.test(ua)) return 'macos';
+        if (/linux|x11/i.test(platform + ' ' + ua)) return 'linux';
+        return null;
+      }
+
+      function safeUrl(url) {
+        return typeof url === 'string' && /^https:\/\/github\.com\//.test(url) ? url : null;
+      }
+
+      function apply(release) {
+        var tag = String(release.tag_name || '').replace(/^v/, '');
+        var pageUrl = safeUrl(release.html_url);
+        if (!tag || !pageUrl) return;
+
+        var os = detectOs();
+        var target = os ? TARGETS[os] : null;
+        var asset = target && (release.assets || []).filter(function (a) {
+          return target.pattern.test(a.name || '') && safeUrl(a.browser_download_url);
+        })[0];
+
+        document.querySelectorAll('[data-download-btn]').forEach(function (btn) {
+          if (asset) {
+            btn.href = asset.browser_download_url;
+            btn.textContent = 'Download ' + tag + ' for ' + target.label;
+          } else {
+            btn.href = pageUrl;
+            btn.textContent = 'Download ' + tag;
+          }
+        });
+
+        document.getElementById('release-version').textContent = tag;
+        var published = release.published_at ? new Date(release.published_at) : null;
+        if (published && !isNaN(published)) {
+          document.getElementById('release-date').textContent =
+            ' (' + published.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }) + ')';
+        }
+        document.getElementById('release-notes-link').href = pageUrl;
+        document.getElementById('release-line').hidden = false;
+        document.getElementById('card-release').textContent = ': ' + tag;
+
+        var notes = document.querySelector('.release-notes');
+        if (notes && notes.dataset.release !== tag) notes.hidden = true;
+      }
+
+      fetch(API)
+        .then(function (response) {
+          if (!response.ok) throw new Error('HTTP ' + response.status);
+          return response.json();
+        })
+        .then(function (releases) { if (releases && releases[0]) apply(releases[0]); })
+        .catch(function () { /* keep the static fallback */ });
     })();
   </script>
 
