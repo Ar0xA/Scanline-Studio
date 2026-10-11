@@ -3205,6 +3205,205 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.Empty(vm.OverlayElements);
     }
 
+    // Image-import command contracts (04-F15): temp-file cleanup, per-command failure key, and the
+    // text fill landing on the element selected when the pick started.
+
+    private static CommunityToolkit.Mvvm.Input.IAsyncRelayCommand ImportCommand(TxImageEditorPaneViewModel vm, string name) => name switch
+    {
+        "AddImageFromFile" => vm.AddImageFromFileCommand,
+        "AddImageFromClipboard" => vm.AddImageFromClipboardCommand,
+        "PickTextBitmapFillFromFile" => vm.PickTextBitmapFillFromFileCommand,
+        "PickTextBitmapFillFromClipboard" => vm.PickTextBitmapFillFromClipboardCommand,
+        _ => throw new ArgumentOutOfRangeException(nameof(name)),
+    };
+
+    private static OverlayElementViewModel AddAndSelectText(TxImageEditorPaneViewModel vm)
+    {
+        vm.AddOverlayElementCommand.Execute(null);
+        var text = (OverlayElementViewModel)vm.OverlayElements[^1];
+        vm.SelectedOverlayElement = text;
+        return text;
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromClipboardAsync_Success_DeletesTheTempFile()
+    {
+        var tempPath = Path.GetTempFileName();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = tempPath };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.Single(vm.OverlayElements);
+        Assert.Equal(tempPath, Assert.Single(loader.RequestedPaths));
+        Assert.False(File.Exists(tempPath));
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromClipboardAsync_LoadThrows_DeletesTheTempFileAndSetsAddImageFailed()
+    {
+        var tempPath = Path.GetTempFileName();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = tempPath };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        loader.FailForPath[tempPath] = new InvalidOperationException("decode failed");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.Empty(vm.OverlayElements);
+        Assert.Equal("Panes.TxImageEditor.AddImageFailed", vm.StatusMessage);
+        Assert.False(File.Exists(tempPath));
+    }
+
+    [AvaloniaFact]
+    public async Task PickTextBitmapFillFromClipboardCommand_Success_SetsFillClearsStatusAndDeletesTheTempFile()
+    {
+        var tempPath = Path.GetTempFileName();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = tempPath };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var text = AddAndSelectText(vm);
+        vm.StatusMessage = "stale";
+
+        await vm.PickTextBitmapFillFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.True(text.BitmapFillEnabled);
+        Assert.Same(loader.ResultToReturn, text.BitmapFillSource);
+        Assert.Null(vm.StatusMessage);
+        Assert.Single(vm.OverlayElements);
+        Assert.False(File.Exists(tempPath));
+    }
+
+    [AvaloniaFact]
+    public async Task PickTextBitmapFillFromClipboardCommand_LoadThrows_DeletesTheTempFileAndSetsTextBitmapFillFailed()
+    {
+        var tempPath = Path.GetTempFileName();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = tempPath };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        loader.FailForPath[tempPath] = new InvalidOperationException("decode failed");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var text = AddAndSelectText(vm);
+
+        await vm.PickTextBitmapFillFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.False(text.BitmapFillEnabled);
+        Assert.Null(text.BitmapFillSource);
+        Assert.Equal("Panes.TxImageEditor.TextBitmapFillFailed", vm.StatusMessage);
+        Assert.False(File.Exists(tempPath));
+    }
+
+    [AvaloniaFact]
+    public async Task PickTextBitmapFillFromClipboardCommand_NothingOnClipboard_IsANoOp()
+    {
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var text = AddAndSelectText(vm);
+
+        await vm.PickTextBitmapFillFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.False(text.BitmapFillEnabled);
+        Assert.Null(text.BitmapFillSource);
+        Assert.Null(vm.StatusMessage);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("AddImageFromFile", "Panes.TxImageEditor.AddImageFailed")]
+    [InlineData("AddImageFromClipboard", "Panes.TxImageEditor.AddImageFailed")]
+    [InlineData("PickTextBitmapFillFromFile", "Panes.TxImageEditor.TextBitmapFillFailed")]
+    [InlineData("PickTextBitmapFillFromClipboard", "Panes.TxImageEditor.TextBitmapFillFailed")]
+    public async Task ImportCommand_PickerThrows_SetsItsFailureKeyAndLoadsNothing(string command, string expectedKey)
+    {
+        var picker = new FakeFilePickerService
+        {
+            ThrowOnPickImageFile = new InvalidOperationException("picker failed"),
+            ThrowOnPickClipboardImage = new InvalidOperationException("picker failed"),
+        };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var text = AddAndSelectText(vm);
+
+        await ImportCommand(vm, command).ExecuteAsync(null);
+
+        Assert.Equal(expectedKey, vm.StatusMessage);
+        Assert.Empty(loader.RequestedPaths);
+        Assert.Single(vm.OverlayElements);
+        Assert.False(text.BitmapFillEnabled);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("AddImageFromFile", "Panes.TxImageEditor.AddImageFailed")]
+    [InlineData("PickTextBitmapFillFromFile", "Panes.TxImageEditor.TextBitmapFillFailed")]
+    public async Task ImportCommand_FileLoadThrows_SetsItsFailureKey(string command, string expectedKey)
+    {
+        var picker = new FakeFilePickerService { PathToReturn = "/tmp/picked.jpg" };
+        var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+        loader.FailForPath["/tmp/picked.jpg"] = new InvalidOperationException("decode failed");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+        var text = AddAndSelectText(vm);
+
+        await ImportCommand(vm, command).ExecuteAsync(null);
+
+        Assert.Equal(expectedKey, vm.StatusMessage);
+        Assert.Single(vm.OverlayElements);
+        Assert.False(text.BitmapFillEnabled);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("PickTextBitmapFillFromFile")]
+    [InlineData("PickTextBitmapFillFromClipboard")]
+    public async Task TextBitmapFill_SelectionChangesDuringThePick_FillsTheElementSelectedWhenThePickStarted(string command)
+    {
+        var tempPath = Path.GetTempFileName();
+        try
+        {
+            var gate = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var picker = new FakeFilePickerService { ImageFilePickGate = gate, ClipboardPickGate = gate };
+            var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+            var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            var first = AddAndSelectText(vm);
+            var pending = ImportCommand(vm, command).ExecuteAsync(null);
+
+            var second = AddAndSelectText(vm);
+            Assert.Same(second, vm.SelectedOverlayElement);
+            gate.SetResult(tempPath);
+            await pending;
+
+            Assert.True(first.BitmapFillEnabled);
+            Assert.Same(loader.ResultToReturn, first.BitmapFillSource);
+            Assert.False(second.BitmapFillEnabled);
+            Assert.Null(second.BitmapFillSource);
+        }
+        finally
+        {
+            File.Delete(tempPath);
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData("AddImageFromFile")]
+    [InlineData("PickTextBitmapFillFromFile")]
+    public async Task ImportCommand_FromFile_NeverDeletesTheUsersPickedFile(string command)
+    {
+        // The shared import helper deletes clipboard temp files; a file the user picked must survive.
+        var userFile = Path.GetTempFileName();
+        try
+        {
+            var picker = new FakeFilePickerService { PathToReturn = userFile };
+            var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };
+            var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+            AddAndSelectText(vm);
+
+            await ImportCommand(vm, command).ExecuteAsync(null);
+
+            Assert.Equal([userFile], loader.RequestedPaths);
+            Assert.True(File.Exists(userFile));
+        }
+        finally
+        {
+            File.Delete(userFile);
+        }
+    }
+
     [AvaloniaFact]
     public void AddLastRxImage_InsertsReceivedImageBufferCurrentAsASnapshot()
     {

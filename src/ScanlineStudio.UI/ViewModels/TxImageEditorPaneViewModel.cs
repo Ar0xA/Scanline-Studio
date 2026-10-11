@@ -1958,51 +1958,93 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// own error-handling shape: log + return on picker/load failure, silent return on cancel (a
     /// null path from the picker is a normal "user hit Cancel", not an error).</summary>
     [RelayCommand]
-    private async Task AddImageFromFileAsync()
+    private Task AddImageFromFileAsync() =>
+        ImportImageAsync(ImagePickSource.File, "Panes.TxImageEditor.AddImageFailed",
+            (source, path) => InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.File, path)));
+
+    private enum ImagePickSource
+    {
+        File,
+        Clipboard,
+    }
+
+    /// <summary>Shared pick -> load -> <paramref name="apply"/> body of the four image-import commands
+    /// (new element or text picture fill, from file or clipboard). Picker cancel (null path) is a
+    /// silent no-op; a picker or load failure is logged per source and sets
+    /// <paramref name="failureKey"/> as the status. <paramref name="apply"/> runs after the load, with
+    /// the picked file's path (null for clipboard, whose temp file is deleted here); an exception
+    /// from it propagates and is not reported as a load failure. The clipboard temp PNG is deleted in
+    /// the <c>finally</c>, success or failure. NOT shared with
+    /// <see cref="AddImagesFromDroppedFilesAsync"/> -- that method deliberately re-implements
+    /// load+downsample+insert on its own (Task.Run offload, batched push/recompute via
+    /// <see cref="InsertImageElementCore"/> instead of one push/recompute per file), so there are
+    /// genuinely two "load a path into an image element" bodies, not one shared one.</summary>
+    private async Task ImportImageAsync(ImagePickSource from, string failureKey, Action<IImageSource, string?> apply)
     {
         string? path;
         try
         {
-            path = await _filePickerService.PickImageFileAsync();
+            path = from == ImagePickSource.File
+                ? await _filePickerService.PickImageFileAsync()
+                : await _filePickerService.PickClipboardImageAsync();
         }
         catch (Exception ex)
         {
-            Log.AddImageFromFileFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+            LogImportFailed(from, ex);
+            StatusMessage = _localization.GetString(failureKey);
             return;
         }
 
         if (path is null)
         {
+            // Cancelled file pick, or no image on the clipboard right now -- a normal, silent no-op.
             return;
         }
 
-        await AddImageFromPathAsync(path);
-    }
-
-    /// <summary>Missing-feature sweep (2026-08-31): factored out of <see cref="AddImageFromFileAsync"/>'s
-    /// own body -- the load+insert half, unchanged behavior/contract from what that method already
-    /// did inline before this split. NOT shared with <see cref="AddImagesFromDroppedFilesAsync"/>
-    /// (code-review correction) -- that method deliberately re-implements load+downsample+insert on
-    /// its own (Task.Run offload, batched push/recompute via <see cref="InsertImageElementCore"/>
-    /// instead of one push/recompute per file), so there are genuinely two "load a path into an
-    /// image element" bodies, not one shared one.</summary>
-    private async Task AddImageFromPathAsync(string path)
-    {
-        IImageSource source;
         try
         {
-            source = await _imageFileLoader.LoadOriginalAsync(path);
+            IImageSource source;
+            try
+            {
+                source = await _imageFileLoader.LoadOriginalAsync(path);
+            }
+            catch (Exception ex)
+            {
+                LogImportFailed(from, ex);
+                StatusMessage = _localization.GetString(failureKey);
+                return;
+            }
+
+            StatusMessage = null;
+            apply(source, from == ImagePickSource.File ? path : null);
         }
-        catch (Exception ex)
+        finally
+        {
+            if (from == ImagePickSource.Clipboard)
+            {
+                // Best-effort: a cleanup failure must not mask or replace the load result above.
+                try
+                {
+                    File.Delete(path);
+                }
+                catch (Exception ex)
+                {
+                    Log.ClipboardTempFileCleanupFailed(_logger, path, ex);
+                }
+            }
+        }
+    }
+
+    private void LogImportFailed(ImagePickSource from, Exception ex)
+    {
+        if (from == ImagePickSource.File)
         {
             Log.AddImageFromFileFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
-            return;
         }
-
-        StatusMessage = null;
-        InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.File, path));
+        else
+        {
+            Log.AddImageFromClipboardFailed(_logger, ex);
+        }
     }
 
     /// <summary>Phase 2 source 2/3 -- snapshot at insert time, NOT a live binding (plan-review
@@ -2068,59 +2110,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// ever needs it again (<see cref="ImageSourceKind.Clipboard"/>'s own Payload is always null, same
     /// "ephemeral, nothing to re-resolve" tier as <see cref="ImageSourceKind.LastRx"/>).</summary>
     [RelayCommand]
-    private async Task AddImageFromClipboardAsync()
-    {
-        string? tempPath;
-        try
-        {
-            tempPath = await _filePickerService.PickClipboardImageAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.AddImageFromClipboardFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
-            return;
-        }
-
-        if (tempPath is null)
-        {
-            // No image on the clipboard right now -- a normal, silent no-op (same "nothing to add
-            // yet" shape as AddLastRxImage's own empty-buffer case), not an error.
-            return;
-        }
-
-        try
-        {
-            IImageSource source;
-            try
-            {
-                source = await _imageFileLoader.LoadOriginalAsync(tempPath);
-            }
-            catch (Exception ex)
-            {
-                Log.AddImageFromClipboardFailed(_logger, ex);
-                StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
-                return;
-            }
-
-            StatusMessage = null;
-            InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.Clipboard, null));
-        }
-        finally
-        {
-            // Best-effort cleanup -- a failure here must not mask or replace whatever result the
-            // load attempt above already produced (same reasoning as SaveTemplateCommand's own
-            // cleanup-on-failure path).
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch (Exception ex)
-            {
-                Log.ClipboardTempFileCleanupFailed(_logger, tempPath, ex);
-            }
-        }
-    }
+    private Task AddImageFromClipboardAsync() =>
+        ImportImageAsync(ImagePickSource.Clipboard, "Panes.TxImageEditor.AddImageFailed",
+            (source, _) => InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.Clipboard, null)));
 
     /// <summary>TX editor gap-items plan, item 4b (picture fill) -- picker call -> loader call ->
     /// assign onto the SELECTED text element's own BitmapFillSource/Enabled, same shape as
@@ -2131,45 +2123,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private bool CanSetTextBitmapFill() => SelectedTextElement is not null;
 
     [RelayCommand(CanExecute = nameof(CanSetTextBitmapFill))]
-    private async Task PickTextBitmapFillFromFileAsync()
+    private Task PickTextBitmapFillFromFileAsync() =>
+        SelectedTextElement is { } text
+            ? ImportImageAsync(ImagePickSource.File, "Panes.TxImageEditor.TextBitmapFillFailed", (source, _) => ApplyTextBitmapFill(text, source))
+            : Task.CompletedTask;
+
+    /// <summary>Fills the text element captured when the pick started, not whatever is selected
+    /// once the pick returns.</summary>
+    private static void ApplyTextBitmapFill(OverlayElementViewModel text, IImageSource source)
     {
-        if (SelectedTextElement is not { } text)
-        {
-            return;
-        }
-
-        string? path;
-        try
-        {
-            path = await _filePickerService.PickImageFileAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.AddImageFromFileFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
-            return;
-        }
-
-        if (path is null)
-        {
-            return;
-        }
-
-        IImageSource source;
-        try
-        {
-            source = await _imageFileLoader.LoadOriginalAsync(path);
-        }
-        catch (Exception ex)
-        {
-            Log.AddImageFromFileFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
-            return;
-        }
-
-        StatusMessage = null;
-        // Source assigned before Enabled -- matches OverlayElementViewModel.ApplyStyleFrom's convention (see
-        // its inline comment).
+        // Source before Enabled, matching OverlayElementViewModel.ApplyStyleFrom's convention.
         text.BitmapFillSource = source;
         text.BitmapFillEnabled = true;
     }
@@ -2178,60 +2141,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="PickTextBitmapFillFromFileAsync"/>'s own doc comment covers the "assigns onto the
     /// selected element" difference from the image-ELEMENT-adding commands this mirrors.</summary>
     [RelayCommand(CanExecute = nameof(CanSetTextBitmapFill))]
-    private async Task PickTextBitmapFillFromClipboardAsync()
-    {
-        if (SelectedTextElement is not { } text)
-        {
-            return;
-        }
-
-        string? tempPath;
-        try
-        {
-            tempPath = await _filePickerService.PickClipboardImageAsync();
-        }
-        catch (Exception ex)
-        {
-            Log.AddImageFromClipboardFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
-            return;
-        }
-
-        if (tempPath is null)
-        {
-            return;
-        }
-
-        try
-        {
-            IImageSource source;
-            try
-            {
-                source = await _imageFileLoader.LoadOriginalAsync(tempPath);
-            }
-            catch (Exception ex)
-            {
-                Log.AddImageFromClipboardFailed(_logger, ex);
-                StatusMessage = _localization.GetString("Panes.TxImageEditor.TextBitmapFillFailed");
-                return;
-            }
-
-            StatusMessage = null;
-            text.BitmapFillSource = source;
-            text.BitmapFillEnabled = true;
-        }
-        finally
-        {
-            try
-            {
-                File.Delete(tempPath);
-            }
-            catch (Exception ex)
-            {
-                Log.ClipboardTempFileCleanupFailed(_logger, tempPath, ex);
-            }
-        }
-    }
+    private Task PickTextBitmapFillFromClipboardAsync() =>
+        SelectedTextElement is { } text
+            ? ImportImageAsync(ImagePickSource.Clipboard, "Panes.TxImageEditor.TextBitmapFillFailed", (source, _) => ApplyTextBitmapFill(text, source))
+            : Task.CompletedTask;
 
     /// <summary>Turns the fill mode back to solid (matching the GRADIENT checkbox's own
     /// "unchecking just clears the flag" shape) -- deliberately does NOT clear
@@ -6283,7 +6196,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private void NotifyWorkingCopyGeometryChanged()
     {
         // Auditor-found blocker (Tier-0 audit follow-up, production_audit.md): without this guard,
-        // an await-crossing operation still in flight when Dispose() runs (e.g. AddImageFromPathAsync/
+        // an await-crossing operation still in flight when Dispose() runs (e.g. ImportImageAsync/
         // FlattenElementAsync resuming after Cancel/Apply was clicked, neither gated busy) reaches
         // _workingCopyPool.Blit() against an already-disposed pool -- wasted work against a discarded
         // instance at best, an unhandled WriteableBitmap crash on a real (non-headless) render target
@@ -6861,7 +6774,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // Auditor-found blocker (Tier-0 audit follow-up, production_audit.md): same guard, same
         // reason, as NotifyWorkingCopyGeometryChanged's own -- this method reaches
         // RecomputePreviewPipeline()'s own _previewPool.Blit() call, reachable from await-crossing
-        // operations (AddImageFromPathAsync, FlattenElementAsync, and others) still in flight when
+        // operations (ImportImageAsync, FlattenElementAsync, and others) still in flight when
         // Dispose() runs.
         if (_disposed)
         {

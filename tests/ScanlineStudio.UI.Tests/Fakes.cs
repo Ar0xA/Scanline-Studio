@@ -1548,10 +1548,24 @@ internal sealed class FakeFilePickerService : IFilePickerService
 
     public Exception? ThrowOnPickImageFile { get; set; }
 
-    public Task<string?> PickImageFileAsync() =>
-        ThrowOnPickImageFile is { } ex ? Task.FromException<string?>(ex) : Task.FromResult(PathToReturn);
+    public Exception? ThrowOnPickClipboardImage { get; set; }
 
-    public Task<string?> PickClipboardImageAsync() => Task.FromResult(ClipboardPathToReturn);
+    /// <summary>Opt-in: when set, <see cref="PickImageFileAsync"/> returns this gate's task instead of
+    /// completing at once, so a test can act while the pick is still pending.</summary>
+    public TaskCompletionSource<string?>? ImageFilePickGate { get; set; }
+
+    /// <summary>Opt-in: same as <see cref="ImageFilePickGate"/>, for <see cref="PickClipboardImageAsync"/>.</summary>
+    public TaskCompletionSource<string?>? ClipboardPickGate { get; set; }
+
+    public Task<string?> PickImageFileAsync() =>
+        ThrowOnPickImageFile is { } ex ? Task.FromException<string?>(ex)
+        : ImageFilePickGate is { } gate ? gate.Task
+        : Task.FromResult(PathToReturn);
+
+    public Task<string?> PickClipboardImageAsync() =>
+        ThrowOnPickClipboardImage is { } ex ? Task.FromException<string?>(ex)
+        : ClipboardPickGate is { } gate ? gate.Task
+        : Task.FromResult(ClipboardPathToReturn);
 
     public Task<string?> PickAdifFileAsync() => Task.FromResult(AdifPathToReturn);
 
