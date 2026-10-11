@@ -456,6 +456,11 @@ Listed with evidence in the area reports. Pick them up only when already working
   test; `PaneViewModelTests.cs:1178` `Assert.Empty(SetNoteCalls)` never waits out the 600 ms, so it is vacuous. Fix: a
   never-advanced or advanced FakeTimeProvider, as cq-q1 did for 21 tests.
 
+- **CQ-PASTE-ROT.** Paste Style from a rotated box onto a perspective box leaves both rotation and perspective on
+  (`TxImageEditorPaneViewModel.cs:5611` assigns `RotationDegrees` unconditionally); the editor otherwise keeps them
+  exclusive. Pinned as today's behaviour in `TxEditorElementRoundTripTests` (paste-style pair (2,3)) — update that pin
+  when fixing. Found by cq-04 step 1, 2026-10-11. Bug pass.
+
 ### CQ verified done
 
 - **CQ-03-F1.** DONE 2026-10-11 — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` now compares our
