@@ -224,3 +224,51 @@ shared canvas, and rows 240-255 (below `GetPictureSize`'s real 240-row content) 
 black, not white. Pinned as a fact via `BmpFile_ReadsAvtRx_With256TallCanvas_ButMarginIsNotPureWhite`
 (`GoldenVectorFixtureReaderTests.cs`) rather than asserted as an invariant; not investigated further,
 since every comparison in this suite already crops to the real 240-row picture height regardless.
+
+## Port decode vs legacy decode
+
+`Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` also compares this port's decode of each `.mmv`
+against legacy's own decode of the same audio (`*_RX.bmp`, cropped to the picture height). Both decodes
+share any transmit-side error, so this checks the receiver alone. Measured at `29016f37` plus the
+uncommitted test change; identical numbers on 2 runs. Units: colour delta in mean levels per channel;
+offsets in px/rows and in levels (lv) of the source ramp (colour: 255/319 lv/px on R, 255/(H−1) lv/row on
+G; rm8: 255/558 on both, since R=G=(x+y)).
+
+| mode | ours−src | legacy−src | ours−legacy (limit) | floor N | horiz px (lv) | horiz band lv | vert rows (lv) | vert band lv | median R lv | slope ratio | h after +1/−1 px | v after +1/−1 row | flag |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| martin-m1 | 1.44 | 1.57 | 0.17 (0.7) | 2 | −0.25 (−0.20) | −0.20 ± 0.20 | 0.00 (0.00) | 0.00 ± 0.25 | 0 | 1.0017 | 0.75 / −1.25 | 1.00 / −1.00 | |
+| robot-36 | 7.08 | 6.99 | 0.31 (0.9) | 2 | 0.00 (0.00) | 0.00 ± 0.20 | 0.00 (0.00) | 0.00 ± 0.27 | 0 | 0.9999 | 1.00 / −1.00 | 1.00 / −1.00 | |
+| scottie-s1 | 1.10 | 1.24 | 0.23 (0.8) | 2 | −0.02 (−0.02) | −0.02 ± 0.20 | 0.00 (0.00) | 0.00 ± 0.25 | 0 | 0.9998 | 0.97 / −1.02 | 1.00 / −1.00 | |
+| robot-72 | 6.97 | 7.03 | 0.16 (0.7) | 2 | 0.00 (0.00) | 0.00 ± 0.20 | 0.00 (0.00) | 0.00 ± 0.27 | 0 | 1.0000 | 1.00 / −1.00 | 1.00 / −1.00 | |
+| pd90 | 4.03 | 4.08 | 0.34 (0.9) | 3 | −0.20 (−0.16) | −0.16 ± 0.20 | 0.05 (0.05) | 0.05 ± 0.25 | 0 | 1.0006 | 0.80 / −1.20 | 1.05 / −0.95 | |
+| rm8 | 5.06 | 5.45 | 1.18 (1.8) | 4 | 0.60 (0.27) | 0.27 ± 0.14 | 0.43 (0.19) | 0.19 ± 0.11 | −1 | 1.0275 | 1.60 / −0.40 | 1.43 / −0.60 | WATCH (BACKLOG RM8-SLOPE) |
+| mn110 | 3.62 | 3.45 | 0.81 (1.4) | 3 | −0.30 (−0.24) | −0.24 ± 0.20 | −0.10 (−0.10) | −0.10 ± 0.25 | 0 | 1.0006 | 0.70 / −1.30 | 0.90 / −1.10 | |
+| avt | 9.12 | 4.23 | 6.92 (10.4) | 12 | −13.55 (−10.83) | −10.83 ± 0.60 | 0.00 (0.00) | 0.00 ± 0.27 | +10 | 1.0008 | −12.55 / −14.55 | 1.00 / −1.00 | KNOWN DIVERGENCE (BACKLOG AVT-PARITY) |
+
+**Fits.** Horizontal: least-squares R-ramp offset over the middle half of the rows, outer eighth of the
+columns skipped, search ±16 px in 0.05 steps, median over rows. Vertical: the same on the G ramp down the
+columns. On a ramp both fits mix shift, level offset and gain; they are not pure shifts. Median R offset
+and slope ratio (least-squares R-vs-x slope, ours over legacy) are diagnostics only.
+
+**Stop rule (per mode).** DIVERGENCE if ours−src − legacy−src > max(0.5, 0.15 × legacy−src), or
+ours−legacy > max(ours−src, legacy−src), or |offset| > 1 px-equivalent in levels. |slope ratio − 1| >
+0.02 is reported, not gated (a convention). A divergent mode is still pinned, as a regression guard, and
+gets its own BACKLOG §1 item.
+
+**Headroom.** Colour limit = max(1.5 × measured, measured + 0.5), rounded up to 0.1. Offset band, centred
+on the measured value = clamp(0.5 × |measured|, 0.25 px-equivalent, 0.75 px-equivalent); the cap makes a
+1-px or 1-row move always fail. The 0.25 px floor is a convention borrowed from
+`LegacyAudioRegistrationProbe`'s verdict threshold, not a validated noise bound. Floor N is the smallest
++N levels on B alone that pushes ours−legacy over its limit (neither offset fit reads B). Do not widen a
+limit without re-measuring.
+
+**AVT (KNOWN DIVERGENCE).** ours−src exceeds legacy's own baseline by 4.89 (gate 0.63) and the R-ramp
+offset is −13.55 px. The vertical G fit is 0, so this is either a ~12.5 px horizontal shift or an R-only
+level/gain error; undetermined. ours−src drifted from the previously recorded 6.74 to 9.12 with no record;
+it is still under its 14.0 limit. Tracked as BACKLOG AVT-PARITY.
+
+**rm8 (WATCH).** Passes the gate under the least-squares fit (0.60 px / 0.43 rows = 0.27 / 0.19 lv,
+gate 0.46 lv) but trips it under a mean-|·| fit (1.50 px / 1.70 rows). Median R −1 lv, slope ratio
+1.0275. rm8's 1-px gate (0.46 lv) is below one byte level, so the verdict is fit-sensitive. ours−src 5.06
+is below legacy's own 5.45, so this does not show that our decode is the wrong one. Tracked as BACKLOG
+RM8-SLOPE.

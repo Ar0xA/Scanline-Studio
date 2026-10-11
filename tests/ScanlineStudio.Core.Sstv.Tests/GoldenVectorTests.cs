@@ -1,6 +1,7 @@
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Imaging;
+using Xunit.Abstractions;
 
 namespace ScanlineStudio.Core.Sstv.Tests;
 
@@ -39,6 +40,13 @@ namespace ScanlineStudio.Core.Sstv.Tests;
 public class GoldenVectorTests
 {
     private const string FixtureDir = "Fixtures/GoldenVectors";
+
+    private readonly ITestOutputHelper _output;
+
+    public GoldenVectorTests(ITestOutputHelper output)
+    {
+        _output = output;
+    }
 
     public static readonly TheoryData<string, string, string, int> Fixtures = new()
     {
@@ -214,6 +222,15 @@ public class GoldenVectorTests
         var actual = CropToTop(decoded, pictureHeight);
         var delta = MeasureAveragePerChannelDelta(source, actual, pictureHeight);
 
+        // Same crop as the legacy-baseline test, so AVT's RX-save margin is excluded.
+        var legacyRx = LoadLegacyRxDecode(modeId, pictureHeight);
+        var parity = MeasureLegacyParity(modeId, source, legacyRx, actual, pictureHeight);
+        _output.WriteLine(
+            $"[{modeId}] ourSourceDelta={delta:F2} legacyOwnBaseline={parity.LegacyOwnBaseline:F2} " +
+            $"legacyDelta={parity.LegacyDelta:F2} horizontal={parity.HorizontalPx:F2}px/{parity.HorizontalLevels:F2}lv " +
+            $"vertical={parity.VerticalRows:F2}rows/{parity.VerticalLevels:F2}lv " +
+            $"medianR={parity.MedianROffset:F2}lv slopeRatio={parity.SlopeRatio:F4}");
+
         // Re-measured after Piece 9 (spec/14-roadmap.md) narrowed PllFmDemodulator from 1100-2300Hz
         // to legacy's real 1500-2300Hz image-decode band, restarts=0 and the correct mode detected
         // first-try for both:
@@ -337,11 +354,88 @@ public class GoldenVectorTests
         };
         var tolerance = toleranceByModeId[modeId];
 
+        // (colour limit, horizontal centre, vertical centre), all in levels; the centres are the measured offsets.
+        var legacyParityByModeId = new Dictionary<string, (double ColourLimit, double HorizontalLevels, double VerticalLevels)>
+        {
+            ["martin-m1"] = (0.7, -0.20, 0.00), // measured 0.17
+            ["robot-36"] = (0.9, 0.00, 0.00), // measured 0.31
+            ["scottie-s1"] = (0.8, -0.02, 0.00), // measured 0.23
+            ["robot-72"] = (0.7, 0.00, 0.00), // measured 0.16
+            ["pd90"] = (0.9, -0.16, 0.05), // measured 0.34
+            // WATCH: slope differs from legacy's own decode — see GoldenVectors README
+            ["rm8"] = (1.8, 0.27, 0.19), // measured 1.18
+            ["mn110"] = (1.4, -0.24, -0.10), // measured 0.81
+            // KNOWN DIVERGENCE from legacy's own decode — see GoldenVectors README
+            ["avt"] = (10.4, -10.83, 0.00), // measured 6.92
+        };
+        var expected = legacyParityByModeId[modeId];
+        var (levelsPerPx, levelsPerRow) = RampLevelsPerStep(modeId, source.Width, pictureHeight);
+        var horizontalBand = OffsetBand(expected.HorizontalLevels, levelsPerPx);
+        var verticalBand = OffsetBand(expected.VerticalLevels, levelsPerRow);
+
+        var parityFailures = new List<string>();
+        if (!(parity.LegacyDelta < expected.ColourLimit))
+        {
+            parityFailures.Add($"decoder-vs-legacy-decode colour delta {parity.LegacyDelta:F2} exceeded {expected.ColourLimit}");
+        }
+
+        if (!(Math.Abs(parity.HorizontalLevels - expected.HorizontalLevels) < horizontalBand))
+        {
+            parityFailures.Add(
+                $"horizontal R-ramp offset {parity.HorizontalLevels:F2} lv outside {expected.HorizontalLevels:F2} ± {horizontalBand:F2}");
+        }
+
+        if (!(Math.Abs(parity.VerticalLevels - expected.VerticalLevels) < verticalBand))
+        {
+            parityFailures.Add(
+                $"vertical G-ramp offset {parity.VerticalLevels:F2} lv outside {expected.VerticalLevels:F2} ± {verticalBand:F2}");
+        }
+
         Assert.Equal(0, restartCount);
+        Assert.True(
+            parityFailures.Count == 0,
+            $"[{modeId}] legacy-decode parity: {string.Join("; ", parityFailures)}. " +
+            $"restarts={restartCount}, detected mode=[{mode.Id}]");
         Assert.True(
             delta < tolerance,
             $"[{modeId}] decoder-vs-source delta {delta:F2} exceeded regression-guard tolerance {tolerance}. " +
             $"restarts={restartCount}, detected mode=[{mode.Id}]");
+    }
+
+    public static readonly TheoryData<string, int, double, double> InjectedShifts = new()
+    {
+        // (legacy RX bmp, picture height, dx px, dy rows)
+        { "robot36_RX.bmp", 240, 1.5, 0 },
+        { "robot36_RX.bmp", 240, -0.75, 0 },
+        { "robot36_RX.bmp", 240, 0, 1.5 },
+        { "robot36_RX.bmp", 240, 0, -0.75 },
+        { "martin-m1_RX.bmp", 256, 1.5, 0 },
+        { "martin-m1_RX.bmp", 256, -1.0, 0 },
+        { "martin-m1_RX.bmp", 256, 0, 1.5 },
+        { "martin-m1_RX.bmp", 256, 0, -1.0 },
+    };
+
+    /// <summary>
+    /// The offset fits recover a known sub-pixel shift on a real legacy decode. Byte rounding in
+    /// <see cref="ShiftImage"/> collapses a non-midpoint fraction on a 1-level staircase such as
+    /// martin-m1's clean ramp (a -0.75 shift yields the same image as -1.0), so martin-m1 uses whole
+    /// steps; +1.5 survives there only because round-to-even splits the exact midpoint. robot-36's
+    /// noisier decode keeps its fractional cases.
+    /// </summary>
+    [Theory]
+    [MemberData(nameof(InjectedShifts))]
+    public void RampOffset_RecoversInjectedShift(string rxBmp, int pictureHeight, double dx, double dy)
+    {
+        var reference = CropToTop(BmpFile.Read(Path.Combine(FixtureDir, rxBmp)), pictureHeight);
+        var shifted = ShiftImage(reference, dx, dy);
+
+        var horizontal = RampOffsetPx(reference, shifted, pictureHeight);
+        var vertical = ColumnRampOffsetRows(reference, shifted, pictureHeight);
+
+        var (injected, recovered) = dx != 0 ? (dx, horizontal) : (dy, vertical);
+        Assert.True(
+            Math.Abs(recovered - injected) <= 0.1,
+            $"[{rxBmp}] injected dx={dx} dy={dy}, recovered {horizontal:F2} px / {vertical:F2} rows.");
     }
 
     // Demod-type subsystem Phase 2 -- the one piece of verification this feature cannot skip, per
@@ -986,5 +1080,256 @@ public class GoldenVectorTests
         }
 
         return totalDelta / sampleCount;
+    }
+
+    private const double RampSearchRadius = 16.0;
+    private const double RampSearchStep = 0.05;
+
+    private readonly record struct LegacyParity(
+        double LegacyOwnBaseline,
+        double LegacyDelta,
+        double HorizontalPx,
+        double HorizontalLevels,
+        double VerticalRows,
+        double VerticalLevels,
+        double MedianROffset,
+        double SlopeRatio);
+
+    private static LegacyParity MeasureLegacyParity(
+        string modeId, IImageSource source, IImageSource legacyRx, IImageSource actual, int height)
+    {
+        var (levelsPerPx, levelsPerRow) = RampLevelsPerStep(modeId, source.Width, height);
+        var horizontalPx = RampOffsetPx(legacyRx, actual, height);
+        var verticalRows = ColumnRampOffsetRows(legacyRx, actual, height);
+
+        return new LegacyParity(
+            LegacyOwnBaseline: MeasureAveragePerChannelDelta(source, legacyRx, height),
+            LegacyDelta: MeasureAveragePerChannelDelta(legacyRx, actual, height),
+            HorizontalPx: horizontalPx,
+            HorizontalLevels: horizontalPx * levelsPerPx,
+            VerticalRows: verticalRows,
+            VerticalLevels: verticalRows * levelsPerRow,
+            MedianROffset: MedianROffsetLevels(legacyRx, actual, height),
+            SlopeRatio: SlopeRatio(legacyRx, actual, height));
+    }
+
+    // Half the measured offset, floored at 0.25 px-equivalent and capped at 0.75 so a 1-px or 1-row move always fails.
+    private static double OffsetBand(double centreLevels, double levelsPerStep)
+    {
+        return Math.Clamp(0.5 * Math.Abs(centreLevels), 0.25 * levelsPerStep, 0.75 * levelsPerStep);
+    }
+
+    // Looked up by mode id from Fixtures rather than widening DecoderFixtures, which other tests share.
+    private static IImageSource LoadLegacyRxDecode(string modeId, int pictureHeight)
+    {
+        var row = Fixtures.SingleOrDefault(r => (string)r[0] == modeId);
+        if (row is null)
+        {
+            Assert.Fail($"[{modeId}] no legacy _RX.bmp row in Fixtures.");
+        }
+
+        var path = Path.Combine(FixtureDir, (string)row![2]);
+        if (!File.Exists(path))
+        {
+            Assert.Fail($"[{modeId}] legacy RX fixture missing: {path}");
+        }
+
+        return CropToTop(BmpFile.Read(path), pictureHeight);
+    }
+
+    // Source ramp slopes (SstvRoundTripTests' gradient formulas): colour R=x ramp, G=y ramp; rm8 R=G=(x+y) ramp.
+    private static (double LevelsPerPx, double LevelsPerRow) RampLevelsPerStep(string modeId, int width, int height)
+    {
+        if (modeId == "rm8")
+        {
+            var perStep = 255.0 / (width + height - 2);
+            return (perStep, perStep);
+        }
+
+        return (255.0 / (width - 1), 255.0 / (height - 1));
+    }
+
+    /// <summary>
+    /// R-ramp offset in pixels: the s in [-<see cref="RampSearchRadius"/>, +<see cref="RampSearchRadius"/>]
+    /// (step <see cref="RampSearchStep"/>) minimising the least-squares cost mean (R_ref(x - s) - R_act(x))^2
+    /// with linear resampling, taken as the median over the middle half of the rows, with the outer
+    /// eighth of the columns skipped. On a ramp a shift, a level offset and a gain error all move this
+    /// fit, so it is not a pure shift. Positive means <paramref name="actual"/> lies to the right.
+    /// </summary>
+    private static double RampOffsetPx(IImageSource reference, IImageSource actual, int height)
+    {
+        var margin = Math.Max(8, reference.Width / 8);
+        var offsets = new List<double>();
+        for (var y = height / 4; y < height * 3 / 4; y++)
+        {
+            offsets.Add(BestRampOffset(ReadRow(reference, y, p => p.R), ReadRow(actual, y, p => p.R), margin));
+        }
+
+        return Median(offsets);
+    }
+
+    /// <summary>
+    /// <see cref="RampOffsetPx"/> transposed, same least-squares search over
+    /// <see cref="RampSearchRadius"/> and <see cref="RampSearchStep"/>: the G ramp down the middle half of the columns, outer
+    /// eighth of the rows skipped. Same caveat: it mixes shift, offset and gain. Positive means
+    /// <paramref name="actual"/> lies lower.
+    /// </summary>
+    private static double ColumnRampOffsetRows(IImageSource reference, IImageSource actual, int height)
+    {
+        var margin = Math.Max(8, height / 8);
+        var offsets = new List<double>();
+        for (var x = reference.Width / 4; x < reference.Width * 3 / 4; x++)
+        {
+            offsets.Add(BestRampOffset(
+                ReadColumn(reference, x, height, p => p.G), ReadColumn(actual, x, height, p => p.G), margin));
+        }
+
+        return Median(offsets);
+    }
+
+    // Diagnostic only: median of R_act - R_ref over the same middle-half-rows, inner-columns region.
+    private static double MedianROffsetLevels(IImageSource reference, IImageSource actual, int height)
+    {
+        var margin = Math.Max(8, reference.Width / 8);
+        var differences = new List<double>();
+        for (var y = height / 4; y < height * 3 / 4; y++)
+        {
+            var referenceLine = reference.GetScanline(y);
+            var actualLine = actual.GetScanline(y);
+            for (var x = margin; x < reference.Width - margin; x++)
+            {
+                differences.Add(actualLine[x].R - referenceLine[x].R);
+            }
+        }
+
+        return Median(differences);
+    }
+
+    // Diagnostic only: least-squares slope of R against x, actual over reference, same region.
+    private static double SlopeRatio(IImageSource reference, IImageSource actual, int height)
+    {
+        return RSlope(actual, height) / RSlope(reference, height);
+    }
+
+    private static double RSlope(IImageSource image, int height)
+    {
+        var margin = Math.Max(8, image.Width / 8);
+        double sumX = 0, sumR = 0, sumXx = 0, sumXr = 0;
+        var count = 0;
+        for (var y = height / 4; y < height * 3 / 4; y++)
+        {
+            var line = image.GetScanline(y);
+            for (var x = margin; x < image.Width - margin; x++)
+            {
+                sumX += x;
+                sumR += line[x].R;
+                sumXx += (double)x * x;
+                sumXr += (double)x * line[x].R;
+                count++;
+            }
+        }
+
+        return ((count * sumXr) - (sumX * sumR)) / ((count * sumXx) - (sumX * sumX));
+    }
+
+    private static double BestRampOffset(double[] reference, double[] actual, int margin)
+    {
+        var bestOffset = 0.0;
+        var bestCost = double.MaxValue;
+        var steps = (int)Math.Round(2 * RampSearchRadius / RampSearchStep);
+        for (var i = 0; i <= steps; i++)
+        {
+            var offset = -RampSearchRadius + (i * RampSearchStep);
+            double cost = 0;
+            for (var x = margin; x < actual.Length - margin; x++)
+            {
+                var difference = SampleLinear(reference, x - offset) - actual[x];
+                cost += difference * difference;
+            }
+
+            if (cost < bestCost)
+            {
+                bestCost = cost;
+                bestOffset = offset;
+            }
+        }
+
+        return bestOffset;
+    }
+
+    private static double SampleLinear(double[] values, double position)
+    {
+        var clamped = Math.Clamp(position, 0, values.Length - 1);
+        var lower = (int)Math.Floor(clamped);
+        var upper = Math.Min(lower + 1, values.Length - 1);
+        var fraction = clamped - lower;
+        return (values[lower] * (1 - fraction)) + (values[upper] * fraction);
+    }
+
+    private static double[] ReadRow(IImageSource image, int y, Func<Rgb24, byte> channel)
+    {
+        var line = image.GetScanline(y);
+        var values = new double[image.Width];
+        for (var x = 0; x < values.Length; x++)
+        {
+            values[x] = channel(line[x]);
+        }
+
+        return values;
+    }
+
+    private static double[] ReadColumn(IImageSource image, int x, int height, Func<Rgb24, byte> channel)
+    {
+        var values = new double[height];
+        for (var y = 0; y < height; y++)
+        {
+            values[y] = channel(image.GetScanline(y)[x]);
+        }
+
+        return values;
+    }
+
+    private static double Median(List<double> values)
+    {
+        values.Sort();
+        var middle = values.Count / 2;
+        return values.Count % 2 == 1 ? values[middle] : (values[middle - 1] + values[middle]) / 2;
+    }
+
+    // Test and mutation use only: bilinear sub-pixel resample, out(x, y) = in(x - dx, y - dy), edges clamped.
+    private static ArrayImageSource ShiftImage(IImageSource image, double dx, double dy)
+    {
+        var width = image.Width;
+        var height = image.Height;
+        var pixels = new Rgb24[width * height];
+        for (var y = 0; y < height; y++)
+        {
+            var sourceY = Math.Clamp(y - dy, 0, height - 1);
+            var y0 = (int)Math.Floor(sourceY);
+            var y1 = Math.Min(y0 + 1, height - 1);
+            var fy = sourceY - y0;
+            var line0 = image.GetScanline(y0);
+            var line1 = image.GetScanline(y1);
+            for (var x = 0; x < width; x++)
+            {
+                var sourceX = Math.Clamp(x - dx, 0, width - 1);
+                var x0 = (int)Math.Floor(sourceX);
+                var x1 = Math.Min(x0 + 1, width - 1);
+                var fx = sourceX - x0;
+                pixels[(y * width) + x] = new Rgb24(
+                    Bilinear(line0[x0].R, line0[x1].R, line1[x0].R, line1[x1].R, fx, fy),
+                    Bilinear(line0[x0].G, line0[x1].G, line1[x0].G, line1[x1].G, fx, fy),
+                    Bilinear(line0[x0].B, line0[x1].B, line1[x0].B, line1[x1].B, fx, fy));
+            }
+        }
+
+        return new ArrayImageSource(width, height, pixels);
+    }
+
+    private static byte Bilinear(byte topLeft, byte topRight, byte bottomLeft, byte bottomRight, double fx, double fy)
+    {
+        var top = (topLeft * (1 - fx)) + (topRight * fx);
+        var bottom = (bottomLeft * (1 - fx)) + (bottomRight * fx);
+        return (byte)Math.Clamp(Math.Round((top * (1 - fy)) + (bottom * fy)), 0, 255);
     }
 }

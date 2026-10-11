@@ -8,6 +8,24 @@ Our encoder → our decoder, clean, 11025 Hz, flat colour (40,160,150): 73680 pi
 the whole picture. Flat grey decodes fine. Found incidentally 2026-09-22, not investigated. First step:
 check whether a non-flat picture also fails. Review tier: full if the fix touches the decode path.
 
+### AVT-PARITY. OPEN — AVT decode diverges from legacy's own decode
+
+Same `avt.mmv`, our decode vs legacy's `avt_RX.bmp` (measured 2026-10-11 at `29016f37`): ours−src 9.12,
+legacy−src 4.23 (gate: excess 4.89 > 0.63), ours−legacy 6.92. R-ramp offset −13.55 px (−10.83 lv), median R
++10 lv, slope ratio 1.0008. The vertical G fit is 0, so this is either a ~12.5 px horizontal shift or an
+R-only level/gain error; undetermined. ours−src drifted 6.74 → 9.12 under its 14.0 limit with no record.
+Pinned as a regression guard in `GoldenVectorTests.Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource`;
+table in `Fixtures/GoldenVectors/README.md` ("Port decode vs legacy decode"). Review tier: full.
+
+### RM8-SLOPE. OPEN — rm8 decode ramp slope 2.75% off legacy's own decode
+
+Same `rm8.mmv`, our decode vs legacy's `rm8_RX.bmp` (2026-10-11, `29016f37`): offsets 1.50 px / 1.70 rows
+under a mean-|·| fit (gate tripped), 0.60 / 0.43 under the least-squares fit now used (passes); median R
+−1 lv, slope ratio 1.0275. rm8's 1-px gate (0.46 lv) is below one byte level, so the verdict is
+fit-sensitive. ours−src 5.06 < legacy−src 5.45, so this does not claim our decode is the wrong one.
+Unverified suspect: legacy's gain `d *= (256.0 / (256.0 - 32.0))` (`Main.cpp:4438`). Pinned normally with
+a WATCH comment; same test and README table as AVT-PARITY.
+
 ---
 
 ## 2. Test integrity
@@ -349,3 +367,100 @@ trip, real third-party `rigctld` interop). Platform scope is settled: Linux plus
 - **b. OPEN** — record the two-platform scope in `spec/13-testing.md`, which still describes three
   platforms (`:51` lists `macos-latest`). `spec/` is gitignored (`.gitignore:72`), so the edit will not be
   committed.
+
+---
+
+## 7. Code-quality audit (2026-10-11)
+
+Source: `docs/code-quality-audit/` (gitignored). Each item below was verified against the code by an
+independent `yoniq-auditor` pass; the area report holds evidence, the corrected facts and the
+recommendation. Refs are `<report>-F<n>`. Only P1 and P2 items are listed here.
+**Work order (user decision 2026-10-11): code quality and efficiency first, bug fixes in a later pass.**
+The quality pass follows `docs/plans/cq-README.md`: 9 reviewed plans, in this order: cq-03, cq-02, cq-q3,
+cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass picks up later from
+`docs/code-quality-audit/auditor-top10.md` and the parked plans cq-09, cq-05, cq-06, cq-10 and cq-11.
+
+### CQ-P1. OPEN — five fix-soon items
+
+- **CQ-09-F1. A failed settings load erases `settings.json`.** `LoadCoreAsync` returns defaults on
+  JsonException, IOException or UnauthorizedAccessException. The next `UpdateAsync` then saves over the
+  file with no backup (`JsonSettingsStore.cs:101,105,146-150`). The test at `JsonSettingsStoreTests.cs:181-198`
+  asserts this. Fix: a failed load must block the write. Rename the file aside on JsonException only, and
+  rethrow I/O and permission errors. A rename on a transient IOException would move a good file aside.
+  Add CQ-09-F4's flush in the same change.
+- **CQ-02-F1. TX LPF tested only on a copy of the encoder loop.** `AnalogFmSstvEncoderTxLpfTests.cs:24,63`
+  call `RenderSegments`, not `EncodeBatchedAsyncCore`. Wire-observable. Fix: one shared tone synthesizer,
+  bit-identical before/after. Review tier: full.
+- **CQ-04-F1. TX-editor element fields hand-copied through ~8 mapping sites**
+  (`TxImageEditorPaneViewModel.cs:69-164,1507-1534,3245-3654,3816-4035`). Three past Undo-reset bugs.
+  Fix: snapshot round-trip on each element VM plus a full-property round-trip test per element type.
+- **CQ-08-F1. Two PTT features with no production caller** — `SetPttLockAsync`, and
+  `TuneAsync(leaveKeyedAfterTune: true)` (never passed `true`). ~54% of ~2,000 PTT lines. Removal also
+  closes 08-F7's races. Needs the removal-rule check and the full review cadence.
+- **CQ-07-F1. Debounces on the real clock** (8 VM sites); UI tests sleep past them with margins down to
+  100 ms (`PaneViewModelTests.cs:1110` vs `RxImagePaneViewModel.cs:68`). Fix: one `Debouncer` with a
+  `TimeProvider`. Also fixes 05-F4 drift.
+
+### CQ-P2. OPEN — fix when touching the code
+
+User data, safety and error paths:
+- **CQ-09-F2.** A malformed settings section throws out of Options `LoadAsync` (7 unguarded reads,
+  `AppSettingsSectionExtensions.cs:15-16`). Every `UpdateAsync` that reads it fails too. Fix in Options
+  `LoadAsync` only, and mark the section unreadable. Do NOT fall back to defaults inside `GetSection`:
+  `SaveAsync`'s `previous ?? new X()` would then overwrite the section, the same failure as CQ-09-F1.
+- **CQ-11-F14.** `release-windows.yml` runs the unpinned `ilammy/msvc-dev-cmd@v1` in a `contents: write`
+  job, with checkout credentials persisted. Pin actions to commit SHAs and set `persist-credentials: false`.
+  P3 in the report, but auditor top-10 #8 (supply-chain risk to shipped binaries).
+- **CQ-09-F4.** Settings writes do not flush before `File.Move` (`JsonSettingsStore.cs:170-183` and two
+  other stores). Exposure: NTFS and XFS.
+- **CQ-09-F8.** Preset exclude/redact lists are string literals; new sections are included by default
+  (`ConfigurationPresetStore.cs:26-27,45-47`). New secret fields are not pinned by tests.
+- **CQ-10-F2.** QRZ password is in the GET query string; only `Program.cs:1161` keeps it out of `app.log`
+  (`QrzCallsignLookup.cs:170`). Enforce in the client.
+- **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
+  test (`ImageFileLoader.cs:17,29`).
+- **CQ-06-F3.** Configurations-menu dialog awaits sit outside each command's try; LogQso, Redecode and
+  Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
+- **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
+  transaction (`LogbookPaneViewModel.cs:940`).
+- **CQ-11-F2.** Each Options open leaks one `OptionsWindowViewModel` until exit (transient `IDisposable`
+  from the root provider, `Program.cs:998`).
+- **CQ-05-F1. On-air risk.** Header TX volume is never reloaded after an Options edit
+  (`RadioStatusViewModel.cs:876,1211`), but the live TX gain changes at once (`SstvSessionService.cs:3202`).
+  The first touch of the header slider then jumps the gain mid-TX. Fix: re-read the value in the Options
+  Closed handler (`MainWindow.axaml.cs:603`) under `_suppressVolumePersist`. A cross-thread change event
+  needs full review, a UI-thread hop, and save suppression.
+- **CQ-11-F3.** Log lines have no date (`FileLoggerProvider.cs:423`).
+- **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
+  `coverage-thresholds.json`. Related: COV.
+- **CQ-05-F6 / CQ-06-F5.** Raw English `ex.Message` and English file-picker type names reach the UI.
+  Related: R2.
+
+Test integrity:
+- **CQ-03-F2.** Six undisposed Extended-mode decoder sites in SSTV tests leak temp files.
+- **CQ-07-F2 / F3 / F4.** Giant UI test classes, 32 reflection call sites, no shared VM builders
+  (a 15-argument constructor inline ~200 times).
+- **CQ-08-F5.** Positive Application-test assertions follow fixed `Task.Delay`.
+- **CQ-10-F6.** Logbook tests use fixed sleeps; one IPv6 test can pass without running.
+
+Structure (do as partial-file splits first, then extract):
+- **CQ-GOD.** 01-F1 decoder (2,645 code lines), 04-F2 TX editor VM, 05-F2 Options VM, 08-F2 session
+  service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report.
+- **CQ-01-F4.** `RestartableSstvDecoder` hand-mirrors ~25 settings through 21/26-parameter constructors;
+  `ResolvedSstvDecoderSettings` already exists.
+- **CQ-04-F3 / F6 / F7 / F8.** Box/Image perspective code duplicated and drifted; Flatten/Demote
+  duplication; interaction policy in code-behind; non-re-entrant batch flag.
+- **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
+- **CQ-08-F4.** `ISstvSessionService` has ~86 members.
+- **CQ-01-F2 / CQ-12-F1.** Fix-history narrative in `//` comments (~1,279 lines). Do not backfill (comment
+  sweep was abandoned); add a check against new ones, and delete false comments when touching a file.
+
+### CQ-P3. OPEN — 128 nice-to-have items
+
+Listed with evidence in the area reports. Pick them up only when already working in that file.
+
+### CQ verified done
+
+- **CQ-03-F1.** DONE 2026-10-11 — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` now compares our
+  RX decode against legacy's own `*_RX.bmp` (colour limit plus horizontal/vertical ramp-offset bands, all
+  measured; ±1 px, ±1 row and +N-on-B mutations each fail all 8 rows). Found AVT-PARITY and RM8-SLOPE (§1).
