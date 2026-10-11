@@ -464,3 +464,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-02-F1.** DONE 2026-10-11 — `f1af36ca` pins the production TX loop (14 bit-identical loop-parity cases,
   17 output fingerprints identical on .NET 8.0.31 and 10.0.12, production LPF/silence tests; 7 mutations fail).
   `c79b76e7` moves the per-sample math into one shared `TxToneSynthesizer`, with every pin unchanged.
+- **CQ-02-F4/F5/F8 (P3, plan cq-q3).** DONE 2026-10-11 — `d1788f2f` one `FirDesign.MakeFilter` (2,095-case frozen-oracle
+  bit identity); `3f3284b2` Notch + TX BPF on `FirDelayLine` (132-case parity); `72692a06` one Sync/Hold/Scan line loop
+  for the four sequential TX encoders (43-mode segment fingerprints, 11 mutations).
