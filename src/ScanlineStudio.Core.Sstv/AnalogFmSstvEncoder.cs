@@ -153,17 +153,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
     /// <c>avgLPF.SetCount(int(SampFreq/m_lpffq + 0.5))</c>) -- rounds via <c>+0.5</c> BEFORE
     /// truncation, NOT <c>CFQC::CalcLPF</c>'s own bare-truncation formula (item 2,
     /// `ZeroCrossingFrequencyCounter.SetTuning`) -- a real, easy-to-miss difference between this
-    /// port's own two <c>CSmooz</c> consumers, code-review round 1 finding: extracted into one shared
-    /// method (was duplicated verbatim in <see cref="EncodeBatchedAsyncCore"/> and
-    /// <see cref="RenderSegments"/>) specifically so this formula has exactly one place to test and
-    /// one place to get right, after a review found NO test actually exercised the <c>+0.5</c> at a
-    /// frequency where it changes the result (the chosen test frequency happened to make rounding and
-    /// truncation agree).</summary>
+    /// port's own two <c>CSmooz</c> consumers. Its only caller is <see cref="TxToneSynthesizer"/>.
+    /// It is tested directly at a frequency where the <c>+0.5</c> changes the result, because at
+    /// many frequencies rounding and truncation agree.</summary>
     internal static int ResolveLpfWindowSize(double sampleRate, double lpfFrequencyHz) =>
         Math.Max(1, (int)(sampleRate / Math.Clamp(lpfFrequencyHz, 100.0, 3000.0) + 0.5));
 
     /// <summary>Spec/18-path-to-1.0.md Medium item: "No TX send-progress feedback during transmit."
-    /// Replicates <see cref="EncodeBatchedAsyncCore"/>'s own running-accumulator expression verbatim
+    /// Replicates <see cref="TxToneSynthesizer.AdvanceSegment"/>'s own running-accumulator expression verbatim
     /// (same per-segment formula, same operand order, same summation order) rather than summing
     /// <c>DurationMs</c> first and multiplying once -- floating-point addition is not associative,
     /// so those two forms are only guaranteed to agree in exact arithmetic; over the ~hundreds of
@@ -269,14 +266,9 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         }
     }
 
-    // T1-3 (production_audit.md): formerly EncodeAsyncCore, yielding one float per MoveNextAsync
-    // call -- now the sole DSP synthesis implementation, batching its output into fixed-size chunks
-    // instead. EncodeAsync (above) derives its own per-float behavior from this via FlattenBatches,
-    // rather than duplicating the synthesis math -- see that method's own comment. Every line of
-    // actual DSP computation below (phase/effectiveSampleRate/idealSamplesSoFar-emittedSamples
-    // accumulator/lpfAverage/bandpassFilter/the frequencyHz<=0 branch) is IDENTICAL to what this
-    // method contained before T1-3 -- only what happens to the already-computed float changed
-    // (appended to a shared buffer and conditionally flushed, instead of yielded directly).
+    /// <summary>The sole production TX synthesis loop, batching output into fixed-size chunks;
+    /// EncodeAsync derives its per-float stream from this via FlattenBatches. The per-sample DSP math
+    /// lives in <see cref="TxToneSynthesizer"/>; cancellation and batch flushing stay here.</summary>
     /// <param name="carrierOffsetHz">Receiver tuning error, in Hz, added to every emitted tone. Models
     /// an operator whose radio is mistuned: a BFO offset shifts every audio tone by the SAME amount
     /// with timing unchanged. Distinct from <c>sampleRateOffsetHz</c>, which is a CLOCK error that
@@ -299,50 +291,17 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         [EnumeratorCancellation] CancellationToken ct)
     {
         var lineEncoder = ScanlineCodecFactory.CreateEncoder(mode.ColorEncoding);
-        var phase = 0.0;
 
-        // Round-2 plan-review finding: the effective (offset-corrected) rate feeds ONLY the
-        // accumulator/phaseIncrement below -- resolved once, here, matching legacy's own
-        // once-per-transmission re-apply (Main.cpp:959/7948, never mid-transmission).
+        // The effective (offset-corrected) rate feeds ONLY the accumulator and the VCO phase step --
+        // resolved once, here, matching legacy's own once-per-transmission re-apply
+        // (Main.cpp:959/7948, never mid-transmission). The BPF and LPF window use the nominal rate.
         var effectiveSampleRate = ResolveEffectiveSampleRate(sampleRateOffsetHz);
 
-        // ultracode audit finding #26: legacy's TX output bandpass filter is applied to EVERY emitted
-        // sample, as the last step of CSSTVMOD::Do() -- constructed locally, not as
-        // a field, so every EncodeAsync call gets fresh (zeroed) filter state, matching legacy's own
-        // per-transmission InitTXBuf -> m_BPF.Clear() reset (this encoder is a DI singleton; a
-        // ctor-field filter would leak state across calls). See TxOutputBandpassFilter's own doc
-        // comment for why this can't just reuse SearchBandpassFilter. Deliberately the NOMINAL
-        // SampleRate, not effectiveSampleRate -- legacy builds this same filter from the nominal
-        // rate too, never the TX-offset-corrected one (sstv.cpp:2768/2771/2923/2926), a Clock
-        // calibration plan-review finding (round 1). Options stub backlog item 3: the on/off gate
-        // (legacy's m_bpf) now lives at the ProcessSample call site below, not inside the filter
-        // class -- matches legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (sstv.cpp:2914) exactly,
-        // the delay line is never advanced at all when off, not merely bypassed post-construction.
-        var bandpassFilter = new TxOutputBandpassFilter(SampleRate, txBpfTapCount);
-
-        // Options stub backlog item 3 (docs/plans/options-stub-item3-tx-bpf-lpf-plan.md): legacy's
-        // TX LPF (CSSTVMOD::avgLPF, a CSmooz moving average -- the exact same class already ported
-        // as MovingAverage) smooths the discrete per-segment target FREQUENCY, applied PRE-VCO, once
-        // per audio sample (sstv.cpp:2869, inside the m_Cnt-active/f>0 branch only). Fresh-per-call
-        // here, NOT matching legacy's own InitTXBuf-clears-m_BPF-only precedent (avgLPF genuinely
-        // PERSISTS across legacy transmissions, only SetCount clears it, sstv.cpp:2827,2929) -- a
-        // deliberate, documented DIVERGENCE (simpler, deterministic, practically indistinguishable
-        // after one window's worth of samples), not a faithfully-ported behavior. SetCount uses the
-        // NOMINAL SampleRate (matching CalcFilter's own bare SampFreq, sstv.cpp:2929, and legacy's
-        // own separate VCO-rate re-pointing at the offset-corrected rate, Main.cpp:959/7948) --
-        // rounds via +0.5 before truncation, NOT CFQC::CalcLPF's bare-truncation formula (item 2).
-        var lpfAverage = new MovingAverage(ResolveLpfWindowSize(SampleRate, txLpfFrequencyHz));
-
-        // Running accumulator, not "round(durationMs -> samples) per segment": with ~245,000
-        // individual per-pixel segments in a full image, independently rounding each one's sample
-        // count biases every pixel the same direction and the error accumulates linearly (over a
-        // second of drift by the end of the image). Tracking ideal elapsed samples as a running
-        // total and taking the difference keeps rounding error bounded. Doc correction (Tier A
-        // Batch 8 chunk 8c): this port TRUNCATES (see the ultracode finding #25 comment below), which
-        // bounds the error to [0,1) samples -- a one-sided lag, not the "+/-0.5 sample" round-to-
-        // nearest figure this line previously (incorrectly) claimed.
-        var idealSamplesSoFar = 0.0;
-        var emittedSamples = 0L;
+        // A local, never a field: this encoder is a DI singleton, so per-call construction is what
+        // gives every transmission fresh (zeroed) filter state, matching legacy's per-transmission
+        // InitTXBuf -> m_BPF.Clear() reset.
+        var synthesizer = new TxToneSynthesizer(
+            SampleRate, effectiveSampleRate, carrierOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz);
 
         // T1-3 (production_audit.md): shared across BOTH loops below (tone segments, then the
         // sound-file/CW-ID row-playback tail) so a batch boundary can straddle the two without ever
@@ -361,78 +320,10 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         {
             ct.ThrowIfCancellationRequested();
 
-            idealSamplesSoFar += durationMs / 1000.0 * effectiveSampleRate;
-            // ultracode audit finding #25: legacy's CSSTVMOD::Do uses `for (; m_iPos < int(m_dPos); ...)`
-            // on an equivalent running accumulator -- floor/truncation, not round-to-nearest. Both are
-            // bounded (non-cumulative, +/-1 sample per segment boundary) and Math.Round is arguably
-            // more accurate (zero-mean vs legacy's 0.5-sample lag). Doc correction (Tier A Batch 8
-            // chunk 8c): the previous "knowing parity trade for future sample-exact diffing against a
-            // legacy TX capture" framing overstated what this buys -- legacy's own accumulator uses a
-            // DIFFERENT operand order (`(tim*SampFreq)/1000.0`, multiply-then-divide, vs this port's
-            // divide-then-multiply), and legacy's VCO is a quantized sine LOOKUP TABLE plus integer
-            // gain/mask stages (`sstv.cpp:77-148,2866-2901`), not this port's exact `Math.Sin` --
-            // sample-exact legacy diffing was never actually reachable through this choice alone.
-            // Keep truncation anyway -- it is the real ported behavior, not an invented approximation.
-            // Comment left here so a future reader doesn't "fix" this back to Round without reason.
-            var targetEmitted = (long)idealSamplesSoFar;
-            var samplesToEmit = targetEmitted - emittedSamples;
-            emittedSamples = targetEmitted;
-
+            var samplesToEmit = synthesizer.AdvanceSegment(durationMs);
             for (var i = 0; i < samplesToEmit; i++)
             {
-                double sample;
-                if (frequencyHz <= 0)
-                {
-                    // Station-ID work (spec/14-roadmap.md's "CW-ID / FSK station-ID subsystem"):
-                    // CW-ID's inter-element/inter-letter/inter-word gaps are real silence, not a
-                    // 0Hz tone. Matches legacy CSSTVMOD::Do (sstv.cpp:2865-2875) exactly: emit 0
-                    // amplitude and do NOT advance the VCO phase (`m_vco.Do()` is skipped entirely
-                    // when the buffered value is <= 0), so a tone immediately after a gap resumes
-                    // in-phase rather than restarting from phase 0. The output bandpass filter
-                    // still runs over the zero samples below (sstv.cpp:2914), same as every other
-                    // segment -- do not special-case it out of the filter call. Options stub backlog
-                    // item 3: the TX LPF moving average is ALSO skipped here (sstv.cpp:2867's
-                    // `if(f>0)` gates both the VCO advance AND avgLPF.Avg together) -- its history
-                    // holds through the gap and resumes smoothing, not resets, once a real tone
-                    // follows, matching legacy exactly.
-                    sample = 0.0;
-                }
-                else
-                {
-                    // Options stub backlog item 3: legacy re-reads and re-smooths this SAME
-                    // per-segment-constant frequencyHz on EVERY audio sample (m_TXBuf holds one
-                    // discrete frequency code per requested duration, Do() reads+smooths it once per
-                    // call, sstv.cpp:2866-2870) -- avgLPF converges toward each new segment's target
-                    // like a glide filter rather than an instant jump. phaseIncrement is therefore
-                    // now derived PER SAMPLE from the (optionally smoothed) frequency, not once per
-                    // segment. Smoothing the raw Hz value directly (not legacy's normalized
-                    // (f-1100)/1200) is algebraically identical, not a divergence -- CSmooz/
-                    // MovingAverage is a linear operator (mean(a*x+b) = a*mean(x)+b) and legacy's VCO
-                    // conversion is itself affine, so a boxcar mean commutes through it exactly.
-                    var smoothedFrequencyHz = txLpfEnabled ? lpfAverage.Add(frequencyHz) : frequencyHz;
-
-                    // The carrier offset is added AFTER the transmit smoothing on purpose: it models
-                    // a RECEIVER tuning error, which is downstream of the transmitter's audio path.
-                    // It is also deliberately absent from the silence branch above -- there is no
-                    // tone there to shift, and shifting nothing would only advance the phase.
-                    var phaseIncrement = 2 * Math.PI * (smoothedFrequencyHz + carrierOffsetHz) / effectiveSampleRate;
-
-                    phase += phaseIncrement;
-                    if (phase >= 2 * Math.PI)
-                    {
-                        phase -= 2 * Math.PI;
-                    }
-
-                    sample = Math.Sin(phase);
-                }
-
-                // Filtered in double, narrowed to float only here -- legacy's whole chain
-                // (CSSTVMOD::Do's `d`) is double; narrowing before filtering would lose precision
-                // the filter itself doesn't need to lose. Options stub backlog item 3: the bandpass
-                // filter's own on/off gate (legacy's m_bpf) lives here, at the call site, not inside
-                // the filter class -- when off, the delay line is never advanced at all, matching
-                // legacy's own `if(m_bpf) d = m_BPF.Do(d);` shape (sstv.cpp:2914) exactly.
-                buffer[count++] = (float)(txBpfEnabled ? bandpassFilter.ProcessSample(sample) : sample);
+                buffer[count++] = synthesizer.NextToneSample(frequencyHz);
                 if (count == EncodeBatchSize)
                 {
                     yield return buffer;
@@ -467,8 +358,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
                 // (sstv.cpp:2914) -- the only stage row playback and tone generation actually share.
                 // `.Span[i]` is a transient rvalue, never a declared local -- a ReadOnlySpan<float>
                 // local can't be declared inside this async iterator method (CS4012).
-                var raw = samples.Span[i];
-                buffer[count++] = (float)(txBpfEnabled ? bandpassFilter.ProcessSample(raw) : raw);
+                buffer[count++] = synthesizer.FilterRaw(samples.Span[i]);
                 if (count == EncodeBatchSize)
                 {
                     yield return buffer;
@@ -488,24 +378,14 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         await Task.CompletedTask;
     }
 
-    // Test-only seam (mirrors GenerateFooterSegments' existing internal-for-testing pattern below):
-    // renders an arbitrary segment sequence through the identical frequency-to-sample math used by
-    // EncodeBatchedAsyncCore above (running-accumulator sample count, silence handling, output
-    // bandpass filter) without needing a full SstvModeDefinition/IImageSource/CancellationToken
-    // round trip. Kept as a small, deliberately independent implementation rather than extracted
-    // shared code: EncodeBatchedAsyncCore's per-sample loop can't cleanly share a `ref double phase`
-    // across an iterator method boundary, and this method has no cancellation/async concerns of its
-    // own to preserve. T1-3 (production_audit.md): this stays a genuinely separate implementation,
-    // deliberately NOT switched to consume EncodeBatchedAsyncCore's own batched output -- it exists
-    // specifically to give golden-vector tests raw per-sample IEnumerable<float> access with no
-    // async/batching machinery in the way at all.
-    //
-    // Clock calibration (stub survey Tier 3), revised decision: widened int -> double so this same
-    // test-only seam can also verify the sampleRateOffsetHz behavior directly (the accumulator/
-    // phaseIncrement math here is IDENTICAL to EncodeBatchedAsyncCore's, so a fractional effective rate
-    // exercises the exact same code shape a real offset-corrected transmission would). Purely
-    // test-only, no external API stability contract -- every existing caller passes a plain `int`
-    // literal/constant, which widens to `double` implicitly with no source changes needed anywhere.
+    /// <summary>Test-only seam: renders an arbitrary segment sequence through the same
+    /// <see cref="TxToneSynthesizer"/> that <see cref="EncodeBatchedAsyncCore"/> uses, as a plain
+    /// per-sample <c>IEnumerable&lt;float&gt;</c> with no mode, image, cancellation or batching. RX
+    /// tests use it as a signal generator. It uses ONE rate for everything (nominal = effective =
+    /// <paramref name="sampleRate"/>, no carrier offset), so it cannot model a sample-rate offset:
+    /// production builds the BPF and LPF window at the nominal rate but steps the accumulator and VCO
+    /// at the effective rate. Passing a fractional rate here therefore does NOT reproduce an
+    /// offset-corrected transmission; it has no sound-file tail either.</summary>
     internal static IEnumerable<float> RenderSegments(
         IEnumerable<(double FrequencyHz, double DurationMs)> segments,
         double sampleRate,
@@ -514,44 +394,15 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         bool applyLpf = false,
         double lpfFrequencyHz = 2000.0)
     {
-        var phase = 0.0;
-        var bandpassFilter = new TxOutputBandpassFilter(sampleRate, tapCount);
-        var lpfAverage = new MovingAverage(ResolveLpfWindowSize(sampleRate, lpfFrequencyHz));
-        var idealSamplesSoFar = 0.0;
-        var emittedSamples = 0L;
+        var synthesizer = new TxToneSynthesizer(
+            sampleRate, sampleRate, carrierOffsetHz: 0.0, applyFilter, tapCount, applyLpf, lpfFrequencyHz);
 
         foreach (var (frequencyHz, durationMs) in segments)
         {
-            idealSamplesSoFar += durationMs / 1000.0 * sampleRate;
-            var targetEmitted = (long)idealSamplesSoFar;
-            var samplesToEmit = targetEmitted - emittedSamples;
-            emittedSamples = targetEmitted;
-
+            var samplesToEmit = synthesizer.AdvanceSegment(durationMs);
             for (var i = 0; i < samplesToEmit; i++)
             {
-                double sample;
-                if (frequencyHz <= 0)
-                {
-                    sample = 0.0;
-                }
-                else
-                {
-                    var smoothedFrequencyHz = applyLpf ? lpfAverage.Add(frequencyHz) : frequencyHz;
-                    var phaseIncrement = 2 * Math.PI * smoothedFrequencyHz / sampleRate;
-
-                    phase += phaseIncrement;
-                    if (phase >= 2 * Math.PI)
-                    {
-                        phase -= 2 * Math.PI;
-                    }
-
-                    sample = Math.Sin(phase);
-                }
-
-                // applyFilter=false is test-only (verifying raw VCO phase behavior, e.g. that
-                // silence doesn't disturb phase continuity, independent of filter transients) --
-                // production always filters, matching EncodeBatchedAsyncCore.
-                yield return (float)(applyFilter ? bandpassFilter.ProcessSample(sample) : sample);
+                yield return synthesizer.NextToneSample(frequencyHz);
             }
         }
     }
