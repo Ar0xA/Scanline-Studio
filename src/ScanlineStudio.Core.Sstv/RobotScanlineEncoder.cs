@@ -25,7 +25,8 @@ internal sealed class RobotScanlineEncoder : IScanlineEncoder
         var yPerPixelMs = ySegment.DurationMs / mode.ImageWidth;
         for (var x = 0; x < mode.ImageWidth; x++)
         {
-            var (y, _, _) = YCbCr.FromRgb(image.GetScanline(lineIndex)[x].R, image.GetScanline(lineIndex)[x].G, image.GetScanline(lineIndex)[x].B);
+            var pixel = image.GetScanline(lineIndex)[x];
+            var (y, _, _) = YCbCr.FromRgb(pixel.R, pixel.G, pixel.B);
             yield return (YCbCr.ColorToFreq(y, mode.LuminanceMinHz, mode.LuminanceMaxHz), yPerPixelMs);
         }
 
