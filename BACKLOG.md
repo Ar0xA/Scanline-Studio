@@ -388,9 +388,6 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
   asserts this. Fix: a failed load must block the write. Rename the file aside on JsonException only, and
   rethrow I/O and permission errors. A rename on a transient IOException would move a good file aside.
   Add CQ-09-F4's flush in the same change.
-- **CQ-02-F1. TX LPF tested only on a copy of the encoder loop.** `AnalogFmSstvEncoderTxLpfTests.cs:24,63`
-  call `RenderSegments`, not `EncodeBatchedAsyncCore`. Wire-observable. Fix: one shared tone synthesizer,
-  bit-identical before/after. Review tier: full.
 - **CQ-04-F1. TX-editor element fields hand-copied through ~8 mapping sites**
   (`TxImageEditorPaneViewModel.cs:69-164,1507-1534,3245-3654,3816-4035`). Three past Undo-reset bugs.
   Fix: snapshot round-trip on each element VM plus a full-property round-trip test per element type.
@@ -464,3 +461,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-03-F1.** DONE 2026-10-11 — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` now compares our
   RX decode against legacy's own `*_RX.bmp` (colour limit plus horizontal/vertical ramp-offset bands, all
   measured; ±1 px, ±1 row and +N-on-B mutations each fail all 8 rows). Found AVT-PARITY and RM8-SLOPE (§1).
+- **CQ-02-F1.** DONE 2026-10-11 — `f1af36ca` pins the production TX loop (14 bit-identical loop-parity cases,
+  17 output fingerprints identical on .NET 8.0.31 and 10.0.12, production LPF/silence tests; 7 mutations fail).
+  `c79b76e7` moves the per-sample math into one shared `TxToneSynthesizer`, with every pin unchanged.
