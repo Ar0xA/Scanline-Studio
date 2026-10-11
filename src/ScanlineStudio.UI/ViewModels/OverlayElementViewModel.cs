@@ -372,6 +372,35 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
         BitmapFillEnabled: BitmapFillEnabled, BitmapFillSource: BitmapFillSource,
         GrowToFillEnabled: GrowToFillEnabled);
 
+    /// <summary>Paste Style: copies only the style fields of <paramref name="style"/> onto this
+    /// element. Every new style field must be added here or Paste Style silently drops it. The pane
+    /// owns the undo step and preview suspension around this call.</summary>
+    public void ApplyStyleFrom(TxImageEditorPaneViewModel.RawTextElementSnapshot style)
+    {
+        FontFamily = style.FontFamily;
+        FontSizeRelative = style.FontSizeRelative;
+        Color = style.Color;
+        StrokeColor = style.StrokeColor;
+        StrokeThickness = style.StrokeThickness;
+        ShadowColor = style.ShadowColor;
+        ShadowOffsetX = style.ShadowOffsetX;
+        ShadowOffsetY = style.ShadowOffsetY;
+        RotationDegrees = style.RotationDegrees;
+        GradientEnabled = style.GradientEnabled;
+        GradientKind = style.GradientKind;
+        // Null snapshot colors mean "never customized"; fall back to the same red/blue default as element creation.
+        GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
+        GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
+        Bold = style.Bold;
+        Italic = style.Italic;
+        StackColor = style.StackColor;
+        StackStepX = style.StackStepX;
+        StackStepY = style.StackStepY;
+        // Source before Enabled; both unconditional so a solid/gradient paste clears an existing picture fill.
+        BitmapFillSource = style.BitmapFillSource;
+        BitmapFillEnabled = style.BitmapFillEnabled;
+    }
+
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
     /// <see cref="ImageElementViewModel.SetAsBackdropCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>

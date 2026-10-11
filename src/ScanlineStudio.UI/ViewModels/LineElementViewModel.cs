@@ -142,6 +142,15 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
         X: X, Y: Y, Width: Width, Height: Height, Z: Z, Locked: Locked,
         X1: X1, Y1: Y1, X2: X2, Y2: Y2, StrokeColor: StrokeColor, StrokeThickness: StrokeThickness, Opacity: Opacity);
 
+    /// <summary>Paste Style: copies only the style fields of <paramref name="style"/> onto this
+    /// element. The pane owns the undo step and preview suspension around this call.</summary>
+    public void ApplyStyleFrom(TxImageEditorPaneViewModel.RawLineElementSnapshot style)
+    {
+        StrokeColor = style.StrokeColor;
+        StrokeThickness = style.StrokeThickness;
+        Opacity = style.Opacity;
+    }
+
     partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(CanRotate));
 
     /// <summary>Get: endpoint midpoint. Set: translate BOTH endpoints by the delta -- required by

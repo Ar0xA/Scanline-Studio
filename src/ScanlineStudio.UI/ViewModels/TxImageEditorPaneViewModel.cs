@@ -77,7 +77,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // field, Undo/Redo silently reset EVERY text element's own toggle to off (ApplyState's own
         // recreate-every-element-from-a-snapshot path has nowhere else to read it from), a much wider
         // and more visible reset than OverlayElementViewModel.GrowToFillEnabled's own doc comment
-        // ("resets on every template reload") implied. Deliberately NOT read by PasteSelectedElementStyle
+        // ("resets on every template reload") implied. Deliberately NOT read by OverlayElementViewModel.ApplyStyleFrom
         // (that method copies fields explicitly, one at a time -- this one is simply never among
         // them), so Copy Style/Paste Style still correctly does NOT carry it between elements, only
         // Undo/Redo/Duplicate/Copy-Paste (which reuse this same record) do.
@@ -2168,8 +2168,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         StatusMessage = null;
-        // Source assigned before Enabled -- matches PasteSelectedElementStyle's own convention (see
-        // that switch case's own doc comment).
+        // Source assigned before Enabled -- matches OverlayElementViewModel.ApplyStyleFrom's convention (see
+        // its inline comment).
         text.BitmapFillSource = source;
         text.BitmapFillEnabled = true;
     }
@@ -5471,7 +5471,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>TX workflow modernization plan, Phase 1 -- Copy/Paste Style. A SEPARATE clipboard
     /// field from <see cref="_clipboardSnapshot"/> (element copy/paste): copying an element's style
     /// must not clobber a pending element paste, and vice versa. Reuses <see cref="ITemplateElementViewModel.ToSnapshot"/>
-    /// wholesale rather than a second, narrower snapshot type -- <see cref="PasteSelectedElementStyle"/>
+    /// wholesale rather than a second, narrower snapshot type -- each element's <c>ApplyStyleFrom</c>
     /// picks out only the style-relevant fields when applying, so nothing new needs to track "which
     /// fields count as style" in two places. Gated to same-element-kind-only paste (text style onto
     /// text, box style onto box) -- deliberately, to avoid an ambiguous partial application if the
@@ -5507,7 +5507,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>One coalesced undo step for the whole style application, same
     /// <see cref="_suspendPreview"/>-wrapped-explicit-<see cref="PushUndoSnapshot"/> pattern
     /// <see cref="AlignSelectedElementToCrop"/> already established -- without it, each property
-    /// assignment below would push its own step via that property's own change hook (where one
+    /// assignment in the element's ApplyStyleFrom would push its own step via that property's own change hook (where one
     /// exists), turning one "paste style" click into several undo steps.</summary>
     [RelayCommand(CanExecute = nameof(CanPasteSelectedElementStyle))]
     private void PasteSelectedElementStyle()
@@ -5519,65 +5519,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             switch (_styleClipboardSnapshot, SelectedOverlayElement)
             {
                 case (RawTextElementSnapshot style, OverlayElementViewModel text):
-                    text.FontFamily = style.FontFamily;
-                    text.FontSizeRelative = style.FontSizeRelative;
-                    text.Color = style.Color;
-                    text.StrokeColor = style.StrokeColor;
-                    text.StrokeThickness = style.StrokeThickness;
-                    text.ShadowColor = style.ShadowColor;
-                    text.ShadowOffsetX = style.ShadowOffsetX;
-                    text.ShadowOffsetY = style.ShadowOffsetY;
-                    text.RotationDegrees = style.RotationDegrees;
-                    text.GradientEnabled = style.GradientEnabled;
-                    text.GradientKind = style.GradientKind;
-                    // Same fallback convention as CreateOverlayElement's own default-red/blue pair --
-                    // GradientStartColor/EndColor are non-nullable on the VM (they always drive a
-                    // real gradient stop), the raw snapshot's nullability is only about whether
-                    // gradient colors were ever customized away from that default.
-                    text.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
-                    text.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
-                    text.Bold = style.Bold;
-                    text.Italic = style.Italic;
-                    text.StackColor = style.StackColor;
-                    text.StackStepX = style.StackStepX;
-                    text.StackStepY = style.StackStepY;
-                    // TX editor gap-items plan, item 4b -- same "add every current field to THIS
-                    // switch case or it silently drops" bug class the box-gradient case above already
-                    // documents finding once. Source assigned BEFORE Enabled (round-2 code-review
-                    // convention, matches every other write-both-together assignment in this file) --
-                    // copies the resolved IImageSource handle directly, no re-upload/re-encode. Both
-                    // unconditional (not gated on style.BitmapFillEnabled) so pasting a solid/gradient
-                    // style onto a picture-filled text element correctly clears it, same as the
-                    // Gradient fields immediately above already do for a solid-onto-gradient paste.
-                    text.BitmapFillSource = style.BitmapFillSource;
-                    text.BitmapFillEnabled = style.BitmapFillEnabled;
+                    text.ApplyStyleFrom(style);
                     break;
                 case (RawBoxElementSnapshot style, BoxElementViewModel box):
-                    box.FillColor = style.FillColor;
-                    // Legacy `.mtm` import -- same "add every current field to THIS switch case or it
-                    // silently drops" bug class this case's own Gradient comment already documents.
-                    box.FillEnabled = style.FillEnabled;
-                    box.BorderColor = style.BorderColor;
-                    box.BorderThickness = style.BorderThickness;
-                    box.Opacity = style.Opacity;
-                    box.CornerRadius = style.CornerRadius;
-                    // Code-review finding (2026-09-01, box gradient fill): this case was missing
-                    // Gradient entirely -- Copy Style on a gradient box then Paste Style silently
-                    // produced a solid box, and pasting a solid box's style onto a gradient box left
-                    // the gradient on. Same fallback convention as text's own case above.
-                    box.GradientEnabled = style.GradientEnabled;
-                    box.GradientKind = style.GradientKind;
-                    box.GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
-                    box.GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
-                    // Element rotation (2026-09-20) -- same "carries with style" treatment as text's
-                    // own RotationDegrees above (§9's own threading checklist: Box's is included in
-                    // Copy/Paste Style, matching Text's precedent).
-                    box.RotationDegrees = style.RotationDegrees;
+                    box.ApplyStyleFrom(style);
                     break;
                 case (RawLineElementSnapshot style, LineElementViewModel line):
-                    line.StrokeColor = style.StrokeColor;
-                    line.StrokeThickness = style.StrokeThickness;
-                    line.Opacity = style.Opacity;
+                    line.ApplyStyleFrom(style);
                     break;
             }
         }

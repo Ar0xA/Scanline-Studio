@@ -496,6 +496,27 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
         Corner2X: Corner2X, Corner2Y: Corner2Y, Corner3X: Corner3X, Corner3Y: Corner3Y,
         FillEnabled: FillEnabled, RotationDegrees: RotationDegrees);
 
+    /// <summary>Paste Style: copies only the style fields of <paramref name="style"/> onto this
+    /// element. Every new style field must be added here or Paste Style silently drops it. The pane
+    /// owns the undo step and preview suspension around this call.</summary>
+    public void ApplyStyleFrom(TxImageEditorPaneViewModel.RawBoxElementSnapshot style)
+    {
+        FillColor = style.FillColor;
+        // FillEnabled carries legacy .mtm import's no-fill boxes (see the FillEnabled field doc).
+        FillEnabled = style.FillEnabled;
+        BorderColor = style.BorderColor;
+        BorderThickness = style.BorderThickness;
+        Opacity = style.Opacity;
+        CornerRadius = style.CornerRadius;
+        // Gradient is style too: omitting it turned a pasted gradient box solid, and left a gradient on under a pasted solid.
+        GradientEnabled = style.GradientEnabled;
+        GradientKind = style.GradientKind;
+        GradientStartColor = style.GradientStartColor ?? new Rgb24(255, 0, 0);
+        GradientEndColor = style.GradientEndColor ?? new Rgb24(0, 0, 255);
+        // Rotation carries with style, matching text.
+        RotationDegrees = style.RotationDegrees;
+    }
+
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 
     /// <inheritdoc cref="ImageElementViewModel.ShowResizeHandles"/>
