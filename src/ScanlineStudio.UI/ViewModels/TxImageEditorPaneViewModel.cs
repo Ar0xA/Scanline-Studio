@@ -520,7 +520,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public void SetSelection(IEnumerable<ITemplateElementViewModel> elements)
     {
         // ToList() FIRST, unconditionally -- a caller (ToggleElementSelection's removal branch, the
-        // RemoveOverlayElement/FlattenElementAsync shrink) may pass a deferred Where() over
+        // RemoveOverlayElement/BakeElementIntoBackgroundAsync shrink) may pass a deferred Where() over
         // SelectedOverlayElements itself, which this method then clears; evaluating lazily would
         // observe its own mutation mid-enumeration.
         var newSet = elements.ToList();
@@ -2639,7 +2639,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             OverlayElements.Insert(0, element);
 
             var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
-            // New generation, same reasoning as FlattenElementAsync's own identical assignment: this
+            // New generation, same reasoning as BakeElementIntoBackgroundAsync's own identical assignment: this
             // source can never be reached from the old baseline by rotation, so ApplyState must
             // restore it by instance.
             _sourceBaseline = placeholder;
@@ -2781,82 +2781,23 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
-        {
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenUnavailable");
-            return;
-        }
-
-        var request = new FlattenBakeRequest(
-            _originalSource, CropRect, PreserveAspect, BuildTemplateElement(backdrop),
-            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
-        var preparer = _preparer;
-
-        IImageSource? demoted;
-        _isDemoting = true;
-        DemoteBackdropToBackgroundCommand.NotifyCanExecuteChanged();
-        try
-        {
-            demoted = await Task.Run(() => BakeElementIntoSource(preparer, request));
-        }
-        catch (Exception ex)
-        {
-            Log.DemoteBackdropToBackgroundFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteFailed");
-            return;
-        }
-        finally
-        {
-            _isDemoting = false;
-            DemoteBackdropToBackgroundCommand.NotifyCanExecuteChanged();
-        }
-
-        if (demoted is null)
-        {
-            // A full-frame backdrop's write-back rect is always the whole crop-content area, so this
-            // should be unreachable in practice -- handled anyway, same defensive shape
-            // FlattenElementAsync's own identical case uses.
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteOutsideFrame");
-            return;
-        }
-
-        // Stale-result guard, same shape and reasoning as FlattenElementAsync's own.
-        if (!ReferenceEquals(_originalSource, request.Source)
-            || !CropRect.Equals(request.CropRect)
-            || PreserveAspect != request.PreserveAspect
-            || !OverlayElements.Contains(backdrop)
-            || !BuildTemplateElement(backdrop).Equals(request.Element))
-        {
-            Log.DemoteBackdropToBackgroundDiscardedAsStale(_logger);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.DemoteDiscardedStale");
-            return;
-        }
-
-        // Captured before Dispose() below -- reading it off a disposed element afterward is safe
-        // today (Dispose only releases bitmaps, never touches Origin), but there's no reason to rely
-        // on that once a plain local does the same job for free.
+        // Read before the bake helper disposes the element; Origin is init-only, so the value is the same.
         var wasPromoted = backdrop.Origin.Kind == ImageSourceKind.Promoted;
 
-        PushUndoSnapshot();
-        _suspendPreview = true;
-        try
-        {
-            backdrop.PropertyChanged -= OnOverlayElementPropertyChanged;
-            OverlayElements.Remove(backdrop);
-            if (SelectedOverlayElements.Contains(backdrop))
+        var committed = await BakeElementIntoBackgroundAsync(backdrop, new BakeOperation(
+            SetBusy: busy =>
             {
-                SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, backdrop)));
-            }
-
-            backdrop.Dispose();
-
-            _sourceBaseline = demoted;
-            _sourceBaselineRotation = _rotationCount;
-            ReplaceSourceAndWorkingCopy(demoted);
-        }
-        finally
+                _isDemoting = busy;
+                DemoteBackdropToBackgroundCommand.NotifyCanExecuteChanged();
+            },
+            FailedKey: "Panes.TxImageEditor.DemoteFailed",
+            OutsideFrameKey: "Panes.TxImageEditor.DemoteOutsideFrame",
+            StaleKey: "Panes.TxImageEditor.DemoteDiscardedStale",
+            LogFailed: ex => Log.DemoteBackdropToBackgroundFailed(_logger, ex),
+            LogStale: () => Log.DemoteBackdropToBackgroundDiscardedAsStale(_logger)));
+        if (!committed)
         {
-            _suspendPreview = false;
+            return;
         }
 
         // Auditor-found blocker: a backdrop created by PromoteBackgroundToBackdrop already has the
@@ -4933,95 +4874,21 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
-        {
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenUnavailable");
-            return;
-        }
-
-        var request = new FlattenBakeRequest(
-            _originalSource, CropRect, PreserveAspect, BuildTemplateElement(element),
-            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
-        var preparer = _preparer;
-
-        IImageSource? flattened;
-        _isFlattening = true;
-        FlattenElementCommand.NotifyCanExecuteChanged();
-        try
-        {
-            flattened = await Task.Run(() => BakeElementIntoSource(preparer, request));
-        }
-        catch (Exception ex)
-        {
-            Log.FlattenElementFailed(_logger, ex);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenFailed");
-            return;
-        }
-        finally
-        {
-            _isFlattening = false;
-            FlattenElementCommand.NotifyCanExecuteChanged();
-        }
-
-        if (flattened is null)
-        {
-            // Nothing of this element lands inside the transmitted frame. Deliberately NOT treated
-            // as "flatten == delete": silently removing an element the operator can still see on the
-            // canvas (outside the crop) would be a data-loss surprise.
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenOutsideFrame");
-            return;
-        }
-
-        // Stale-result guard. Every one of these is an input the bake actually consumed:
-        // TemplateElement is a record, so structural equality covers the element's geometry, text,
-        // resolved macros, colours and effects in one comparison.
-        if (!ReferenceEquals(_originalSource, request.Source)
-            || !CropRect.Equals(request.CropRect)
-            || PreserveAspect != request.PreserveAspect
-            || !OverlayElements.Contains(element)
-            || !BuildTemplateElement(element).Equals(request.Element))
-        {
-            Log.FlattenElementDiscardedAsStale(_logger);
-            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenDiscardedStale");
-            return;
-        }
-
-        Log.FlattenElementInvoked(_logger, element.GetType().Name);
-        PushUndoSnapshot();
-        _suspendPreview = true;
-        try
-        {
-            element.PropertyChanged -= OnOverlayElementPropertyChanged;
-            OverlayElements.Remove(element);
-            // Widened to a generic IDisposable check (TX editor gap-items plan, item 4b) -- see
-            // LoadTemplateIntoLiveEditor's own identical comment.
-            if (element is IDisposable disposableElement)
+        var committed = await BakeElementIntoBackgroundAsync(element, new BakeOperation(
+            SetBusy: busy =>
             {
-                disposableElement.Dispose();
-            }
-
-            // TX editor gap-items plan, item 2 (group-ops-lite) -- SHRINKS the selection if
-            // `element` was a member, rather than the OLD "if it was the primary, null the whole
-            // selection" check: that would have wrongly cleared every OTHER group member too when
-            // the flattened element happened to be the primary, and would have left a stale,
-            // DISPOSED element as a group member when it was a NON-primary member (this exact case
-            // is why FlattenElementAsync specifically needs this, not just RemoveOverlayElement).
-            if (SelectedOverlayElements.Contains(element))
-            {
-                SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, element)));
-            }
-
-            // New generation: this source can never be reached from the old baseline by rotation,
-            // so ApplyState must restore it by instance (see its own branch and _sourceBaseline's
-            // doc comment). Baseline rotation is the CURRENT rotation -- the flattened image is
-            // baked in whatever orientation the editor is in right now.
-            _sourceBaseline = flattened;
-            _sourceBaselineRotation = _rotationCount;
-            ReplaceSourceAndWorkingCopy(flattened);
-        }
-        finally
+                _isFlattening = busy;
+                FlattenElementCommand.NotifyCanExecuteChanged();
+            },
+            FailedKey: "Panes.TxImageEditor.FlattenFailed",
+            OutsideFrameKey: "Panes.TxImageEditor.FlattenOutsideFrame",
+            StaleKey: "Panes.TxImageEditor.FlattenDiscardedStale",
+            LogFailed: ex => Log.FlattenElementFailed(_logger, ex),
+            LogStale: () => Log.FlattenElementDiscardedAsStale(_logger),
+            BeforeCommit: () => Log.FlattenElementInvoked(_logger, element.GetType().Name)));
+        if (!committed)
         {
-            _suspendPreview = false;
+            return;
         }
 
         // Adjustment sliders are NOT reset and the adjustments were NOT baked -- see
@@ -5033,6 +4900,114 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             : _localization.GetString("Panes.TxImageEditor.FlattenAdjustmentsNowApply");
 
         RecomputePreview();
+    }
+
+    /// <summary>What differs between Flatten and Demote inside <see cref="BakeElementIntoBackgroundAsync"/>.
+    /// <paramref name="SetBusy"/> sets the command's own busy flag and refreshes its CanExecute;
+    /// <paramref name="BeforeCommit"/> runs after the stale check, before the undo push.</summary>
+    private sealed record BakeOperation(
+        Action<bool> SetBusy,
+        string FailedKey,
+        string OutsideFrameKey,
+        string StaleKey,
+        Action<Exception> LogFailed,
+        Action LogStale,
+        Action? BeforeCommit = null);
+
+    /// <summary>Shared body of <see cref="FlattenElementAsync"/> and
+    /// <see cref="DemoteBackdropToBackgroundAsync"/>: bakes <paramref name="element"/> into the source
+    /// off the UI thread, re-validates every bake input after the await, then removes the element and
+    /// installs the baked source as a new baseline in one undo step. Returns <see langword="true"/>
+    /// only when it committed; on every other path it has already set <see cref="StatusMessage"/>.
+    /// <para>Every input the bake depends on is captured up front and RE-VALIDATED after the await:
+    /// an offloaded compute means the operator can rotate, undo, re-crop or drag the element while
+    /// it runs, and applying a stale bake would corrupt the image with no visible cause.
+    /// <see cref="PushUndoSnapshot"/> deliberately runs AFTER the await, at the real mutation point,
+    /// so an intervening edit isn't swallowed into this step.</para></summary>
+    private async Task<bool> BakeElementIntoBackgroundAsync(ITemplateElementViewModel element, BakeOperation op)
+    {
+        if (!TryGetCropContentMetrics(out var padX, out var padY, out var contentWidth, out var contentHeight))
+        {
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.FlattenUnavailable");
+            return false;
+        }
+
+        var request = new FlattenBakeRequest(
+            _originalSource, CropRect, PreserveAspect, BuildTemplateElement(element),
+            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
+        var preparer = _preparer;
+
+        IImageSource? baked;
+        op.SetBusy(true);
+        try
+        {
+            baked = await Task.Run(() => BakeElementIntoSource(preparer, request));
+        }
+        catch (Exception ex)
+        {
+            op.LogFailed(ex);
+            StatusMessage = _localization.GetString(op.FailedKey);
+            return false;
+        }
+        finally
+        {
+            op.SetBusy(false);
+        }
+
+        if (baked is null)
+        {
+            // Outside the frame: keep the element rather than silently delete something still visible on the canvas.
+            StatusMessage = _localization.GetString(op.OutsideFrameKey);
+            return false;
+        }
+
+        // Stale-result guard. Every one of these is an input the bake actually consumed:
+        // TemplateElement is a record, so structural equality covers the element's geometry, text,
+        // resolved macros, colours and effects in one comparison.
+        if (!ReferenceEquals(_originalSource, request.Source)
+            || !CropRect.Equals(request.CropRect)
+            || PreserveAspect != request.PreserveAspect
+            || !OverlayElements.Contains(element)
+            || !BuildTemplateElement(element).Equals(request.Element))
+        {
+            op.LogStale();
+            StatusMessage = _localization.GetString(op.StaleKey);
+            return false;
+        }
+
+        op.BeforeCommit?.Invoke();
+        PushUndoSnapshot();
+        _suspendPreview = true;
+        try
+        {
+            element.PropertyChanged -= OnOverlayElementPropertyChanged;
+            OverlayElements.Remove(element);
+            // Shrink, not clear: other group members stay selected and no disposed element stays in the set.
+            if (SelectedOverlayElements.Contains(element))
+            {
+                SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, element)));
+            }
+
+            // Generic IDisposable check -- see LoadTemplateIntoLiveEditor's own identical comment.
+            if (element is IDisposable disposableElement)
+            {
+                disposableElement.Dispose();
+            }
+
+            // New generation: this source can never be reached from the old baseline by rotation,
+            // so ApplyState must restore it by instance (see its own branch and _sourceBaseline's
+            // doc comment). Baseline rotation is the CURRENT rotation -- the baked image is in
+            // whatever orientation the editor is in right now.
+            _sourceBaseline = baked;
+            _sourceBaselineRotation = _rotationCount;
+            ReplaceSourceAndWorkingCopy(baked);
+        }
+        finally
+        {
+            _suspendPreview = false;
+        }
+
+        return true;
     }
 
     private bool CanAddPlateBehindText() => SelectedOverlayElement is OverlayElementViewModel;
@@ -5710,10 +5685,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             disposableElement.Dispose();
         }
 
-        // TX editor gap-items plan, item 2 (group-ops-lite) -- SHRINKS the selection if `element`
-        // was a member, same shape as FlattenElementAsync's own identical fix (see that method's
-        // own doc comment for why "if primary, null everything" is wrong for both a non-primary
-        // member and a primary member of a 3+ group).
+        // Shrink, not clear: other group members stay selected and no disposed element stays in the set.
         if (SelectedOverlayElements.Contains(element))
         {
             SetSelection(SelectedOverlayElements.Where(e => !ReferenceEquals(e, element)));

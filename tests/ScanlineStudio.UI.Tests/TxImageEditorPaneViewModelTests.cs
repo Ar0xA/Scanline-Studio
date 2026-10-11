@@ -6,6 +6,7 @@ using Avalonia.LogicalTree;
 using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Abstractions.Imaging;
@@ -9914,6 +9915,224 @@ public sealed class TxImageEditorPaneViewModelTests
         vm.RemoveOverlayElementCommand.Execute(element);
 
         Assert.False(vm.FlattenElementCommand.CanExecute(element));
+    }
+
+    /// <summary>One edit per input the Flatten/Demote stale-result guard re-validates after the bake.</summary>
+    public enum BakeStaleEdit
+    {
+        Source,
+        CropRect,
+        PreserveAspect,
+        ElementRemoved,
+        ElementMoved,
+        CropRectOnly,
+    }
+
+    /// <summary>Blank background, so <see cref="TxImageEditorPaneViewModel.LoadBackground"/> can swap
+    /// the source mid-bake without touching the crop or any element.</summary>
+    private static TxImageEditorPaneViewModel CreateBakeEditor(FakeTransmitImagePreparer preparer) =>
+        CreateEditor(new BlankImageSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight, BlankImageSource.DefaultColor), FlattenTestMode, preparer,
+            new FakeFilePickerService(), new FakeImageFileLoader(), new FakeReceivedImageBuffer { Current = CreateSource(2, 2) }, new FakeReceiveHistoryStore());
+
+    private static ITemplateElementViewModel AddBakeElement(TxImageEditorPaneViewModel vm, bool demote)
+    {
+        if (!demote)
+        {
+            vm.AddBoxElementCommand.Execute(null);
+            return Assert.Single(vm.OverlayElements);
+        }
+
+        vm.AddLastRxImageCommand.Execute(null);
+        var backdrop = (ImageElementViewModel)Assert.Single(vm.OverlayElements);
+        vm.SetAsBackdropCommand.Execute(backdrop);
+        Assert.True(backdrop.IsBackground);
+        return backdrop;
+    }
+
+    private static IAsyncRelayCommand<ITemplateElementViewModel?> BakeCommand(TxImageEditorPaneViewModel vm, bool demote) =>
+        demote ? vm.DemoteBackdropToBackgroundCommand : vm.FlattenElementCommand;
+
+    /// <summary>Starts the command with the fake's bake held open inside <c>CropPixels</c>, runs
+    /// <paramref name="duringBake"/> on the UI thread, then releases the bake and awaits the command.</summary>
+    private static async Task RunWithBakeHeldOpenAsync(
+        FakeTransmitImagePreparer preparer, IAsyncRelayCommand<ITemplateElementViewModel?> command, ITemplateElementViewModel element, Action duringBake)
+    {
+        var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        preparer.OnCropPixels = () =>
+        {
+            entered.TrySetResult();
+            release.Task.GetAwaiter().GetResult();
+        };
+
+        var run = command.ExecuteAsync(element);
+        try
+        {
+            await Task.WhenAny(entered.Task, run);
+            Assert.True(entered.Task.IsCompleted, "the bake never reached CropPixels");
+            duringBake();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+
+        await run;
+        preparer.OnCropPixels = null;
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false, BakeStaleEdit.Source)]
+    [InlineData(false, BakeStaleEdit.CropRect)]
+    [InlineData(false, BakeStaleEdit.PreserveAspect)]
+    [InlineData(false, BakeStaleEdit.ElementRemoved)]
+    [InlineData(false, BakeStaleEdit.ElementMoved)]
+    [InlineData(true, BakeStaleEdit.Source)]
+    [InlineData(true, BakeStaleEdit.CropRect)]
+    [InlineData(true, BakeStaleEdit.PreserveAspect)]
+    [InlineData(true, BakeStaleEdit.ElementRemoved)]
+    [InlineData(true, BakeStaleEdit.ElementMoved)]
+    [InlineData(false, BakeStaleEdit.CropRectOnly)]
+    [InlineData(true, BakeStaleEdit.CropRectOnly)]
+    public async Task FlattenOrDemote_EditDuringTheBake_DiscardsTheResultAsStale(bool demote, BakeStaleEdit edit)
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateBakeEditor(preparer);
+        var element = AddBakeElement(vm, demote);
+        var replacement = CreateSource(FlattenTestMode.ImageWidth, FlattenTestMode.ImageHeight);
+        if (edit == BakeStaleEdit.CropRectOnly)
+        {
+            // Width-limited letterbox crop (80x20 of 80x60); dyadic values keep the projection bit-exact.
+            Assert.True(vm.PreserveAspect);
+            vm.CropRect = new NormalizedRect(0, 0.375, 1, 0.25);
+            if (!demote)
+            {
+                element.X = 0.5;
+                element.Y = 0.5;
+                element.Width = 0.25;
+                element.Height = 0.125;
+            }
+        }
+
+        await RunWithBakeHeldOpenAsync(preparer, BakeCommand(vm, demote), element, () =>
+        {
+            switch (edit)
+            {
+                case BakeStaleEdit.Source:
+                    vm.LoadBackground(replacement);
+                    break;
+                case BakeStaleEdit.CropRect:
+                    vm.CropRect = new NormalizedRect(0.1, 0.1, 0.5, 0.5);
+                    break;
+                case BakeStaleEdit.PreserveAspect:
+                    vm.PreserveAspect = !vm.PreserveAspect;
+                    break;
+                case BakeStaleEdit.ElementRemoved:
+                    vm.RemoveOverlayElementCommand.Execute(element);
+                    break;
+                case BakeStaleEdit.ElementMoved:
+                    element.X += 0.1;
+                    break;
+                case BakeStaleEdit.CropRectOnly:
+                    // Height grows by 0.25, Y moves by -0.125: same crop centre and width, so the
+                    // letterboxed element projects identically and only the CropRect check can fire.
+                    var elementBefore = Assert.Single(vm.Document.Elements);
+                    vm.CropRect = new NormalizedRect(0, 0.25, 1, 0.5);
+                    Assert.Equal(new NormalizedRect(0, 0.25, 1, 0.5), vm.CropRect);
+                    Assert.Equal(elementBefore, Assert.Single(vm.Document.Elements));
+                    break;
+            }
+        });
+
+        Assert.Equal(
+            demote ? "Panes.TxImageEditor.DemoteDiscardedStale" : "Panes.TxImageEditor.FlattenDiscardedStale",
+            vm.StatusMessage);
+        Assert.Equal(edit != BakeStaleEdit.ElementRemoved, vm.OverlayElements.Contains(element));
+        if (edit == BakeStaleEdit.Source)
+        {
+            Assert.Same(replacement, vm.CurrentSource);
+        }
+        else
+        {
+            Assert.IsType<BlankImageSource>(vm.CurrentSource);
+        }
+
+        if (edit != BakeStaleEdit.ElementRemoved)
+        {
+            Assert.True(BakeCommand(vm, demote).CanExecute(element));
+        }
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FlattenOrDemote_ElementOutsideTheCrop_ReportsOutsideFrameAndKeepsTheElement(bool demote)
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateBakeEditor(preparer);
+        var element = AddBakeElement(vm, demote);
+        var sourceBefore = vm.CurrentSource;
+        vm.CropRect = new NormalizedRect(0, 0, 0.3, 0.3);
+        element.Width = 0.1;
+        element.Height = 0.1;
+        element.X = 0.9;
+        element.Y = 0.9;
+
+        await BakeCommand(vm, demote).ExecuteAsync(element);
+
+        Assert.Equal(
+            demote ? "Panes.TxImageEditor.DemoteOutsideFrame" : "Panes.TxImageEditor.FlattenOutsideFrame",
+            vm.StatusMessage);
+        Assert.Contains(element, vm.OverlayElements);
+        Assert.Same(sourceBefore, vm.CurrentSource);
+        Assert.Equal(0, preparer.CropPixelsCallCount);
+        Assert.True(BakeCommand(vm, demote).CanExecute(element));
+    }
+
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FlattenOrDemote_PreparerThrows_ReportsFailedAndClearsTheBusyFlag(bool demote)
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateBakeEditor(preparer);
+        var element = AddBakeElement(vm, demote);
+        var sourceBefore = vm.CurrentSource;
+        preparer.OnCropPixels = () => throw new InvalidOperationException("bake failed");
+
+        await BakeCommand(vm, demote).ExecuteAsync(element);
+
+        Assert.Equal(
+            demote ? "Panes.TxImageEditor.DemoteFailed" : "Panes.TxImageEditor.FlattenFailed",
+            vm.StatusMessage);
+        Assert.Contains(element, vm.OverlayElements);
+        Assert.Same(sourceBefore, vm.CurrentSource);
+        Assert.True(BakeCommand(vm, demote).CanExecute(element));
+    }
+
+    /// <summary>During the bake the command is not executable; after it the element is committed,
+    /// gone from the document and from the selection.</summary>
+    [AvaloniaTheory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task FlattenOrDemote_DuringTheBake_CommandCannotExecuteThenCommits(bool demote)
+    {
+        var preparer = new FakeTransmitImagePreparer();
+        var vm = CreateBakeEditor(preparer);
+        var element = AddBakeElement(vm, demote);
+        vm.SetSelection([element]);
+        var sourceBefore = vm.CurrentSource;
+        var command = BakeCommand(vm, demote);
+        Assert.True(command.CanExecute(element));
+        bool? canExecuteDuringBake = null;
+
+        await RunWithBakeHeldOpenAsync(preparer, command, element, () => canExecuteDuringBake = command.CanExecute(element));
+
+        Assert.False(canExecuteDuringBake);
+        Assert.Empty(vm.OverlayElements);
+        Assert.Empty(vm.SelectedOverlayElements);
+        Assert.Null(vm.SelectedOverlayElement);
+        Assert.NotSame(sourceBefore, vm.CurrentSource);
     }
 
     // Follow-up visual-polish pass: PlacementPreviewRect/GuideLineXNormalized/GuideLineYNormalized

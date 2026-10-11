@@ -1887,8 +1887,14 @@ internal sealed class FakeTransmitImagePreparer : ITransmitImagePreparer
     // compare against.
     public int CropPixelsCallCount { get; private set; }
 
+    /// <summary>Opt-in, null by default: runs at the start of every <see cref="CropPixels"/> call, on
+    /// whatever thread the caller is on (the Flatten/Demote bake runs it on the thread pool). Lets a
+    /// test hold a bake open, or make it throw.</summary>
+    public Action? OnCropPixels { get; set; }
+
     public IImageSource CropPixels(IImageSource source, int x, int y, int width, int height)
     {
+        OnCropPixels?.Invoke();
         CropPixelsCallCount++;
         return new ArrayImageSource(width, height, new Rgb24[width * height]);
     }
