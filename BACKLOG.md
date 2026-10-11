@@ -388,9 +388,6 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
   asserts this. Fix: a failed load must block the write. Rename the file aside on JsonException only, and
   rethrow I/O and permission errors. A rename on a transient IOException would move a good file aside.
   Add CQ-09-F4's flush in the same change.
-- **CQ-04-F1. TX-editor element fields hand-copied through ~8 mapping sites**
-  (`TxImageEditorPaneViewModel.cs:69-164,1507-1534,3245-3654,3816-4035`). Three past Undo-reset bugs.
-  Fix: snapshot round-trip on each element VM plus a full-property round-trip test per element type.
 - **CQ-08-F1. Two PTT features with no production caller** — `SetPttLockAsync`, and
   `TuneAsync(leaveKeyedAfterTune: true)` (never passed `true`). ~54% of ~2,000 PTT lines. Removal also
   closes 08-F7's races. Needs the removal-rule check and the full review cadence.
@@ -480,3 +477,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-04-F3 / F6 / F15 (+12-F10 geometry half; plan cq-q4).** DONE 2026-10-11 — `5d02cde6` one image-import helper;
   `2da41c9f` one Flatten/Demote bake-and-commit helper (all 5 stale conditions individually pinned); `841c642c`
   `PerspectiveElementViewModelBase` for Box/Image (notification multisets and preview-size rules unchanged).
+- **CQ-04-F1.** DONE 2026-10-11 — `c6ca56db` round-trip guard tests + saved-format golden; `e5f32ae4` no Raw* defaults;
+  `ffe4584d` ToSnapshot per element; `6f96bf5c` single-snapshot factories with per-type defaults; `ca1d938d`
+  ApplyStyleFrom per element; `bec4e0f9` TemplateElementPersistenceMapper. Golden unchanged throughout.
