@@ -10,7 +10,7 @@ public sealed class TransmitImagePreparerResizeCacheTests
     private const int CanvasWidth = 320;
     private const int CanvasHeight = 256;
 
-    [Fact(Skip = "Fails until cq-q5 step 5b")]
+    [Fact]
     public void ComposePreview_DoesNotRetainADiscardedElementSource()
     {
         var preparer = ElementBlitTestSupport.CreatePreparer();

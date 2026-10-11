@@ -84,9 +84,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     public IImageSource Crop(IImageSource source, NormalizedRect region)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
         CropInto(image, source.Width, source.Height, region);
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     // T1-14: extracted so ComposePreview's own fused pipeline shares this EXACT logic rather than a
@@ -105,9 +105,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     public IImageSource Resize(IImageSource source, int width, int height, bool preserveAspect)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
         ResizeInto(image, width, height, preserveAspect);
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     // T1-14: extracted, same reasoning as CropInto above.
@@ -168,9 +168,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return source;
         }
 
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
         ApplyAdjustmentsInto(image, adjustments);
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     // T1-14: extracted, same reasoning as CropInto above. Callers (ComposePreview included) are
@@ -225,7 +225,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
     public IImageSource ApplyOverlay(IImageSource source, ImageOverlay overlay)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
 
         foreach (var element in overlay.Elements)
         {
@@ -243,7 +243,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             DrawGlyphs(image, element.Text, _defaultFontFamily, fontSize, origin, element.Color, wrappingLength: source.Width, clip: null, hintingMode: null);
         }
 
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     /// <summary>See <see cref="ITransmitImagePreparer.ApplyTemplate"/>'s own doc comment for the
@@ -257,9 +257,9 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return existingBase;
         }
 
-        using var image = ToImageSharp(existingBase);
+        using var image = ImageSharpPixelConversion.FromImageSource(existingBase);
         ApplyTemplateInto(image, document);
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     /// <summary>TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- real
@@ -301,7 +301,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return BgraPixelBuffer.FromOpaqueSource(Resize(image.Source, targetWidthPx, targetHeightPx, preserveAspect: false));
         }
 
-        using var sourceImage = ToImageSharpRgba32(image.Source);
+        using var sourceImage = ImageSharpPixelConversion.FromImageSourceRgba32(image.Source);
         var matrix = SolveHomography(localCorners, sourceImage.Width, sourceImage.Height);
         if (!IsWellConditioned(matrix, sourceImage.Width, sourceImage.Height))
         {
@@ -453,7 +453,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         IImageSource source, NormalizedRect cropRegion, int targetWidth, int targetHeight, bool preserveAspect,
         ImageAdjustments adjustments, TemplateDocument templateDocument)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
 
         CropInto(image, source.Width, source.Height, cropRegion);
         ResizeInto(image, targetWidth, targetHeight, preserveAspect);
@@ -468,7 +468,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             ApplyTemplateInto(image, templateDocument);
         }
 
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     public double MeasureFittedFontSize(
@@ -710,7 +710,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // tile covers the whole gradientBounds when offset to its own origin, achieving the intended
         // stretch-to-fill without needing a different brush type.
         using var bitmapFillImage = element.BitmapFill is { } bitmapSource
-            ? ToImageSharp(GetOrCreateResizedImage(bitmapSource, boundsWidthPx, boundsHeightPx, ImageFitMode.Stretch))
+            ? ImageSharpPixelConversion.FromImageSource(GetOrCreateResizedImage(bitmapSource, boundsWidthPx, boundsHeightPx, ImageFitMode.Stretch))
             : null;
         Brush? fillBrush = bitmapFillImage is not null
             ? new ImageBrush(bitmapFillImage, new Point((int)MathF.Round(gradientBounds.X), (int)MathF.Round(gradientBounds.Y)))
@@ -885,7 +885,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         // preserved even here) safety ceiling remains, to bound worst-case allocation for a truly
         // oversized Bounds value -- see GetOrCreateResizedImage's own pixel-budget cache-skip for
         // the other half of this: even a resize under this ceiling must not permanently occupy a
-        // slot in the 64-entry cache if it's large enough to matter for total retained memory.
+        // slot in the per-source cache (8 entries) if it's large enough to matter for retained memory.
         var rawWidthPx = MathF.Max(1f, MathF.Round(bounds.Width));
         var rawHeightPx = MathF.Max(1f, MathF.Round(bounds.Height));
         var ceiling = MathF.Min(MaxElementResizeDimensionPxCeiling, MaxElementResizeDestinationMultiplier * MathF.Max(image.Width, image.Height));
@@ -916,7 +916,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
 
         var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
 
-        using var resizedImage = ToImageSharp(resized);
+        using var resizedImage = ImageSharpPixelConversion.FromImageSource(resized);
         var location = new Point((int)MathF.Round(bounds.X), (int)MathF.Round(bounds.Y));
         image.Mutate(ctx => ctx.DrawImage(resizedImage, location, 1f));
     }
@@ -929,15 +929,15 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
     /// Instead: resize via <see cref="GetOrCreateResizedImage"/> with the element's own
     /// <see cref="TemplateImageElement.Fit"/> (the SAME call the plain non-rotated path below uses,
     /// with the SAME already-ceiling-clamped <paramref name="targetWidth"/>/<paramref name="targetHeight"/>
-    /// the caller computed), THEN convert via <see cref="ToImageSharpRgba32"/> -- NOT the plain
-    /// <see cref="ToImageSharp"/>, which returns <c>Image&lt;Rgb24&gt;</c> and would fill the rotated
+    /// the caller computed), THEN convert via <see cref="ImageSharpPixelConversion.FromImageSourceRgba32"/> -- NOT the plain
+    /// <see cref="ImageSharpPixelConversion.FromImageSource"/>, which returns <c>Image&lt;Rgb24&gt;</c> and would fill the rotated
     /// AABB's expanded corners with opaque black (same reason <c>DrawTemplateText</c>'s own rotation
     /// sub-bitmap must be Rgba32). No clip to <paramref name="bounds"/> -- same no-clip/overflow
     /// policy as <see cref="RotateBoxContent"/>'s own doc comment.</summary>
     private void RotateElementContent(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image, TemplateImageElement element, PixelBounds bounds, int targetWidth, int targetHeight, float rotationDegrees)
     {
         var resized = GetOrCreateResizedImage(element.Source, targetWidth, targetHeight, element.Fit);
-        using var subBitmap = ToImageSharpRgba32(resized);
+        using var subBitmap = ImageSharpPixelConversion.FromImageSourceRgba32(resized);
         subBitmap.Mutate(ctx => ctx.Rotate(rotationDegrees));
 
         var centerX = bounds.X + (bounds.Width / 2f);
@@ -966,7 +966,7 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return false;
         }
 
-        using var sourceImage = ToImageSharpRgba32(source);
+        using var sourceImage = ImageSharpPixelConversion.FromImageSourceRgba32(source);
         var matrix = SolveHomography(localCorners, sourceImage.Width, sourceImage.Height);
         if (!IsWellConditioned(matrix, sourceImage.Width, sourceImage.Height))
         {
@@ -1692,41 +1692,33 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             (float)c, (float)f, 0, 1);
     }
 
-    /// <summary>Approximately-bounded, thread-safe-in-the-weak-sense (this preparer is a DI
-    /// singleton, <c>Program.cs</c>) cache for <see cref="TemplateImageElement"/>'s per-frame
-    /// resize -- ImageSharp's own <c>DrawImage</c> has no scale-to-destination-rect overload, so
-    /// every image element needs a real <see cref="Resize"/>/crop-to-fill pass on every
-    /// <c>RecomputePreview</c> frame without this. Key equality is <see cref="IImageSource"/>
-    /// REFERENCE identity, enforced EXPLICITLY by <see cref="ImageResizeCacheKeyComparer"/> (not
-    /// left to the default record-struct equality, which would silently start comparing by VALUE
-    /// the day some future <c>IImageSource</c> implementation happens to be a <c>record</c> --
-    /// code-review round-1 finding: <see cref="ArrayImageSource"/> not overriding <c>Equals</c>
-    /// today made the old implicit approach correct only by, not because of, that fact).
-    /// "Approximately" bounded: the check-clear-add sequence below is not atomic, so N concurrent
-    /// callers can transiently push the count to <see cref="MaxCachedResizedImages"/> + N, and a
-    /// racing <see cref="ConcurrentDictionary{TKey,TValue}.Clear"/> can drop an entry another
-    /// thread just inserted (harmless -- a future lookup just misses and recomputes). No corruption
-    /// either way; real LRU is Phase 0 over-scope, revisit only if profiling ever shows this
-    /// matters in practice.</summary>
-    private readonly ConcurrentDictionary<ImageResizeCacheKey, IImageSource> _imageResizeCache = new(new ImageResizeCacheKeyComparer());
+    /// <summary>Per-source cache for <see cref="TemplateImageElement"/>'s per-frame resize. ImageSharp's
+    /// <c>DrawImage</c> has no scale-to-destination-rect overload, so without it every image element
+    /// needs a full <see cref="Resize"/>/crop-to-fill pass on every <c>RecomputePreview</c> frame.
+    /// <para>Keyed weakly on the <see cref="IImageSource"/> by REFERENCE identity
+    /// (<see cref="System.Runtime.CompilerServices.ConditionalWeakTable{TKey,TValue}"/> never calls
+    /// <c>Equals</c>), so a source the editor has discarded is not kept alive by this singleton, and
+    /// its cached resizes are released with it.</para>
+    /// <para>Threading: this preparer is a DI singleton (<c>Program.cs</c>), called from the UI thread
+    /// (preview recompute, template apply) and from thread-pool workers (the <c>Task.Run</c> element bake).
+    /// The outer table and the inner <see cref="ConcurrentDictionary{TKey,TValue}"/> are both
+    /// thread-safe. The per-source check-clear-add below is not atomic, so racing callers can
+    /// transiently exceed <see cref="MaxCachedResizesPerSource"/> or drop an entry another thread just
+    /// inserted; that only costs a later recompute, never a wrong pixel.</para></summary>
+    private readonly System.Runtime.CompilerServices.ConditionalWeakTable<IImageSource, PerSourceResizeCache> _imageResizeCache = new();
 
-    private const int MaxCachedResizedImages = 64;
+    // A source is normally drawn at one or two sizes; overflow means a resize drag, whose stale sizes are worthless.
+    private const int MaxCachedResizesPerSource = 8;
 
-    // Round-2 Tier B audit finding: entry-COUNT alone doesn't bound entry SIZE. Before
-    // DrawTemplateImage's own destination-clamp was removed (a real scale/aspect bug, see that
-    // method's own doc comment), every cached entry was accidentally capped at the destination
-    // canvas's own resolution -- removing that clamp meant a single oversized element (a routine
-    // ~5x crop-zoom on an ordinary SSTV-mode canvas, not a pathological one) could fill all 64 slots
-    // with tens-of-megabytes-each images, retaining up to ~gigabytes. Skipping the cache write
-    // (still returning the computed image -- correctness is unaffected, only reuse-across-frames
-    // is) above this pixel budget keeps typical/small elements cheaply cached while a genuinely
-    // large one is recomputed each frame instead of permanently occupying a slot.
+    // Entry count alone does not bound entry size: a routine ~5x crop-zoom on an ordinary SSTV canvas
+    // would cache tens of megabytes per entry. Above this budget the resize is recomputed each frame
+    // instead (correctness is unaffected, only reuse across frames).
     private const long MaxCachedResizedImagePixels = 4_000_000; // ~12MB per Abstractions.Imaging.Rgb24 entry
 
     private IImageSource GetOrCreateResizedImage(IImageSource source, int width, int height, ImageFitMode fit)
     {
-        var key = new ImageResizeCacheKey(source, width, height, fit);
-        if (_imageResizeCache.TryGetValue(key, out var cached))
+        var key = (width, height, fit);
+        if (_imageResizeCache.TryGetValue(source, out var existing) && existing.Entries.TryGetValue(key, out var cached))
         {
             return cached;
         }
@@ -1744,49 +1736,41 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
             return resized;
         }
 
-        if (_imageResizeCache.Count >= MaxCachedResizedImages)
+        var entries = _imageResizeCache.GetValue(source, static _ => new PerSourceResizeCache()).Entries;
+        if (entries.Count >= MaxCachedResizesPerSource)
         {
-            _imageResizeCache.Clear();
+            entries.Clear();
         }
 
-        _imageResizeCache[key] = resized;
+        entries[key] = resized;
         return resized;
     }
 
     private static ArrayImageSource ResizeCover(IImageSource source, int width, int height)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
         image.Mutate(ctx => ctx.Resize(new ResizeOptions
         {
             Size = new Size(width, height),
             Mode = ResizeMode.Crop,
         }));
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
-    private readonly record struct ImageResizeCacheKey(IImageSource Source, int Width, int Height, ImageFitMode Fit);
-
-    /// <summary>Explicit reference-identity equality for <see cref="ImageResizeCacheKey.Source"/> --
-    /// see the cache field's own doc comment for why this must not be left to default record-struct
-    /// equality.</summary>
-    private sealed class ImageResizeCacheKeyComparer : IEqualityComparer<ImageResizeCacheKey>
+    private sealed class PerSourceResizeCache
     {
-        public bool Equals(ImageResizeCacheKey x, ImageResizeCacheKey y) =>
-            ReferenceEquals(x.Source, y.Source) && x.Width == y.Width && x.Height == y.Height && x.Fit == y.Fit;
-
-        public int GetHashCode(ImageResizeCacheKey obj) =>
-            HashCode.Combine(System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj.Source), obj.Width, obj.Height, obj.Fit);
+        public ConcurrentDictionary<(int Width, int Height, ImageFitMode Fit), IImageSource> Entries { get; } = new();
     }
 
     public IImageSource Rotate(IImageSource source)
     {
-        using var image = ToImageSharp(source);
+        using var image = ImageSharpPixelConversion.FromImageSource(source);
         image.Mutate(ctx => ctx.Rotate(RotateMode.Rotate90));
-        return FromImageSharp(image);
+        return ImageSharpPixelConversion.ToImageSource(image);
     }
 
     /// <summary>TX workflow modernization plan, Phase 7 -- direct scanline copy, deliberately NOT
-    /// routed through <see cref="ToImageSharp"/>/<see cref="FromImageSharp"/> like every resampling
+    /// routed through <see cref="ImageSharpPixelConversion.FromImageSource"/>/<see cref="ImageSharpPixelConversion.ToImageSource"/> like every resampling
     /// operation in this file: there is no resampler choice to make for an exact pixel-rect
     /// extraction, and a full two-way ImageSharp conversion of a multi-megapixel source for what is
     /// a memcpy is real, avoidable per-call cost on the flatten path (which already does one genuine
@@ -1837,67 +1821,5 @@ public sealed class TransmitImagePreparer : ITransmitImagePreparer
         }
 
         return new ArrayImageSource(background.Width, background.Height, pixels);
-    }
-
-    private static Image<SixLabors.ImageSharp.PixelFormats.Rgb24> ToImageSharp(IImageSource source)
-    {
-        var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgb24>(source.Width, source.Height);
-        image.ProcessPixelRows(accessor =>
-        {
-            for (var y = 0; y < source.Height; y++)
-            {
-                var sourceRow = source.GetScanline(y);
-                var destinationRow = accessor.GetRowSpan(y);
-                for (var x = 0; x < source.Width; x++)
-                {
-                    var pixel = sourceRow[x];
-                    destinationRow[x] = new SixLabors.ImageSharp.PixelFormats.Rgb24(pixel.R, pixel.G, pixel.B);
-                }
-            }
-        });
-        return image;
-    }
-
-    /// <summary>TX editor gap-items plan, item 3 (perspective transform) -- Rgba32 variant of
-    /// <see cref="ToImageSharp"/>, opaque (alpha=255 -- <see cref="IImageSource"/> itself carries no
-    /// alpha), needed because ImageSharp's own <c>Transform</c> operates within a single image's own
-    /// pixel format and the WARP's own offscreen destination must be Rgba32 (transparent outside the
-    /// mapped quad).</summary>
-    private static Image<Rgba32> ToImageSharpRgba32(IImageSource source)
-    {
-        var image = new Image<Rgba32>(source.Width, source.Height);
-        image.ProcessPixelRows(accessor =>
-        {
-            for (var y = 0; y < source.Height; y++)
-            {
-                var sourceRow = source.GetScanline(y);
-                var destinationRow = accessor.GetRowSpan(y);
-                for (var x = 0; x < source.Width; x++)
-                {
-                    var pixel = sourceRow[x];
-                    destinationRow[x] = new Rgba32(pixel.R, pixel.G, pixel.B, byte.MaxValue);
-                }
-            }
-        });
-        return image;
-    }
-
-    private static ArrayImageSource FromImageSharp(Image<SixLabors.ImageSharp.PixelFormats.Rgb24> image)
-    {
-        var pixels = new Abstractions.Imaging.Rgb24[image.Width * image.Height];
-        image.ProcessPixelRows(accessor =>
-        {
-            for (var y = 0; y < image.Height; y++)
-            {
-                var row = accessor.GetRowSpan(y);
-                for (var x = 0; x < image.Width; x++)
-                {
-                    var pixel = row[x];
-                    pixels[(y * image.Width) + x] = new Abstractions.Imaging.Rgb24(pixel.R, pixel.G, pixel.B);
-                }
-            }
-        });
-
-        return new ArrayImageSource(image.Width, image.Height, pixels);
     }
 }

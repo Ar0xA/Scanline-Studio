@@ -75,4 +75,35 @@ internal static class ImageSharpPixelConversion
 
         return image;
     }
+
+    /// <summary>Rgba32 variant of <see cref="FromImageSource"/>, fully opaque (alpha = 255) because
+    /// <see cref="IImageSource"/> carries no alpha. For callers whose ImageSharp work needs transparency
+    /// outside the copied pixels, such as a rotate or a perspective warp onto an Rgba32 canvas.</summary>
+    public static Image<SixLabors.ImageSharp.PixelFormats.Rgba32> FromImageSourceRgba32(IImageSource source)
+    {
+        var image = new Image<SixLabors.ImageSharp.PixelFormats.Rgba32>(source.Width, source.Height);
+        try
+        {
+            image.ProcessPixelRows(accessor =>
+            {
+                for (var y = 0; y < source.Height; y++)
+                {
+                    var sourceRow = source.GetScanline(y);
+                    var destinationRow = accessor.GetRowSpan(y);
+                    for (var x = 0; x < source.Width; x++)
+                    {
+                        var pixel = sourceRow[x];
+                        destinationRow[x] = new SixLabors.ImageSharp.PixelFormats.Rgba32(pixel.R, pixel.G, pixel.B, byte.MaxValue);
+                    }
+                }
+            });
+        }
+        catch
+        {
+            image.Dispose();
+            throw;
+        }
+
+        return image;
+    }
 }
