@@ -440,8 +440,7 @@ Test integrity:
 Structure (do as partial-file splits first, then extract):
 - **CQ-GOD.** 01-F1 decoder (2,645 code lines), 04-F2 TX editor VM, 05-F2 Options VM, 08-F2 session
   service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report.
-- **CQ-04-F3 / F6 / F7 / F8.** Box/Image perspective code duplicated and drifted; Flatten/Demote
-  duplication; interaction policy in code-behind; non-re-entrant batch flag.
+- **CQ-04-F7 / F8.** Interaction policy in code-behind; non-re-entrant batch flag. (F3/F6 done, see below.)
 - **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
 - **CQ-08-F4.** `ISstvSessionService` has ~86 members.
 - **CQ-01-F2 / CQ-12-F1.** Fix-history narrative in `//` comments (~1,279 lines). Do not backfill (comment
@@ -478,3 +477,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-07-F1 (+12-F3, 05-F4 debounce part).** DONE 2026-10-11 — one `Debouncer`/`KeyedDebouncer` on an injected
   `TimeProvider` replaces 8 hand-rolled UI debounces; 29 fixed test sleeps removed (UI.Tests ~30 s → ~11 s); 0/40
   flakes after moving 3 dispatcher-posting tests to `[AvaloniaFact]` and giving 21 never-waiting tests a fake clock.
+- **CQ-04-F3 / F6 / F15 (+12-F10 geometry half; plan cq-q4).** DONE 2026-10-11 — `5d02cde6` one image-import helper;
+  `2da41c9f` one Flatten/Demote bake-and-commit helper (all 5 stale conditions individually pinned); `841c642c`
+  `PerspectiveElementViewModelBase` for Box/Image (notification multisets and preview-size rules unchanged).
