@@ -457,6 +457,12 @@ Listed with evidence in the area reports. Pick them up only when already working
   exclusive. Pinned as today's behaviour in `TxEditorElementRoundTripTests` (paste-style pair (2,3)) — update that pin
   when fixing. Found by cq-04 step 1, 2026-10-11. Bug pass.
 
+- **CQ-BLIT-FAROUT.** `TransmitImagePreparer` element blit (`DrawTemplateImage`, `(int)MathF.Round(bounds.X/Y)` ~:920)
+  does an out-of-range float→int conversion for element coordinates ≥ 2^31 px: .NET 8 x64 yields int.MinValue, .NET 9+
+  saturates; near int.MinValue ImageSharp's DrawImage overflows and draws the element at x/y = 0. Needs a normalized X of
+  about −6.7e6, so unreachable from the UI. Pinned by a skipped strict test in `TransmitImagePreparerElementBlitTests`.
+  Fix: skip an element that is fully off-canvas, computed in `long`. Found by cq-q5 step 1, 2026-10-11. Bug pass.
+
 ### CQ verified done
 
 - **CQ-03-F1.** DONE 2026-10-11 — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` now compares our
