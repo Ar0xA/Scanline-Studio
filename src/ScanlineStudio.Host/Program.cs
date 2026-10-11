@@ -1342,29 +1342,7 @@ internal static partial class Program
         // construction, see that method's own doc comment for why a second independent copy here
         // would have been a real drift risk.
         var resolved = decoderSettings.Resolve();
-        var decoder = new RestartableSstvDecoder(
-            afcEnabled: resolved.AfcEnabled,
-            syncRestartEnabled: resolved.SyncRestartEnabled,
-            autoSyncEnabled: resolved.AutoSyncEnabled,
-            autoStopEnabled: resolved.AutoStopEnabled,
-            autoSlantEnabled: resolved.AutoSlantEnabled,
-            senseLevel: resolved.SenseLevel,
-            demodType: resolved.DemodType,
-            rxBpfPreset: resolved.RxBpfPreset,
-            rxBufferMode: resolved.RxBufferMode,
-            pllVcoGain: resolved.PllVcoGain,
-            pllLoopOrder: resolved.PllLoopOrder,
-            pllLoopCutoffHz: resolved.PllLoopCutoffHz,
-            pllOutputOrder: resolved.PllOutputOrder,
-            pllOutputCutoffHz: resolved.PllOutputCutoffHz,
-            zeroCrossingSmoothingMode: resolved.ZeroCrossingSmoothingMode,
-            zeroCrossingOutputOrder: resolved.ZeroCrossingOutputOrder,
-            zeroCrossingOutputCutoffHz: resolved.ZeroCrossingOutputCutoffHz,
-            zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz,
-            sampleRate: sampleRate,
-            loggerFactory: loggerFactory);
-        decoder.SnrMeasurementEnabled = resolved.SnrMeasurementEnabled;
-        return decoder;
+        return new RestartableSstvDecoder(resolved, sampleRate, loggerFactory);
     }
 
     // Restart-required-settings backlog item 4 (2026-08-27): RestartableSstvEncoder, not the plain

@@ -456,6 +456,8 @@ public sealed class SstvCompositionRootTests
                     ZeroCrossingOutputOrder = 9,
                     ZeroCrossingOutputCutoffHz = 700,
                     ZeroCrossingSmoothingFrequencyHz = 3000,
+                    // Non-default (the absent default is on), so a dropped SNR seed cannot pass vacuously.
+                    SnrMeasurementEnabled = false,
                 },
                 SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
         var services = new ServiceCollection();
@@ -466,6 +468,8 @@ public sealed class SstvCompositionRootTests
 
         var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
 
+        Assert.False(decoder.SnrMeasurementEnabled);
+        Assert.False(decoder.InnerSnrMeasurementEnabledForTests);
         Assert.False(decoder.AutoSlantEnabled);
         Assert.False(decoder.InnerAfcEnabledForTests);
         Assert.False(decoder.InnerSyncRestartEnabledForTests);
@@ -485,6 +489,31 @@ public sealed class SstvCompositionRootTests
         Assert.Equal(9, zeroCrossingTuning.OutputOrder);
         Assert.Equal(700, zeroCrossingTuning.OutputCutoffHz);
         Assert.Equal(3000, zeroCrossingTuning.SmoothingFrequencyHz);
+    }
+
+    [Fact]
+    public void SstvServices_AbsentSnrSetting_ResolvesToDefaultOn_ThroughActualRegistration()
+    {
+        var settings = new AppSettings()
+            .WithSection(
+                AudioDeviceSettings.SectionKey,
+                new AudioDeviceSettings { SampleRate = 11025 },
+                AudioSettingsJsonContext.Default.AudioDeviceSettings)
+            .WithSection(
+                SstvDecoderSettings.SectionKey,
+                new SstvDecoderSettings(),
+                SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings);
+        var services = new ServiceCollection();
+        services.AddSingleton<ISettingsStore>(new StaticSettingsStore(settings));
+        services.AddLogging();
+        Program.RegisterSstvServices(services);
+        using var provider = services.BuildServiceProvider();
+
+        var decoder = Assert.IsType<RestartableSstvDecoder>(provider.GetRequiredService<ISstvDecoder>());
+
+        Assert.True(SstvDecoderSettings.DefaultSnrMeasurementEnabled);
+        Assert.True(decoder.SnrMeasurementEnabled);
+        Assert.True(decoder.InnerSnrMeasurementEnabledForTests);
     }
 
     [Fact]

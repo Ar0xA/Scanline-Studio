@@ -2635,26 +2635,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
                 // is the whole design (round-5 plan-review): never the shared _decoder, so nothing here
                 // needs to serialize against _rxTransitionGate or touch ReceivedImageBuffer/
                 // ReceiveHistoryRecorder/the live RX pane at all.
-                using var decoder = new AnalogFmSstvDecoder(
-                    sampleRate: sampleRate,
-                    afcEnabled: resolved.AfcEnabled,
-                    syncRestartEnabled: resolved.SyncRestartEnabled,
-                    autoSyncEnabled: resolved.AutoSyncEnabled,
-                    autoStopEnabled: resolved.AutoStopEnabled,
-                    autoSlantEnabled: resolved.AutoSlantEnabled,
-                    senseLevel: resolved.SenseLevel,
-                    demodType: resolved.DemodType,
-                    rxBpfPreset: resolved.RxBpfPreset,
-                    rxBufferMode: resolved.RxBufferMode,
-                    pllVcoGain: resolved.PllVcoGain,
-                    pllLoopOrder: resolved.PllLoopOrder,
-                    pllLoopCutoffHz: resolved.PllLoopCutoffHz,
-                    pllOutputOrder: resolved.PllOutputOrder,
-                    pllOutputCutoffHz: resolved.PllOutputCutoffHz,
-                    zeroCrossingSmoothingMode: resolved.ZeroCrossingSmoothingMode,
-                    zeroCrossingOutputOrder: resolved.ZeroCrossingOutputOrder,
-                    zeroCrossingOutputCutoffHz: resolved.ZeroCrossingOutputCutoffHz,
-                    zeroCrossingSmoothingFrequencyHz: resolved.ZeroCrossingSmoothingFrequencyHz);
+                // SNR stays off for the self-test, as it always has; it measures only, never changes pixels.
+                using var decoder = new AnalogFmSstvDecoder(sampleRate, resolved with { SnrMeasurementEnabled = false });
 
                 ArrayImageSource? lastImage = null;
                 int? previousLine = null;

@@ -1009,6 +1009,38 @@ public sealed class AnalogFmSstvDecoder : ISstvDecoder, IDisposable
     private DecoderFlagsRequest _desiredFlags; // assigned in the constructor, never null after that
     private DecoderFlagsRequest _appliedFlags; // decode-thread-only; assigned in the constructor and by the drain
 
+    /// <summary>Builds a decoder from one resolved settings record, so a caller cannot drop or transpose
+    /// a field the way a hand-written 19-argument call can. Seeds <see cref="SnrMeasurementEnabled"/>
+    /// from the record too, which the parameter-list constructor below leaves at its own default (off).
+    /// See that constructor's parameter docs for each value's meaning and legacy source.</summary>
+    public AnalogFmSstvDecoder(int sampleRate, ResolvedSstvDecoderSettings settings, ILoggerFactory? loggerFactory = null, ScopeCaptureBuffer? scopeCaptureChannel0 = null, ScopeCaptureBuffer? scopeCaptureChannel1 = null)
+        : this(
+            sampleRate: sampleRate,
+            afcEnabled: settings.AfcEnabled,
+            syncRestartEnabled: settings.SyncRestartEnabled,
+            autoSyncEnabled: settings.AutoSyncEnabled,
+            autoStopEnabled: settings.AutoStopEnabled,
+            autoSlantEnabled: settings.AutoSlantEnabled,
+            senseLevel: settings.SenseLevel,
+            demodType: settings.DemodType,
+            rxBpfPreset: settings.RxBpfPreset,
+            rxBufferMode: settings.RxBufferMode,
+            pllVcoGain: settings.PllVcoGain,
+            pllLoopOrder: settings.PllLoopOrder,
+            pllLoopCutoffHz: settings.PllLoopCutoffHz,
+            pllOutputOrder: settings.PllOutputOrder,
+            pllOutputCutoffHz: settings.PllOutputCutoffHz,
+            zeroCrossingSmoothingMode: settings.ZeroCrossingSmoothingMode,
+            zeroCrossingOutputOrder: settings.ZeroCrossingOutputOrder,
+            zeroCrossingOutputCutoffHz: settings.ZeroCrossingOutputCutoffHz,
+            zeroCrossingSmoothingFrequencyHz: settings.ZeroCrossingSmoothingFrequencyHz,
+            loggerFactory: loggerFactory,
+            scopeCaptureChannel0: scopeCaptureChannel0,
+            scopeCaptureChannel1: scopeCaptureChannel1)
+    {
+        SnrMeasurementEnabled = settings.SnrMeasurementEnabled;
+    }
+
     /// <param name="sampleRate">Positive whole-Hz sample rate for this low-level decoder. Direct
     /// construction deliberately permits values outside <see cref="SstvSampleRate"/>'s configured
     /// 5000-48500 Hz policy for focused tests and low-level tools; those values do not carry the
