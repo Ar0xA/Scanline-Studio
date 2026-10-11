@@ -58,14 +58,14 @@ internal sealed class TxOutputBandpassFilter
 
     private readonly int _tap;
     private readonly double[] _h;
-    private readonly double[] _z; // delay line, length _tap+1. _z[0]=newest sample, _z[_tap]=oldest.
+    private readonly FirDelayLine _delay; // logical index 0 = newest sample, pairs with _h[0]
 
     public TxOutputBandpassFilter(double sampleRate, int tapCount = DefaultTapCount)
     {
         _tap = ClampTapCount(tapCount);
         _h = MakeFilter(sampleRate, _tap);
-        _z = new double[_tap + 1]; // zero-init -- matches CFIR2::Create's zero-memset delay line and
-                                    // legacy's per-transmission InitTXBuf -> m_BPF.Clear() reset.
+        // Zero-init matches CFIR2::Create's zero-memset delay line and InitTXBuf's per-transmission m_BPF.Clear().
+        _delay = new FirDelayLine(_tap, headMovesForward: false);
     }
 
     // Options stub backlog item 3: both-direction clamp [2,512] (Option.cpp:456-459/TAPMAX), rounded
@@ -77,22 +77,16 @@ internal sealed class TxOutputBandpassFilter
     }
 
     /// <summary>Streaming, one-sample-at-a-time convolution -- a persistent delay line, matching
-    /// <c>CFIR2::Do</c>'s real internal structure (`fir.cpp:1131-1144`). CAUSAL, not centered:
-    /// <c>_z[0]</c> (this call's newest sample) pairs with <c>H[0]</c>, giving a constant
-    /// <c>Tap/2</c> = 12-sample group delay at every sample rate (see <see cref="SearchBandpassFilter"/>'s
-    /// own doc comment for why this causal-vs-centered distinction is load-bearing, not cosmetic).</summary>
+    /// <c>CFIR2::Do</c>'s real internal structure (the one-argument overload, `fir.cpp:1115-1129`).
+    /// CAUSAL, not centered: this call's newest sample (logical index 0 of the
+    /// <see cref="FirDelayLine"/>) pairs with <c>H[0]</c>, giving a constant <c>Tap/2</c>-sample group
+    /// delay (12 at the default tap of 24) at every sample rate (see
+    /// <see cref="SearchBandpassFilter"/>'s own doc comment for why this causal-vs-centered distinction
+    /// is load-bearing, not cosmetic).</summary>
     public double ProcessSample(double input)
     {
-        Array.Copy(_z, 0, _z, 1, _tap);
-        _z[0] = input;
-
-        var sum = 0.0;
-        for (var i = 0; i <= _tap; i++)
-        {
-            sum += _z[i] * _h[i];
-        }
-
-        return sum;
+        _delay.Push(input);
+        return _delay.Convolve(_h);
     }
 
     /// <summary>Legacy's TX `MakeFilter` call (`sstv.cpp:2766-2772`) via the shared

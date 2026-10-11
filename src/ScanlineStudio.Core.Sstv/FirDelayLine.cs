@@ -2,16 +2,17 @@ namespace ScanlineStudio.Core.Sstv;
 
 /// <summary>
 /// Fixed-capacity circular delay line for streaming FIR convolution, replacing the O(tap)
-/// full-array-shift-per-sample (<c>Array.Copy</c>) both <see cref="SearchBandpassFilter"/> and
-/// <see cref="HilbertFmDemodulator"/> used previously, with an O(1) write per sample. The dot-product
+/// full-array-shift-per-sample (<c>Array.Copy</c>) that <see cref="SearchBandpassFilter"/>,
+/// <see cref="HilbertFmDemodulator"/>, <see cref="NotchFilter"/> and <see cref="TxOutputBandpassFilter"/>
+/// used previously, with an O(1) write per sample. The dot-product
 /// itself stays O(tap) -- unavoidable for FIR convolution -- but every access below walks the buffer
 /// in the exact same term order the old linear-array version used, so output is bit-exact with the
 /// prior implementation (IEEE-754 addition is not associative -- same terms in the same order is
 /// required, not just "the same set of values").
 ///
 /// Logical index 0 always means "the value that pairs with h[0]" -- for
-/// <see cref="SearchBandpassFilter"/> (headMovesForward=false, see this class's own constructor) that's
-/// the NEWEST sample; for <see cref="HilbertFmDemodulator"/>'s <c>DoFir</c> (headMovesForward=true) that's the
+/// <see cref="SearchBandpassFilter"/>, <see cref="NotchFilter"/> and <see cref="TxOutputBandpassFilter"/>
+/// (headMovesForward=false, see this class's own constructor) that's the NEWEST sample; for <see cref="HilbertFmDemodulator"/>'s <c>DoFir</c> (headMovesForward=true) that's the
 /// OLDEST -- the two filters use opposite addressing conventions (see each class's own doc comment for
 /// why the direction is load-bearing, not arbitrary). This class doesn't care which -- <see cref="Push"/>
 /// moves the physical head forward or backward per the convention fixed once at construction, and every
@@ -41,7 +42,8 @@ internal sealed class FirDelayLine
     /// input;</c>, toward index 0 -- legacy's real `CFIR2::Do`/`DoFIR` don't shift at all, see
     /// <see cref="HilbertFmDemodulator"/>'s and <see cref="SearchBandpassFilter"/>'s own doc comments for
     /// the actual legacy addressing this convention is derived from), false for
-    /// <see cref="SearchBandpassFilter"/>'s newest-first convention (h[0] pairs with the newest sample;
+    /// the newest-first convention of <see cref="SearchBandpassFilter"/>, <see cref="NotchFilter"/> and
+    /// <see cref="TxOutputBandpassFilter"/> (h[0] pairs with the newest sample;
     /// this port's own pre-circular-buffer code shifted via <c>Array.Copy(_z, 0, _z, 1, _tap); _z[0] =
     /// input;</c>, toward higher indices).</param>
     public FirDelayLine(int tap, bool headMovesForward)

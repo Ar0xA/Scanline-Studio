@@ -31,14 +31,15 @@ namespace ScanlineStudio.Core.Sstv;
 /// <b>Retuning must not reset the delay line.</b> `CFIR2::Create` only reallocates/zeroes the delay
 /// buffer when the TAP COUNT changes; `SetNotchFreq` always passes the same tap for a given sample
 /// rate, so retuning recomputes coefficients in place and the delay line survives.
-/// <see cref="SetFrequency"/> mutates only the coefficient array, never <c>_z</c> -- the UI's
+/// <see cref="SetFrequency"/> mutates only the coefficient array, never the delay line -- the UI's
 /// click-and-drag retune calls this on every pointer-move, and resetting state there would
 /// audibly click/pop on each frame.
 ///
 /// <b>`ProcessSample` is a plain causal FIR convolution</b> (`CNotch::Do`-&gt;`CFIR2::Do`,
-/// `fir.cpp:296-300,1115-1129`), no dry/wet mix -- same copy-shift delay-line shape already used by
-/// <see cref="SearchBandpassFilter.ProcessSample"/>/<see cref="TxOutputBandpassFilter.ProcessSample"/>,
-/// `H[0]` pairing with the newest sample.
+/// `fir.cpp:296-300,1115-1129`), no dry/wet mix, `H[0]` pairing with the newest sample. It uses the
+/// same newest-first circular <see cref="FirDelayLine"/> as <see cref="SearchBandpassFilter.ProcessSample"/>
+/// and <see cref="TxOutputBandpassFilter.ProcessSample"/>, and convolves the current coefficients on
+/// every call, so a retune takes effect on the next sample.
 /// </summary>
 internal sealed class NotchFilter
 {
@@ -47,14 +48,14 @@ internal sealed class NotchFilter
 
     private readonly int _tap;
     private readonly double _sampleRate;
-    private readonly double[] _z; // delay line, length tap+1. _z[0]=newest sample, _z[tap]=oldest.
+    private readonly FirDelayLine _delay; // logical index 0 = newest sample, pairs with _h[0]
     private double[] _h;
 
     public NotchFilter(int sampleRate, double initialFrequencyHz = 2400.0)
     {
         _sampleRate = sampleRate;
         _tap = ComputeTap(sampleRate);
-        _z = new double[_tap + 1]; // zero-init, matches CFIR2::Create's own zero-memset delay line
+        _delay = new FirDelayLine(_tap, headMovesForward: false); // zero-init, matches CFIR2::Create's memset
         _h = [];
         SetFrequency(initialFrequencyHz);
     }
@@ -74,16 +75,8 @@ internal sealed class NotchFilter
 
     public double ProcessSample(double input)
     {
-        Array.Copy(_z, 0, _z, 1, _tap);
-        _z[0] = input;
-
-        var sum = 0.0;
-        for (var i = 0; i <= _tap; i++)
-        {
-            sum += _z[i] * _h[i];
-        }
-
-        return sum;
+        _delay.Push(input);
+        return _delay.Convolve(_h);
     }
 
     /// <summary>`CNotch::CNotch` (`fir.cpp:264-272`): `m_tap = 96 * SampBase / 11025.0;` into an
