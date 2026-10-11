@@ -486,3 +486,7 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-04-F1.** DONE 2026-10-11 — `c6ca56db` round-trip guard tests + saved-format golden; `e5f32ae4` no Raw* defaults;
   `ffe4584d` ToSnapshot per element; `6f96bf5c` single-snapshot factories with per-type defaults; `ca1d938d`
   ApplyStyleFrom per element; `bec4e0f9` TemplateElementPersistenceMapper. Golden unchanged throughout.
+- **CQ-06-F8 / F9, CQ-10-F9 / F10 (P3, plan cq-q5).** CLOSED 2026-10-11 — measured first (`538bbf12` probes). Shipped
+  on correctness: `f3b087dd` shared pixel conversions (10-F9) and a weak-keyed per-source resize cache (10-F10 retention).
+  Not shipped, below the plan's 20% gate: waterfall ring buffer (<=~4.5% ceiling), StrokedTextBlock cache (5-7%), direct
+  element copy (<=13%), spectrum polyline (measured 16% faster, +1 KB/op, also changes line joins).
