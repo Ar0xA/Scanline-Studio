@@ -436,15 +436,14 @@ Test integrity:
 
 Structure (do as partial-file splits first, then extract):
 - **CQ-GOD.** 01-F1 decoder (2,645 code lines), 04-F2 TX editor VM, 05-F2 Options VM, 08-F2 session
-  service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report.
-  - step 1 (partial-file split, plan cq-q2) done for TransmitImagePreparer (62845f7e)
-  - step 1 (partial-file split, plan cq-q2) done for OptionsWindowViewModel (3d19fef8)
-  - step 1 (partial-file split, plan cq-q2) done for TxImageEditorPaneViewModel (32ebb5ed)
-  - step 1 (partial-file split, plan cq-q2) done for SstvSessionService (f7d34d62)
+  service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report. Step 1 (partial-file split) is
+  done for all five (see verified done); step 2 (extract types along the partial-file seams) is open.
   - follow-up (doc-only): comments stranded by the fields-stay rule. Session: T1-3 Task.Yield invariant sits on
     `ToneBatchSize` in main, not on `GenerateTone` (.Transmit.cs); `ResolveTransmitSettingsAsync`'s summary sits above
     `MaxSoundFileIdBytes` in main (pre-existing misattachment). TX editor: T0-12 coalescing block on
-    `_recomputePreviewScheduled`, Default* consts comment. Plus cross-file "above/below" wording in all split files.
+    `_recomputePreviewScheduled`, Default* consts comment. Decoder: the getter concurrency contract
+    (`AnalogFmSstvDecoder.cs` ~:889, "four properties below" → now `.Requests.cs`). Plus cross-file "above/below"
+    wording in all split files.
 - **CQ-04-F7 / F8.** Interaction policy in code-behind; non-re-entrant batch flag. (F3/F6 done, see below.)
 - **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
 - **CQ-08-F4.** `ISstvSessionService` has ~86 members.
@@ -459,6 +458,11 @@ Listed with evidence in the area reports. Pick them up only when already working
   `OverrideCallsign` (e.g. `PaneViewModelTests.cs:1316`) schedule a real-clock 250 ms lookup that can post into a later
   test; `PaneViewModelTests.cs:1178` `Assert.Empty(SetNoteCalls)` never waits out the 600 ms, so it is vacuous. Fix: a
   never-advanced or advanced FakeTimeProvider, as cq-q1 did for 21 tests.
+
+- **QRZ-CANCEL-NET10.** `QrzLogbookUploaderTests.UploadAsync_GenuineCancellation_ThrowsRatherThanReturningFailure`
+  passes on .NET 8.0.31 but fails deterministically when run on .NET 10 via roll-forward (no OperationCanceledException
+  for a pre-cancelled token). No Logbook code changed on `codequality`. Matters only if the target moves past .NET 8.
+  Found 2026-10-12 in the cq-q2 full-suite run. Bug pass.
 
 - **CQ-PASTE-ROT.** Paste Style from a rotated box onto a perspective box leaves both rotation and perspective on
   (`TxImageEditorPaneViewModel.cs:5611` assigns `RotationDegrees` unconditionally); the editor otherwise keeps them
@@ -498,3 +502,8 @@ Listed with evidence in the area reports. Pick them up only when already working
   on correctness: `f3b087dd` shared pixel conversions (10-F9) and a weak-keyed per-source resize cache (10-F10 retention).
   Not shipped, below the plan's 20% gate: waterfall ring buffer (<=~4.5% ceiling), StrokedTextBlock cache (5-7%), direct
   element copy (<=13%), spectrum polyline (measured 16% faster, +1 KB/op, also changes line joins).
+- **CQ-GOD step 1 (plan cq-q2).** DONE 2026-10-12 — pure-move partial-file splits, each proven by a Roslyn member-multiset
+  diff (all nine plan checks) plus identical source-generator output: `62845f7e` TransmitImagePreparer, `3d19fef8`
+  OptionsWindowViewModel, `32ebb5ed` TxImageEditorPaneViewModel, `f7d34d62` SstvSessionService, `092ce7a7`
+  AnalogFmSstvDecoder (golden vectors green). Line citations into those five files predate these commits; use
+  `git blame -C`.
