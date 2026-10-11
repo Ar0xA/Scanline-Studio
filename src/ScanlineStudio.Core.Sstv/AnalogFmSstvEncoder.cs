@@ -556,7 +556,7 @@ public sealed class AnalogFmSstvEncoder : ISstvEncoder
         }
     }
 
-    private static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFrequencySegments(
+    internal static IEnumerable<(double FrequencyHz, double DurationMs)> GenerateFrequencySegments(
         SstvModeDefinition mode,
         IImageSource image,
         IScanlineEncoder lineEncoder,

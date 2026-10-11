@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
@@ -117,5 +119,120 @@ public class AnalogFmSstvEncoderSilenceTests
         var raw = AnalogFmSstvEncoder.RenderSegments([(1000.0, 10.0)], SampleRate, applyFilter: false).ToList();
 
         Assert.NotEqual(raw, filtered);
+    }
+
+    // CW-ID "TEST" at 28 WPM: one dot is ~437 samples (1110/WPM ms), so a 100-sample run of exact zeros is a real gap.
+    private const int MinGapSamples = 100;
+    private const double CwToneHz = 1000.0;
+
+    private static readonly StationIdTransmitOptions CwId =
+        new() { CwEnabled = true, CwResolvedText = "TEST", CwToneFrequencyHz = CwToneHz, CwWpm = 28 };
+
+    [Fact]
+    public async Task EncodeBatchedAsync_CwIdTail_BpfOff_GapsAreExactZeroAndToneResumesInPhase()
+    {
+        var tail = await EncodeCwTailAsync(txBpfEnabled: false);
+        var gaps = FindZeroRuns(tail, MinGapSamples);
+
+        // Leading '@' silence, the gap between letters, and the gaps inside 'S'.
+        Assert.True(gaps.Count >= 5, $"Expected at least 5 CW gaps, found {gaps.Count}.");
+
+        // A phase reset to 0 during silence would make the first resumed sample exactly this value.
+        var restartFromPhaseZero = (float)Math.Sin(2 * Math.PI * CwToneHz / SampleRate);
+        var checkedGaps = 0;
+        foreach (var (start, length) in gaps)
+        {
+            var resumeIndex = start + length;
+            if (resumeIndex < tail.Length)
+            {
+                Assert.NotEqual(restartFromPhaseZero, tail[resumeIndex]);
+                checkedGaps++;
+            }
+        }
+
+        Assert.True(checkedGaps >= 4, $"Expected at least 4 gaps followed by a tone, found {checkedGaps}.");
+    }
+
+    [Fact]
+    public async Task EncodeBatchedAsync_CwIdTail_BpfOn_FirstGapRingsDownThenIsExactZero()
+    {
+        const int tapCount = TxOutputBandpassFilter.DefaultTapCount;
+        var tailBpfOff = await EncodeCwTailAsync(txBpfEnabled: false);
+        var tailBpfOn = await EncodeCwTailAsync(txBpfEnabled: true);
+        Assert.Equal(tailBpfOff.Length, tailBpfOn.Length);
+
+        var (start, length) = FindZeroRuns(tailBpfOff, MinGapSamples)[0];
+        var gap = tailBpfOn.Skip(start).Take(length).ToArray();
+
+        Assert.True(gap.Length > tapCount + 1, "Gap too short to observe both ringing and decay.");
+        Assert.Contains(gap.Take(tapCount), s => s != 0.0f);
+        Assert.All(gap.Skip(tapCount + 1), s => Assert.Equal(0.0f, s));
+    }
+
+    [Fact]
+    public async Task EncodeBatchedAsync_BpfOnVersusOff_TonesDiffer()
+    {
+        var mode = SstvModeRegistry.Robot36;
+        var image = AnalogFmSstvEncoderLoopParityTests.CreatePatternImage(mode.ImageWidth, mode.ImageHeight);
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+
+        var bpfOn = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, txBpfEnabled: true));
+        var bpfOff = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, txBpfEnabled: false));
+
+        Assert.Equal(bpfOff.Length, bpfOn.Length);
+        Assert.NotEqual(bpfOff, bpfOn);
+    }
+
+    /// <summary>Returns the CW-ID tail of a real robot-36 encode: everything after the
+    /// without-CW output length (same pattern as <c>AnalogFmSstvEncoderStationIdWiringTests</c>).</summary>
+    private static async Task<float[]> EncodeCwTailAsync(bool txBpfEnabled)
+    {
+        var mode = SstvModeRegistry.Robot36;
+        var image = AnalogFmSstvEncoderLoopParityTests.CreatePatternImage(mode.ImageWidth, mode.ImageHeight);
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+
+        var withoutCw = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, txBpfEnabled: txBpfEnabled));
+        var withCw = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, CwId, txBpfEnabled: txBpfEnabled));
+
+        Assert.True(withCw.Length > withoutCw.Length);
+        return withCw[withoutCw.Length..];
+    }
+
+    private static List<(int Start, int Length)> FindZeroRuns(float[] samples, int minLength)
+    {
+        var runs = new List<(int Start, int Length)>();
+        var i = 0;
+        while (i < samples.Length)
+        {
+            if (BitConverter.SingleToInt32Bits(samples[i]) != 0)
+            {
+                i++;
+                continue;
+            }
+
+            var start = i;
+            while (i < samples.Length && BitConverter.SingleToInt32Bits(samples[i]) == 0)
+            {
+                i++;
+            }
+
+            if (i - start >= minLength)
+            {
+                runs.Add((start, i - start));
+            }
+        }
+
+        return runs;
+    }
+
+    private static async Task<float[]> CollectBatchesAsync(IAsyncEnumerable<ReadOnlyMemory<float>> batches)
+    {
+        var list = new List<float>();
+        await foreach (var batch in batches)
+        {
+            list.AddRange(batch.ToArray());
+        }
+
+        return list.ToArray();
     }
 }

@@ -1,3 +1,5 @@
+using ScanlineStudio.Abstractions.Sstv;
+
 namespace ScanlineStudio.Core.Sstv.Tests;
 
 /// <summary>
@@ -189,5 +191,32 @@ public class AnalogFmSstvEncoderTxLpfTests
         }
 
         Assert.Equal(expected, actual);
+    }
+
+    [Fact]
+    public async Task EncodeBatchedAsync_TxLpfEnabled_ChangesProductionOutputButNotItsLength()
+    {
+        // Production path, not RenderSegments; exact smoothed values are pinned by the fingerprints.
+        var mode = SstvModeRegistry.Robot36;
+        var image = AnalogFmSstvEncoderLoopParityTests.CreatePatternImage(mode.ImageWidth, mode.ImageHeight);
+        var encoder = new AnalogFmSstvEncoder(SampleRate);
+        var stationId = new StationIdTransmitOptions { CwEnabled = true, CwResolvedText = "TEST", CwToneFrequencyHz = 1000, CwWpm = 28 };
+
+        var lpfOff = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, stationId, txLpfEnabled: false));
+        var lpfOn = await CollectBatchesAsync(encoder.EncodeBatchedAsync(mode, image, stationId, txLpfEnabled: true));
+
+        Assert.Equal(lpfOff.Count, lpfOn.Count);
+        Assert.NotEqual(lpfOff, lpfOn);
+    }
+
+    private static async Task<List<float>> CollectBatchesAsync(IAsyncEnumerable<ReadOnlyMemory<float>> batches)
+    {
+        var list = new List<float>();
+        await foreach (var batch in batches)
+        {
+            list.AddRange(batch.ToArray());
+        }
+
+        return list;
     }
 }
