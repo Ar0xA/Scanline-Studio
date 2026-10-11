@@ -440,6 +440,11 @@ Structure (do as partial-file splits first, then extract):
   - step 1 (partial-file split, plan cq-q2) done for TransmitImagePreparer (62845f7e)
   - step 1 (partial-file split, plan cq-q2) done for OptionsWindowViewModel (3d19fef8)
   - step 1 (partial-file split, plan cq-q2) done for TxImageEditorPaneViewModel (32ebb5ed)
+  - step 1 (partial-file split, plan cq-q2) done for SstvSessionService (f7d34d62)
+  - follow-up (doc-only): comments stranded by the fields-stay rule. Session: T1-3 Task.Yield invariant sits on
+    `ToneBatchSize` in main, not on `GenerateTone` (.Transmit.cs); `ResolveTransmitSettingsAsync`'s summary sits above
+    `MaxSoundFileIdBytes` in main (pre-existing misattachment). TX editor: T0-12 coalescing block on
+    `_recomputePreviewScheduled`, Default* consts comment. Plus cross-file "above/below" wording in all split files.
 - **CQ-04-F7 / F8.** Interaction policy in code-behind; non-re-entrant batch flag. (F3/F6 done, see below.)
 - **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
 - **CQ-08-F4.** `ISstvSessionService` has ~86 members.
