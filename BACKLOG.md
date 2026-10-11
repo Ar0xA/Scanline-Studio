@@ -451,6 +451,11 @@ Structure (do as partial-file splits first, then extract):
 
 Listed with evidence in the area reports. Pick them up only when already working in that file.
 
+- **CQ-TESTHYG.** Leftover real-clock UI test leaks found in the cq-q1 review (2026-10-11): RxImage tests that set
+  `OverrideCallsign` (e.g. `PaneViewModelTests.cs:1316`) schedule a real-clock 250 ms lookup that can post into a later
+  test; `PaneViewModelTests.cs:1178` `Assert.Empty(SetNoteCalls)` never waits out the 600 ms, so it is vacuous. Fix: a
+  never-advanced or advanced FakeTimeProvider, as cq-q1 did for 21 tests.
+
 ### CQ verified done
 
 - **CQ-03-F1.** DONE 2026-10-11 — `Decoder_DecodesRealLegacyAudio_WithinToleranceOfSource` now compares our
