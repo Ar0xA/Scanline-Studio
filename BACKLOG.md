@@ -443,8 +443,6 @@ Test integrity:
 Structure (do as partial-file splits first, then extract):
 - **CQ-GOD.** 01-F1 decoder (2,645 code lines), 04-F2 TX editor VM, 05-F2 Options VM, 08-F2 session
   service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report.
-- **CQ-01-F4.** `RestartableSstvDecoder` hand-mirrors ~25 settings through 21/26-parameter constructors;
-  `ResolvedSstvDecoderSettings` already exists.
 - **CQ-04-F3 / F6 / F7 / F8.** Box/Image perspective code duplicated and drifted; Flatten/Demote
   duplication; interaction policy in code-behind; non-re-entrant batch flag.
 - **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
@@ -467,3 +465,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-02-F4/F5/F8 (P3, plan cq-q3).** DONE 2026-10-11 — `d1788f2f` one `FirDesign.MakeFilter` (2,095-case frozen-oracle
   bit identity); `3f3284b2` Notch + TX BPF on `FirDelayLine` (132-case parity); `72692a06` one Sync/Hold/Scan line loop
   for the four sequential TX encoders (43-mode segment fingerprints, 11 mutations).
+- **CQ-01-F4 (+12-F10 decoder half).** DONE 2026-10-11 — `beb082f7`: `RestartableSstvDecoder` holds one
+  `ResolvedSstvDecoderSettings` record; every setter stores and forwards under `_gate` (fixes a lost-update race in
+  four Request methods); full-snapshot swap-survival tests plus a surface guard; 4 mutations fail.
