@@ -1847,16 +1847,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public void AddOverlayElementAt(double centerX, double centerY, double width, double height)
     {
         PushUndoSnapshot();
-        var element = CreateOverlayElement(
-            text: "Text",
-            x: centerX,
-            y: centerY,
-            width: width,
-            height: height,
-            fontSizeRelative: DefaultFontSizeRelative,
-            color: new Rgb24(255, 255, 255),
-            z: NextZ(),
-            locked: false);
+        var element = CreateOverlayElement(NewTextElementDefaults with
+        {
+            X = centerX,
+            Y = centerY,
+            Width = width,
+            Height = height,
+            Z = NextZ(),
+            // Phase 4: the preparer's own default family, queried fresh, not a second hardcoded literal.
+            FontFamily = _preparer.AvailableFontFamilies.FirstOrDefault(string.Empty),
+        });
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- unlike plain
@@ -1878,17 +1878,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public void AddBoxElementAt(double centerX, double centerY, double width, double height)
     {
         PushUndoSnapshot();
-        var element = CreateBoxElement(
-            x: centerX,
-            y: centerY,
-            width: width,
-            height: height,
-            fillColor: new Rgb24(64, 64, 64),
-            borderColor: null,
-            borderThickness: 0,
-            opacity: 1.0,
-            z: NextZ(),
-            locked: false);
+        var element = CreateBoxElement(NewBoxElementDefaults with
+        {
+            X = centerX,
+            Y = centerY,
+            Width = width,
+            Height = height,
+            Z = NextZ(),
+        });
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- see
@@ -1919,16 +1916,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public void AddLineElementAt(double x1, double y1, double x2, double y2)
     {
         PushUndoSnapshot();
-        var element = CreateLineElement(
-            x1: x1,
-            y1: y1,
-            x2: x2,
-            y2: y2,
-            strokeColor: new Rgb24(255, 255, 255),
-            strokeThickness: DefaultLineStrokeThickness,
-            opacity: 1.0,
-            z: NextZ(),
-            locked: false);
+        var element = CreateLineElement(NewLineElementDefaults with
+        {
+            X1 = x1,
+            Y1 = y1,
+            X2 = x2,
+            Y2 = y2,
+            Z = NextZ(),
+        });
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         // Force-selected unconditionally -- see AddOverlayElement's own identical comment. Line's
@@ -2409,18 +2404,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         const double CascadeOffset = 0.03;
         const int CascadeWrap = 8;
         var offset = CascadeOffset * (cascadeIndex % CascadeWrap);
-        var element = CreateImageElement(
-            x: CropRect.X + (CropRect.Width / 2) + offset,
-            y: CropRect.Y + (CropRect.Height / 2) + offset,
-            width: DefaultElementWidth,
-            height: DefaultElementWidth,
-            source: downsampled,
-            fit: ImageFitMode.Contain,
-            origin: origin,
-            z: NextZ(),
-            locked: false,
-            naturalPixelWidth: naturalPixelWidth,
-            naturalPixelHeight: naturalPixelHeight);
+        var element = CreateImageElement(NewImageElementDefaults(downsampled, origin) with
+        {
+            X = CropRect.X + (CropRect.Width / 2) + offset,
+            Y = CropRect.Y + (CropRect.Height / 2) + offset,
+            Width = DefaultElementWidth,
+            Height = DefaultElementWidth,
+            Z = NextZ(),
+            NaturalPixelWidth = naturalPixelWidth,
+            NaturalPixelHeight = naturalPixelHeight,
+        });
         OverlayElements.Add(element);
         SelectedOverlayElement = element;
         // Force-selected unconditionally (TX workflow modernization plan, Phase 2) -- covers both
@@ -2725,10 +2718,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             var baked = _preparer.ApplyAdjustments(resized, Adjustments);
 
             var z = OverlayElements.Count == 0 ? 0 : OverlayElements.Min(e => e.Z) - 1;
-            var element = CreateImageElement(
-                x: 0.5, y: 0.5, width: 1, height: 1, source: baked, fit: ImageFitMode.Contain,
-                origin: new ImageSourceOrigin(ImageSourceKind.Promoted, null), z: z, locked: true,
-                isBackground: true, naturalPixelWidth: _targetMode.ImageWidth, naturalPixelHeight: _targetMode.ImageHeight);
+            var element = CreateImageElement(NewImageElementDefaults(baked, new ImageSourceOrigin(ImageSourceKind.Promoted, null)) with
+            {
+                X = 0.5, Y = 0.5, Width = 1, Height = 1, Z = z, Locked = true,
+                IsBackground = true, NaturalPixelWidth = _targetMode.ImageWidth, NaturalPixelHeight = _targetMode.ImageHeight,
+            });
             OverlayElements.Insert(0, element);
 
             var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
@@ -3200,54 +3194,90 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         element.Corner3Y = x3;
     }
 
+    /// <summary>Every field of a brand-new text element; callers set position/size/Z with
+    /// <c>with { ... }</c>. <see cref="RawTextElementSnapshot.FontFamily"/> is empty here because the
+    /// preparer's default family is instance state -- <see cref="AddOverlayElementAt"/> supplies it.</summary>
+    private static readonly RawTextElementSnapshot NewTextElementDefaults = new(
+        X: 0, Y: 0, Width: 0, Height: 0, Z: 0, Locked: false,
+        Text: "Text", FontSizeRelative: DefaultFontSizeRelative, Color: new Rgb24(255, 255, 255),
+        FontFamily: string.Empty, StrokeColor: null, StrokeThickness: 0.02,
+        ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+        GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+        GradientStartColor: null, GradientEndColor: null,
+        Bold: false, Italic: false,
+        StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+        BitmapFillEnabled: false, BitmapFillSource: null,
+        GrowToFillEnabled: false);
+
+    /// <summary>Every field of a brand-new box element; callers set position/size/Z with
+    /// <c>with { ... }</c>.</summary>
+    private static readonly RawBoxElementSnapshot NewBoxElementDefaults = new(
+        X: 0, Y: 0, Width: 0, Height: 0, Z: 0, Locked: false,
+        FillColor: new Rgb24(64, 64, 64), BorderColor: null, BorderThickness: 0, Opacity: 1.0, CornerRadius: 0,
+        GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+        GradientStartColor: null, GradientEndColor: null,
+        PerspectiveEnabled: false,
+        Corner0X: 0, Corner0Y: 0, Corner1X: 0, Corner1Y: 0,
+        Corner2X: 0, Corner2Y: 0, Corner3X: 0, Corner3Y: 0,
+        FillEnabled: true,
+        RotationDegrees: 0);
+
+    /// <summary>Every field of a brand-new line element; callers set the endpoints and Z with
+    /// <c>with { ... }</c>. The base X/Y/Width/Height stay 0: <see cref="CreateLineElement"/> reads
+    /// only the endpoints.</summary>
+    private static readonly RawLineElementSnapshot NewLineElementDefaults = new(
+        X: 0, Y: 0, Width: 0, Height: 0, Z: 0, Locked: false,
+        X1: 0, Y1: 0, X2: 0, Y2: 0, StrokeColor: new Rgb24(255, 255, 255), StrokeThickness: DefaultLineStrokeThickness, Opacity: 1.0);
+
+    /// <summary>Every field of a brand-new image element. A factory, not a static instance, because
+    /// <paramref name="source"/> and <paramref name="origin"/> are non-nullable and have no default.</summary>
+    private static RawImageElementSnapshot NewImageElementDefaults(IImageSource source, ImageSourceOrigin origin) => new(
+        X: 0, Y: 0, Width: 0, Height: 0, Z: 0, Locked: false,
+        Source: source, Fit: ImageFitMode.Contain, Origin: origin, IsBackground: false,
+        NaturalPixelWidth: 0, NaturalPixelHeight: 0,
+        PerspectiveEnabled: false,
+        Corner0X: 0, Corner0Y: 0, Corner1X: 0, Corner1Y: 0,
+        Corner2X: 0, Corner2Y: 0, Corner3X: 0, Corner3Y: 0,
+        RotationDegrees: 0);
+
     /// <summary>Shared element-construction wiring for <see cref="AddOverlayElement"/> and
     /// restoration (<see cref="CreateElementFromSnapshot"/>) -- round-1 plan-review finding on
     /// spec/18-path-to-1.0.md's re-open/re-edit sub-piece, still the right call in Phase 1: keep
     /// this in exactly one place, not duplicated between "new blank element" and "restored element"
-    /// call sites.</summary>
-    private OverlayElementViewModel CreateOverlayElement(
-        string text, double x, double y, double width, double height, double fontSizeRelative, Rgb24 color, int z, bool locked,
-        string? fontFamily = null, Rgb24? strokeColor = null, double strokeThickness = 0.02,
-        Rgb24? shadowColor = null, double shadowOffsetX = 0.02, double shadowOffsetY = 0.02, double rotationDegrees = 0,
-        bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
-        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
-        bool bold = false, bool italic = false,
-        Rgb24? stackColor = null, double stackStepX = 0.02, double stackStepY = 0.02,
-        bool bitmapFillEnabled = false, IImageSource? bitmapFillSource = null,
-        bool growToFillEnabled = false)
+    /// call sites. Every field is read from <paramref name="s"/>; a brand-new element starts from
+    /// <see cref="NewTextElementDefaults"/>.</summary>
+    private OverlayElementViewModel CreateOverlayElement(RawTextElementSnapshot s)
     {
         var element = new OverlayElementViewModel
         {
-            Text = text,
-            X = x,
-            Y = y,
-            Width = width,
-            Height = height,
-            FontSizeRelative = fontSizeRelative,
-            Color = color,
-            // Phase 4: defaults to the preparer's own default family (queried fresh, not a second
-            // hardcoded literal) when the caller doesn't specify one -- AddOverlayElement's own
-            // brand-new-element path.
-            FontFamily = fontFamily ?? _preparer.AvailableFontFamilies.FirstOrDefault(string.Empty),
-            StrokeColor = strokeColor,
-            StrokeThickness = strokeThickness,
-            ShadowColor = shadowColor,
-            ShadowOffsetX = shadowOffsetX,
-            ShadowOffsetY = shadowOffsetY,
-            RotationDegrees = rotationDegrees,
-            GradientEnabled = gradientEnabled,
-            GradientKind = gradientKind,
+            Text = s.Text,
+            X = s.X,
+            Y = s.Y,
+            Width = s.Width,
+            Height = s.Height,
+            FontSizeRelative = s.FontSizeRelative,
+            Color = s.Color,
+            // "" stays ""; null (only from a hand-edited template.json) falls back to the preparer default.
+            FontFamily = s.FontFamily ?? _preparer.AvailableFontFamilies.FirstOrDefault(string.Empty),
+            StrokeColor = s.StrokeColor,
+            StrokeThickness = s.StrokeThickness,
+            ShadowColor = s.ShadowColor,
+            ShadowOffsetX = s.ShadowOffsetX,
+            ShadowOffsetY = s.ShadowOffsetY,
+            RotationDegrees = s.RotationDegrees,
+            GradientEnabled = s.GradientEnabled,
+            GradientKind = s.GradientKind,
             // Null-coalesced to the VM's own field-initializer defaults (255,0,0)/(0,0,255) -- a
             // record constructor parameter default can't call a struct constructor (not a compile-
             // time constant), which is why RawTextElementSnapshot's own Gradient*Color fields are
             // nullable even though the VM's own are not; this is where that gets reconciled back.
-            GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
-            GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
-            Bold = bold,
-            Italic = italic,
-            StackColor = stackColor,
-            StackStepX = stackStepX,
-            StackStepY = stackStepY,
+            GradientStartColor = s.GradientStartColor ?? new Rgb24(255, 0, 0),
+            GradientEndColor = s.GradientEndColor ?? new Rgb24(0, 0, 255),
+            Bold = s.Bold,
+            Italic = s.Italic,
+            StackColor = s.StackColor,
+            StackStepX = s.StackStepX,
+            StackStepY = s.StackStepY,
             // TX editor gap-items plan, item 4b -- Source before Enabled (round-1 code-review
             // finding, matches every other write-both-together assignment in this file). Both
             // assigned AFTER Gradient* above -- if a hand-edited/imported template somehow has both
@@ -3256,11 +3286,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // precedence winner (BitmapFill) rather than staying ambiguous; the Source/Enabled
             // ordering between THEMSELVES doesn't affect that, Source's own setter never touches
             // Gradient.
-            BitmapFillSource = bitmapFillSource,
-            BitmapFillEnabled = bitmapFillEnabled,
-            GrowToFillEnabled = growToFillEnabled,
-            Z = z,
-            Locked = locked,
+            BitmapFillSource = s.BitmapFillSource,
+            BitmapFillEnabled = s.BitmapFillEnabled,
+            GrowToFillEnabled = s.GrowToFillEnabled,
+            Z = s.Z,
+            Locked = s.Locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             // Quick Style Flyout (TX workflow modernization plan, Phase 1) -- see its own doc
@@ -3312,42 +3342,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     }
 
     /// <summary>Box counterpart to <see cref="CreateOverlayElement"/> -- same wiring shape, no
-    /// CanvasFontSize (boxes don't shrink-to-fit).</summary>
-    private BoxElementViewModel CreateBoxElement(
-        double x, double y, double width, double height, Rgb24 fillColor, Rgb24? borderColor, double borderThickness, double opacity, int z, bool locked,
-        double cornerRadius = 0,
-        bool gradientEnabled = false, TextGradientKind gradientKind = TextGradientKind.Horizontal,
-        Rgb24? gradientStartColor = null, Rgb24? gradientEndColor = null,
-        // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- trailing/defaulted,
-        // same additive convention every other Phase-N addition to this factory already uses.
-        bool perspectiveEnabled = false,
-        double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
-        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0,
-        // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
-        bool fillEnabled = true,
-        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as every other
-        // Phase-N addition to this factory.
-        double rotationDegrees = 0)
+    /// CanvasFontSize (boxes don't shrink-to-fit). A brand-new box starts from
+    /// <see cref="NewBoxElementDefaults"/>.</summary>
+    private BoxElementViewModel CreateBoxElement(RawBoxElementSnapshot s)
     {
         var element = new BoxElementViewModel
         {
-            X = x,
-            Y = y,
-            Width = width,
-            Height = height,
-            FillColor = fillColor,
-            FillEnabled = fillEnabled,
-            BorderColor = borderColor,
-            BorderThickness = borderThickness,
-            Opacity = opacity,
-            CornerRadius = cornerRadius,
-            GradientEnabled = gradientEnabled,
-            GradientKind = gradientKind,
+            X = s.X,
+            Y = s.Y,
+            Width = s.Width,
+            Height = s.Height,
+            FillColor = s.FillColor,
+            FillEnabled = s.FillEnabled,
+            BorderColor = s.BorderColor,
+            BorderThickness = s.BorderThickness,
+            Opacity = s.Opacity,
+            CornerRadius = s.CornerRadius,
+            GradientEnabled = s.GradientEnabled,
+            GradientKind = s.GradientKind,
             // Same null-means-"use the VM's own default" fallback CreateOverlayElement's identical
-            // Gradient*Color params already use -- a caller who never touches gradients at all
+            // Gradient*Color fields already use -- a caller who never touches gradients at all
             // (every non-Phase-8 site) never has to know or care what these defaults are.
-            GradientStartColor = gradientStartColor ?? new Rgb24(255, 0, 0),
-            GradientEndColor = gradientEndColor ?? new Rgb24(0, 0, 255),
+            GradientStartColor = s.GradientStartColor ?? new Rgb24(255, 0, 0),
+            GradientEndColor = s.GradientEndColor ?? new Rgb24(0, 0, 255),
             // Perspective transform, item 3 -- required construction ORDER (round-1/round-3 plan-
             // review blockers): the 8 corners MUST be assigned before PerspectiveEnabled, or every
             // intermediate corner assignment would read a partially-populated quad through the
@@ -3355,18 +3372,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // initializer, but the wrong general habit to establish); PerspectiveEnabled MUST be
             // assigned before the undo-delegate lines below, or a real, undone restore's own
             // construction-time write would push a spurious undo step.
-            Corner0X = corner0X,
-            Corner0Y = corner0Y,
-            Corner1X = corner1X,
-            Corner1Y = corner1Y,
-            Corner2X = corner2X,
-            Corner2Y = corner2Y,
-            Corner3X = corner3X,
-            Corner3Y = corner3Y,
-            PerspectiveEnabled = perspectiveEnabled,
-            RotationDegrees = rotationDegrees,
-            Z = z,
-            Locked = locked,
+            Corner0X = s.Corner0X,
+            Corner0Y = s.Corner0Y,
+            Corner1X = s.Corner1X,
+            Corner1Y = s.Corner1Y,
+            Corner2X = s.Corner2X,
+            Corner2Y = s.Corner2Y,
+            Corner3X = s.Corner3X,
+            Corner3Y = s.Corner3Y,
+            PerspectiveEnabled = s.PerspectiveEnabled,
+            RotationDegrees = s.RotationDegrees,
+            Z = s.Z,
+            Locked = s.Locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             TargetModeHeightPx = _targetMode.ImageHeight,
@@ -3452,29 +3469,31 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     }
 
     /// <summary>Line counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
-    /// -- same wiring shape, TX editor gap-items plan (2026-09-01). Endpoint-parameterized (not
-    /// center/width/height, matching every other element's own creation-factory shape) since a
-    /// line's real geometry is the two endpoints. <b>Object initializer sets X1/Y1/X2/Y2 directly,
+    /// -- same wiring shape, TX editor gap-items plan (2026-09-01). Reads the endpoints, not
+    /// center/width/height, since a line's real geometry is the two endpoints; a brand-new line
+    /// starts from <see cref="NewLineElementDefaults"/>. <b>Object initializer sets X1/Y1/X2/Y2 directly,
     /// deliberately NOT X/Y/Width/Height</b> (plan-review risk finding) -- unlike
     /// <see cref="BoxElementViewModel"/>, where X/Y/Width/Height ARE the real stored fields,
     /// <see cref="LineElementViewModel"/>'s X/Y/Width/Height are DERIVED get/set properties; assigning
     /// them here would run the derived setters against still-default/zero endpoints in
     /// object-initializer-assignment order, an unnecessary and undefined-feeling detour when the
     /// real fields are directly assignable.</summary>
-    private LineElementViewModel CreateLineElement(
-        double x1, double y1, double x2, double y2, Rgb24 strokeColor, double strokeThickness, double opacity, int z, bool locked)
+    private LineElementViewModel CreateLineElement(RawLineElementSnapshot s)
     {
         var element = new LineElementViewModel
         {
-            X1 = x1,
-            Y1 = y1,
-            X2 = x2,
-            Y2 = y2,
-            StrokeColor = strokeColor,
-            StrokeThickness = strokeThickness,
-            Opacity = opacity,
-            Z = z,
-            Locked = locked,
+            // Endpoints (X1/Y1/X2/Y2), NOT the base X/Y/Width/Height -- RawLineElementSnapshot's own
+            // doc comment: the base fields are derived-for-uniformity-on-write only, endpoints are the
+            // sole truth on read.
+            X1 = s.X1,
+            Y1 = s.Y1,
+            X2 = s.X2,
+            Y2 = s.Y2,
+            StrokeColor = s.StrokeColor,
+            StrokeThickness = s.StrokeThickness,
+            Opacity = s.Opacity,
+            Z = s.Z,
+            Locked = s.Locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             TargetModeHeightPx = _targetMode.ImageHeight,
@@ -3514,43 +3533,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     }
 
     /// <summary>Image counterpart to <see cref="CreateOverlayElement"/>/<see cref="CreateBoxElement"/>
-    /// -- same wiring shape, Phase 2 (spec/15-template-designer.md).</summary>
-    private ImageElementViewModel CreateImageElement(
-        double x, double y, double width, double height, IImageSource source, ImageFitMode fit, ImageSourceOrigin origin, int z, bool locked,
-        bool isBackground = false, int naturalPixelWidth = 0, int naturalPixelHeight = 0,
-        // TX editor gap-items plan, item 3 -- same additive convention as CreateBoxElement's own
-        // identical trailing parameters; see that method's own comment for the required construction
-        // order (corners before PerspectiveEnabled, PerspectiveEnabled before the undo delegate).
-        bool perspectiveEnabled = false,
-        double corner0X = 0, double corner0Y = 0, double corner1X = 0, double corner1Y = 0,
-        double corner2X = 0, double corner2Y = 0, double corner3X = 0, double corner3Y = 0,
-        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as CreateBoxElement's
-        // own identical addition.
-        double rotationDegrees = 0)
+    /// -- same wiring shape, Phase 2 (spec/15-template-designer.md). A brand-new image starts from
+    /// <see cref="NewImageElementDefaults"/>.</summary>
+    private ImageElementViewModel CreateImageElement(RawImageElementSnapshot s)
     {
-        var element = new ImageElementViewModel(source)
+        var element = new ImageElementViewModel(s.Source)
         {
-            X = x,
-            Y = y,
-            Width = width,
-            Height = height,
-            Fit = fit,
-            Origin = origin,
-            Corner0X = corner0X,
-            Corner0Y = corner0Y,
-            Corner1X = corner1X,
-            Corner1Y = corner1Y,
-            Corner2X = corner2X,
-            Corner2Y = corner2Y,
-            Corner3X = corner3X,
-            Corner3Y = corner3Y,
-            PerspectiveEnabled = perspectiveEnabled,
-            RotationDegrees = rotationDegrees,
-            Z = z,
-            Locked = locked,
-            IsBackground = isBackground,
-            NaturalPixelWidth = naturalPixelWidth,
-            NaturalPixelHeight = naturalPixelHeight,
+            X = s.X,
+            Y = s.Y,
+            Width = s.Width,
+            Height = s.Height,
+            Fit = s.Fit,
+            Origin = s.Origin,
+            // See CreateBoxElement's own comment for the required construction order (corners before
+            // PerspectiveEnabled, PerspectiveEnabled before the undo delegate).
+            Corner0X = s.Corner0X,
+            Corner0Y = s.Corner0Y,
+            Corner1X = s.Corner1X,
+            Corner1Y = s.Corner1Y,
+            Corner2X = s.Corner2X,
+            Corner2Y = s.Corner2Y,
+            Corner3X = s.Corner3X,
+            Corner3Y = s.Corner3Y,
+            PerspectiveEnabled = s.PerspectiveEnabled,
+            RotationDegrees = s.RotationDegrees,
+            Z = s.Z,
+            Locked = s.Locked,
+            IsBackground = s.IsBackground,
+            NaturalPixelWidth = s.NaturalPixelWidth,
+            NaturalPixelHeight = s.NaturalPixelHeight,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             RemoveCommand = RemoveOverlayElementCommand,
@@ -3587,32 +3598,10 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// back into a live element, rather than duplicating the type switch at both call sites.</summary>
     private ITemplateElementViewModel CreateElementFromSnapshot(RawElementSnapshot snapshot) => snapshot switch
     {
-        RawTextElementSnapshot text => CreateOverlayElement(
-            text.Text, text.X, text.Y, text.Width, text.Height, text.FontSizeRelative, text.Color, text.Z, text.Locked,
-            text.FontFamily, text.StrokeColor, text.StrokeThickness,
-            text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
-            text.Bold, text.Italic,
-            text.StackColor, text.StackStepX, text.StackStepY,
-            text.BitmapFillEnabled, text.BitmapFillSource, text.GrowToFillEnabled),
-        RawBoxElementSnapshot box => CreateBoxElement(
-            box.X, box.Y, box.Width, box.Height, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.Z, box.Locked,
-            box.CornerRadius,
-            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
-            box.PerspectiveEnabled,
-            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-            box.FillEnabled, box.RotationDegrees),
-        RawImageElementSnapshot image => CreateImageElement(
-            image.X, image.Y, image.Width, image.Height, image.Source, image.Fit, image.Origin, image.Z, image.Locked, image.IsBackground,
-            image.NaturalPixelWidth, image.NaturalPixelHeight,
-            image.PerspectiveEnabled,
-            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
-            image.RotationDegrees),
-        // Endpoints (X1/Y1/X2/Y2), NOT the base X/Y/Width/Height -- RawLineElementSnapshot's own
-        // doc comment: the base fields are derived-for-uniformity-on-write only, endpoints are the
-        // sole truth on read.
-        RawLineElementSnapshot line => CreateLineElement(
-            line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity, line.Z, line.Locked),
+        RawTextElementSnapshot text => CreateOverlayElement(text),
+        RawBoxElementSnapshot box => CreateBoxElement(box),
+        RawImageElementSnapshot image => CreateImageElement(image),
+        RawLineElementSnapshot line => CreateLineElement(line),
         _ => throw new NotSupportedException($"Unrecognized {nameof(RawElementSnapshot)}: {snapshot.GetType()}."),
     };
 
@@ -5168,11 +5157,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
         PushUndoSnapshot();
         const double padding = 0.02;
-        var plate = CreateBoxElement(
-            x: text.X, y: text.Y,
-            width: text.Width + (padding * 2), height: text.Height + (padding * 2),
-            fillColor: new Rgb24(0, 0, 0), borderColor: null, borderThickness: 0, opacity: 0.6,
-            z: text.Z, locked: false);
+        var plate = CreateBoxElement(NewBoxElementDefaults with
+        {
+            X = text.X, Y = text.Y,
+            Width = text.Width + (padding * 2), Height = text.Height + (padding * 2),
+            FillColor = new Rgb24(0, 0, 0), Opacity = 0.6,
+            Z = text.Z,
+        });
 
         // _suspendPreview-guarded (same pattern as SetAsBackdrop/Rotate's own multi-element
         // loops) so the up-to-N Z reassignments below don't each independently trigger their own
