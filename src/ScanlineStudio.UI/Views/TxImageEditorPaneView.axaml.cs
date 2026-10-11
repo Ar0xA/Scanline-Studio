@@ -1475,12 +1475,12 @@ public partial class TxImageEditorPaneView : UserControl
     public static void TryWritePerspectiveCorner(
         ITemplateElementViewModel element, int cornerIndex, double x, double y, double workingCopyWidth, double workingCopyHeight)
     {
-        var (c0x, c0y, c1x, c1y, c2x, c2y, c3x, c3y) = element switch
+        if (element is not PerspectiveElementViewModelBase quad)
         {
-            ImageElementViewModel image => (image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
-            BoxElementViewModel box => (box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
-            _ => (0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0),
-        };
+            return;
+        }
+
+        var (c0x, c0y, c1x, c1y, c2x, c2y, c3x, c3y) = quad.Corners;
 
         switch (cornerIndex)
         {
@@ -1501,37 +1501,7 @@ public partial class TxImageEditorPaneView : UserControl
             return;
         }
 
-        switch (element)
-        {
-            case ImageElementViewModel image:
-                SetCorner(image, cornerIndex, x, y);
-                break;
-            case BoxElementViewModel box:
-                SetCorner(box, cornerIndex, x, y);
-                break;
-        }
-    }
-
-    private static void SetCorner(ImageElementViewModel image, int cornerIndex, double x, double y)
-    {
-        switch (cornerIndex)
-        {
-            case 0: image.Corner0X = x; image.Corner0Y = y; break;
-            case 1: image.Corner1X = x; image.Corner1Y = y; break;
-            case 2: image.Corner2X = x; image.Corner2Y = y; break;
-            case 3: image.Corner3X = x; image.Corner3Y = y; break;
-        }
-    }
-
-    private static void SetCorner(BoxElementViewModel box, int cornerIndex, double x, double y)
-    {
-        switch (cornerIndex)
-        {
-            case 0: box.Corner0X = x; box.Corner0Y = y; break;
-            case 1: box.Corner1X = x; box.Corner1Y = y; break;
-            case 2: box.Corner2X = x; box.Corner2Y = y; break;
-            case 3: box.Corner3X = x; box.Corner3Y = y; break;
-        }
+        quad.SetCorner(cornerIndex, x, y);
     }
 
     /// <summary>Pure resize-with-floor math, split out from <see cref="OnCanvasPointerMoved"/> so it's

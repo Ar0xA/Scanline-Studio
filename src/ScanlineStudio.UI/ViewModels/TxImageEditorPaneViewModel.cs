@@ -1709,7 +1709,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // line case's own "out of scope in v1" alignment-guide note above). Checked BEFORE
         // PushUndoSnapshot (round-3 plan-review nit) so a snap-drop on a warped element pushes no
         // dead undo step, not just skips the 4 writes.
-        if (element is ImageElementViewModel { PerspectiveEnabled: true } or BoxElementViewModel { PerspectiveEnabled: true })
+        if (element is PerspectiveElementViewModelBase { PerspectiveEnabled: true })
         {
             return;
         }
@@ -2506,7 +2506,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // command, not two (round-3 plan-review finding).
             if (element is ImageElementViewModel { PerspectiveEnabled: true } warpedImage)
             {
-                DisablePerspective(warpedImage);
+                warpedImage.DisablePerspectiveKeepingBounds();
             }
 
             // Single-backdrop invariant (see this method's own doc comment): at most one image
@@ -2856,25 +2856,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             switch (element)
             {
-                case ImageElementViewModel { PerspectiveEnabled: false } image:
+                case PerspectiveElementViewModelBase { PerspectiveEnabled: false } flat:
                     // Element rotation (2026-09-20): Rotation/Perspective are mutually exclusive
                     // (TemplateImageElement.RotationDegrees's own doc comment) -- reset here, inside
                     // THIS suspend window, so it collapses into the same one undo step as the
                     // corner-seed below rather than pushing a second one.
-                    image.RotationDegrees = 0;
-                    SeedPerspectiveCorners(image);
-                    image.PerspectiveEnabled = true;
+                    flat.RotationDegrees = 0;
+                    flat.SeedCornersFromBounds();
+                    flat.PerspectiveEnabled = true;
                     break;
-                case ImageElementViewModel { PerspectiveEnabled: true } image:
-                    DisablePerspective(image);
-                    break;
-                case BoxElementViewModel { PerspectiveEnabled: false } box:
-                    box.RotationDegrees = 0;
-                    SeedPerspectiveCorners(box);
-                    box.PerspectiveEnabled = true;
-                    break;
-                case BoxElementViewModel { PerspectiveEnabled: true } box:
-                    DisablePerspective(box);
+                case PerspectiveElementViewModelBase { PerspectiveEnabled: true } warped:
+                    warped.DisablePerspectiveKeepingBounds();
                     break;
             }
         }
@@ -2884,56 +2876,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         }
 
         RecomputePreview();
-    }
-
-    private static void SeedPerspectiveCorners(ImageElementViewModel element)
-    {
-        var left = element.X - (element.Width / 2);
-        var top = element.Y - (element.Height / 2);
-        var right = element.X + (element.Width / 2);
-        var bottom = element.Y + (element.Height / 2);
-        element.Corner0X = left;
-        element.Corner0Y = top;
-        element.Corner1X = right;
-        element.Corner1Y = top;
-        element.Corner2X = right;
-        element.Corner2Y = bottom;
-        element.Corner3X = left;
-        element.Corner3Y = bottom;
-    }
-
-    private static void SeedPerspectiveCorners(BoxElementViewModel element)
-    {
-        var left = element.X - (element.Width / 2);
-        var top = element.Y - (element.Height / 2);
-        var right = element.X + (element.Width / 2);
-        var bottom = element.Y + (element.Height / 2);
-        element.Corner0X = left;
-        element.Corner0Y = top;
-        element.Corner1X = right;
-        element.Corner1Y = top;
-        element.Corner2X = right;
-        element.Corner2Y = bottom;
-        element.Corner3X = left;
-        element.Corner3Y = bottom;
-    }
-
-    private static void DisablePerspective(ImageElementViewModel element)
-    {
-        element.NaturalX = element.X;
-        element.NaturalY = element.Y;
-        element.NaturalWidth = element.Width;
-        element.NaturalHeight = element.Height;
-        element.PerspectiveEnabled = false;
-    }
-
-    private static void DisablePerspective(BoxElementViewModel element)
-    {
-        element.NaturalX = element.X;
-        element.NaturalY = element.Y;
-        element.NaturalWidth = element.Width;
-        element.NaturalHeight = element.Height;
-        element.PerspectiveEnabled = false;
     }
 
     /// <summary>Element rotation (2026-09-20) -- shared Rotate 90°/180° commands for all 4 element
@@ -2977,11 +2919,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             case OverlayElementViewModel text:
                 text.RotationDegrees = NormalizeDegrees(text.RotationDegrees + clockwiseDegrees);
                 break;
-            case BoxElementViewModel box:
-                box.RotationDegrees = NormalizeDegrees(box.RotationDegrees + clockwiseDegrees);
-                break;
-            case ImageElementViewModel image:
-                image.RotationDegrees = NormalizeDegrees(image.RotationDegrees + clockwiseDegrees);
+            case PerspectiveElementViewModelBase boxOrImage:
+                boxOrImage.RotationDegrees = NormalizeDegrees(boxOrImage.RotationDegrees + clockwiseDegrees);
                 break;
             case LineElementViewModel line:
                 RotateLineEndpoints(line, clockwiseDegrees);
@@ -3009,43 +2948,6 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             _suspendPreview = false;
         }
-    }
-
-    /// <summary>TX editor gap-items plan, item 3 -- see <see cref="Rotate"/>'s own call-site comment
-    /// for why this bypasses the derived X/Y/Width/Height setters entirely, applying the SAME
-    /// (x,y) -&gt; (1-y,x) 90°-clockwise transform every other element kind's own generic path uses,
-    /// directly to all 4 corner fields.</summary>
-    private static void RotateCorners(ImageElementViewModel element)
-    {
-        var (x0, y0) = (element.Corner0X, element.Corner0Y);
-        var (x1, y1) = (element.Corner1X, element.Corner1Y);
-        var (x2, y2) = (element.Corner2X, element.Corner2Y);
-        var (x3, y3) = (element.Corner3X, element.Corner3Y);
-        element.Corner0X = 1 - y0;
-        element.Corner0Y = x0;
-        element.Corner1X = 1 - y1;
-        element.Corner1Y = x1;
-        element.Corner2X = 1 - y2;
-        element.Corner2Y = x2;
-        element.Corner3X = 1 - y3;
-        element.Corner3Y = x3;
-    }
-
-    /// <inheritdoc cref="RotateCorners(ImageElementViewModel)"/>
-    private static void RotateCorners(BoxElementViewModel element)
-    {
-        var (x0, y0) = (element.Corner0X, element.Corner0Y);
-        var (x1, y1) = (element.Corner1X, element.Corner1Y);
-        var (x2, y2) = (element.Corner2X, element.Corner2Y);
-        var (x3, y3) = (element.Corner3X, element.Corner3Y);
-        element.Corner0X = 1 - y0;
-        element.Corner0Y = x0;
-        element.Corner1X = 1 - y1;
-        element.Corner1Y = x1;
-        element.Corner2X = 1 - y2;
-        element.Corner2Y = x2;
-        element.Corner3X = 1 - y3;
-        element.Corner3Y = x3;
     }
 
     /// <summary>Every field of a brand-new text element; callers set position/size/Z with
@@ -3293,24 +3195,24 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         {
             // Element rotation (2026-09-20): RotationDegrees is threaded through here for a
             // faithful round-trip (Flatten's stale-result guard, plan §6/round-2 fix) even though
-            // this composer only ever runs while PerspectiveEnabled is true (see the two callers,
-            // ImageElementViewModel.RebuildWarpedPreview/BoxElementViewModel.RebuildWarpedPreview),
-            // which under the Rotation-vs-Perspective mutual-exclusivity rule means it's always 0
+            // this composer only ever runs while PerspectiveEnabled is true (see its only caller,
+            // PerspectiveElementViewModelBase.RebuildWarpedPreview), which under the
+            // Rotation-vs-Perspective mutual-exclusivity rule means it's always 0
             // here in practice. Deliberately NOT consumed by a rotation branch below -- the canvas
             // already gets its rotation from the AXAML RenderTransform, and a rotation branch here
             // would double-rotate if this composer's PerspectiveEnabled-only invariant ever changed.
             ImageElementViewModel image => new TemplateImageElement(
-                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y).ToBoundingBox(),
+                image.Corners.ToBoundingBox(),
                 Z: 0, image.Source, image.Fit,
-                new PerspectiveCorners(image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y),
+                image.Corners,
                 image.RotationDegrees),
             BoxElementViewModel box => new TemplateBoxElement(
-                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y).ToBoundingBox(),
+                box.Corners.ToBoundingBox(),
                 Z: 0, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
                 box.GradientEnabled
                     ? new TextGradient(box.GradientKind, [new GradientColorStop(0f, box.GradientStartColor), new GradientColorStop(1f, box.GradientEndColor)])
                     : null,
-                new PerspectiveCorners(box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y),
+                box.Corners,
                 box.FillEnabled, box.RotationDegrees),
             _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
         };
@@ -4310,12 +4212,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// binding would flip the flag with no seed step. Re-raised from
     /// <see cref="OnSelectedOverlayElementChanged"/> (selection change) and
     /// <see cref="OnOverlayElementPropertyChanged"/> (the selected element's own flag flips).</summary>
-    public bool SelectedElementPerspectiveEnabled => SelectedOverlayElement switch
-    {
-        ImageElementViewModel image => image.PerspectiveEnabled,
-        BoxElementViewModel box => box.PerspectiveEnabled,
-        _ => false,
-    };
+    public bool SelectedElementPerspectiveEnabled => SelectedOverlayElement is PerspectiveElementViewModelBase { PerspectiveEnabled: true };
 
     /// <summary>Same target-mode-height px conversion as <see cref="SelectedTextElementStrokeThicknessPx"/>,
     /// for <see cref="BoxElementViewModel.BorderThickness"/> (same relative-to-image-height convention,
@@ -4619,7 +4516,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // ResetImageElementToOriginalSize/SetAsBackdrop's own identical fix.
             if (element.PerspectiveEnabled)
             {
-                DisablePerspective(element);
+                element.DisablePerspectiveKeepingBounds();
             }
 
             switch (target)
@@ -4719,7 +4616,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             // suspend window" reasoning as SetAsBackdrop's own identical fix.
             if (element.PerspectiveEnabled)
             {
-                DisablePerspective(element);
+                element.DisablePerspectiveKeepingBounds();
             }
 
             element.Width = width;
@@ -6076,15 +5973,9 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // to the identity, same as every other element kind's own 4-clicks-returns-to-start
                 // property). Toggling perspective off afterward always adopts the CURRENT bbox (see
                 // TogglePerspective's own doc comment) -- no special-case discontinuity to handle.
-                if (element is ImageElementViewModel { PerspectiveEnabled: true } warpedImage)
+                if (element is PerspectiveElementViewModelBase { PerspectiveEnabled: true } warped)
                 {
-                    RotateCorners(warpedImage);
-                    continue;
-                }
-
-                if (element is BoxElementViewModel { PerspectiveEnabled: true } warpedBox)
-                {
-                    RotateCorners(warpedBox);
+                    warped.RotateCornersInFrameClockwise();
                     continue;
                 }
 
@@ -6528,7 +6419,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // PerspectiveEnabled is false (every other case in this file relies on that), and become a
         // cascade of the 8 corner fields ONLY once perspective is on -- so this filter entry, unlike
         // the line one above, must check the flag too, not just the sender's type.
-        if (sender is ImageElementViewModel { PerspectiveEnabled: true } or BoxElementViewModel { PerspectiveEnabled: true }
+        if (sender is PerspectiveElementViewModelBase { PerspectiveEnabled: true }
             && e.PropertyName is nameof(ITemplateElementViewModel.X)
                 or nameof(ITemplateElementViewModel.Y)
                 or nameof(ITemplateElementViewModel.Width)
