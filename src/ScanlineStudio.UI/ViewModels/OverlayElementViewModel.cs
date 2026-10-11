@@ -358,6 +358,20 @@ public sealed partial class OverlayElementViewModel : ObservableObject, ITemplat
     /// <inheritdoc cref="BoxElementViewModel.CanRotate"/>
     public bool CanRotate => !Locked;
 
+    /// <inheritdoc/>
+    public TxImageEditorPaneViewModel.RawElementSnapshot ToSnapshot() => new TxImageEditorPaneViewModel.RawTextElementSnapshot(
+        X: X, Y: Y, Width: Width, Height: Height, Z: Z, Locked: Locked,
+        Text: Text, FontSizeRelative: FontSizeRelative, Color: Color,
+        FontFamily: FontFamily, StrokeColor: StrokeColor, StrokeThickness: StrokeThickness,
+        ShadowColor: ShadowColor, ShadowOffsetX: ShadowOffsetX, ShadowOffsetY: ShadowOffsetY,
+        RotationDegrees: RotationDegrees,
+        GradientEnabled: GradientEnabled, GradientKind: GradientKind,
+        GradientStartColor: GradientStartColor, GradientEndColor: GradientEndColor,
+        Bold: Bold, Italic: Italic,
+        StackColor: StackColor, StackStepX: StackStepX, StackStepY: StackStepY,
+        BitmapFillEnabled: BitmapFillEnabled, BitmapFillSource: BitmapFillSource,
+        GrowToFillEnabled: GrowToFillEnabled);
+
     /// <summary>Task #24 (right-click context menu addendum) -- text-only (matches
     /// <see cref="ImageElementViewModel.SetAsBackdropCommand"/>'s own image-only precedent for
     /// exactly the same reason: not part of the shared <see cref="ITemplateElementViewModel"/>

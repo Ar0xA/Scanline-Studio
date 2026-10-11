@@ -137,6 +137,11 @@ public sealed partial class LineElementViewModel : ObservableObject, ITemplateEl
     /// No Perspective concept exists for a line, so unlike Box/Image this is Locked-only.</summary>
     public bool CanRotate => !Locked;
 
+    /// <inheritdoc/>
+    public TxImageEditorPaneViewModel.RawElementSnapshot ToSnapshot() => new TxImageEditorPaneViewModel.RawLineElementSnapshot(
+        X: X, Y: Y, Width: Width, Height: Height, Z: Z, Locked: Locked,
+        X1: X1, Y1: Y1, X2: X2, Y2: Y2, StrokeColor: StrokeColor, StrokeThickness: StrokeThickness, Opacity: Opacity);
+
     partial void OnLockedChanged(bool value) => OnPropertyChanged(nameof(CanRotate));
 
     /// <summary>Get: endpoint midpoint. Set: translate BOTH endpoints by the delta -- required by

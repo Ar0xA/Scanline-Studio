@@ -165,4 +165,9 @@ public interface ITemplateElementViewModel : INotifyPropertyChanged
     /// On the shared interface so the parent VM's CanExecute can check it type-agnostically instead
     /// of pattern-matching all four concrete element types.</summary>
     bool CanRotate { get; }
+
+    /// <summary>Raw (photo-anchored, un-macro-resolved) snapshot of this element's current state,
+    /// used for Undo/Redo, clipboard, duplicate and style-copy. Each element type owns its VM→snapshot
+    /// field mapping; the restore side (factories, persisted mapper, paste-style) maps the field too.</summary>
+    TxImageEditorPaneViewModel.RawElementSnapshot ToSnapshot();
 }

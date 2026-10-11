@@ -484,6 +484,18 @@ public sealed partial class BoxElementViewModel : ObservableObject, ITemplateEle
     /// AXAML-bound property).</summary>
     public bool CanRotate => !Locked && !PerspectiveEnabled;
 
+    /// <inheritdoc/>
+    public TxImageEditorPaneViewModel.RawElementSnapshot ToSnapshot() => new TxImageEditorPaneViewModel.RawBoxElementSnapshot(
+        X: X, Y: Y, Width: Width, Height: Height, Z: Z, Locked: Locked,
+        FillColor: FillColor, BorderColor: BorderColor, BorderThickness: BorderThickness,
+        Opacity: Opacity, CornerRadius: CornerRadius,
+        GradientEnabled: GradientEnabled, GradientKind: GradientKind,
+        GradientStartColor: GradientStartColor, GradientEndColor: GradientEndColor,
+        PerspectiveEnabled: PerspectiveEnabled,
+        Corner0X: Corner0X, Corner0Y: Corner0Y, Corner1X: Corner1X, Corner1Y: Corner1Y,
+        Corner2X: Corner2X, Corner2Y: Corner2Y, Corner3X: Corner3X, Corner3Y: Corner3Y,
+        FillEnabled: FillEnabled, RotationDegrees: RotationDegrees);
+
     private static AvaloniaColor ToAvaloniaColor(Rgb24 color) => AvaloniaColor.FromRgb(color.R, color.G, color.B);
 
     /// <inheritdoc cref="ImageElementViewModel.ShowResizeHandles"/>

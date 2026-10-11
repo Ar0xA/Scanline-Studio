@@ -255,6 +255,16 @@ public sealed partial class ImageElementViewModel : ObservableObject, ITemplateE
     /// <inheritdoc cref="BoxElementViewModel.CanRotate"/>
     public bool CanRotate => !Locked && !PerspectiveEnabled;
 
+    /// <inheritdoc/>
+    public TxImageEditorPaneViewModel.RawElementSnapshot ToSnapshot() => new TxImageEditorPaneViewModel.RawImageElementSnapshot(
+        X: X, Y: Y, Width: Width, Height: Height, Z: Z, Locked: Locked,
+        Source: Source, Fit: Fit, Origin: Origin, IsBackground: IsBackground,
+        NaturalPixelWidth: NaturalPixelWidth, NaturalPixelHeight: NaturalPixelHeight,
+        PerspectiveEnabled: PerspectiveEnabled,
+        Corner0X: Corner0X, Corner0Y: Corner0Y, Corner1X: Corner1X, Corner1Y: Corner1Y,
+        Corner2X: Corner2X, Corner2Y: Corner2Y, Corner3X: Corner3X, Corner3Y: Corner3Y,
+        RotationDegrees: RotationDegrees);
+
     partial void OnLockedChanged(bool value)
     {
         OnPropertyChanged(nameof(BlocksHitTesting));

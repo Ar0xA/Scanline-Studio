@@ -1494,45 +1494,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// editor later rather than feed the real transmit pipeline. See
     /// <see cref="RawElementSnapshot"/>'s own doc comment for why this can't just reuse
     /// <see cref="Document"/>'s already-projected, already-macro-resolved elements.</summary>
-    public IReadOnlyList<RawElementSnapshot> RawOverlayElements => OverlayElements.Select(BuildRawSnapshot).ToList();
-
-    private static RawElementSnapshot BuildRawSnapshot(ITemplateElementViewModel element) => element switch
-    {
-        OverlayElementViewModel text => new RawTextElementSnapshot(
-            X: text.X, Y: text.Y, Width: text.Width, Height: text.Height, Z: text.Z, Locked: text.Locked,
-            Text: text.Text, FontSizeRelative: text.FontSizeRelative, Color: text.Color,
-            FontFamily: text.FontFamily, StrokeColor: text.StrokeColor, StrokeThickness: text.StrokeThickness,
-            ShadowColor: text.ShadowColor, ShadowOffsetX: text.ShadowOffsetX, ShadowOffsetY: text.ShadowOffsetY,
-            RotationDegrees: text.RotationDegrees,
-            GradientEnabled: text.GradientEnabled, GradientKind: text.GradientKind,
-            GradientStartColor: text.GradientStartColor, GradientEndColor: text.GradientEndColor,
-            Bold: text.Bold, Italic: text.Italic,
-            StackColor: text.StackColor, StackStepX: text.StackStepX, StackStepY: text.StackStepY,
-            BitmapFillEnabled: text.BitmapFillEnabled, BitmapFillSource: text.BitmapFillSource,
-            GrowToFillEnabled: text.GrowToFillEnabled),
-        BoxElementViewModel box => new RawBoxElementSnapshot(
-            X: box.X, Y: box.Y, Width: box.Width, Height: box.Height, Z: box.Z, Locked: box.Locked,
-            FillColor: box.FillColor, BorderColor: box.BorderColor, BorderThickness: box.BorderThickness,
-            Opacity: box.Opacity, CornerRadius: box.CornerRadius,
-            GradientEnabled: box.GradientEnabled, GradientKind: box.GradientKind,
-            GradientStartColor: box.GradientStartColor, GradientEndColor: box.GradientEndColor,
-            PerspectiveEnabled: box.PerspectiveEnabled,
-            Corner0X: box.Corner0X, Corner0Y: box.Corner0Y, Corner1X: box.Corner1X, Corner1Y: box.Corner1Y,
-            Corner2X: box.Corner2X, Corner2Y: box.Corner2Y, Corner3X: box.Corner3X, Corner3Y: box.Corner3Y,
-            FillEnabled: box.FillEnabled, RotationDegrees: box.RotationDegrees),
-        ImageElementViewModel image => new RawImageElementSnapshot(
-            X: image.X, Y: image.Y, Width: image.Width, Height: image.Height, Z: image.Z, Locked: image.Locked,
-            Source: image.Source, Fit: image.Fit, Origin: image.Origin, IsBackground: image.IsBackground,
-            NaturalPixelWidth: image.NaturalPixelWidth, NaturalPixelHeight: image.NaturalPixelHeight,
-            PerspectiveEnabled: image.PerspectiveEnabled,
-            Corner0X: image.Corner0X, Corner0Y: image.Corner0Y, Corner1X: image.Corner1X, Corner1Y: image.Corner1Y,
-            Corner2X: image.Corner2X, Corner2Y: image.Corner2Y, Corner3X: image.Corner3X, Corner3Y: image.Corner3Y,
-            RotationDegrees: image.RotationDegrees),
-        LineElementViewModel line => new RawLineElementSnapshot(
-            line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
-            line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity),
-        _ => throw new NotSupportedException($"Unrecognized {nameof(ITemplateElementViewModel)}: {element.GetType()}."),
-    };
+    public IReadOnlyList<RawElementSnapshot> RawOverlayElements => OverlayElements.Select(e => e.ToSnapshot()).ToList();
 
     public event Action<IImageSource>? Applied;
 
@@ -3028,7 +2990,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <para>Enabling seeds the 4 corners from the CURRENT X/Y/Width/Height bbox; disabling writes
     /// the CURRENT bbox (of the corners as they are right now, NOT a preserved "pre-warp original")
     /// back into the Natural fields -- the only choice internally consistent with
-    /// <see cref="BuildRawSnapshot"/> already doing the identical "derived bbox becomes the base
+    /// <see cref="ITemplateElementViewModel.ToSnapshot"/> already doing the identical "derived bbox becomes the base
     /// X/Y/Width/Height" thing for every Undo/Redo snapshot of a warped element (round-2 plan-review
     /// finding: this plan originally left that choice ambiguous across 3 different call sites).</para></summary>
     [RelayCommand]
@@ -5259,7 +5221,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        InsertClonedSnapshot(BuildRawSnapshot(selected));
+        InsertClonedSnapshot(selected.ToSnapshot());
     }
 
     /// <summary>Group-ops-lite (TX editor gap-items plan, item 2) -- clones every member of a
@@ -5275,7 +5237,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         foreach (var element in elements.OrderBy(e => e.Z))
         {
             const double offset = 0.02;
-            var snapshot = OffsetSnapshotForClone(BuildRawSnapshot(element), offset);
+            var snapshot = OffsetSnapshotForClone(element.ToSnapshot(), offset);
             var copy = CreateElementFromSnapshot(snapshot);
             OverlayElements.Add(copy);
             clones.Add(copy);
@@ -5454,7 +5416,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// gesture produces exactly one undo step (the clone-insert), not two.</summary>
     public ITemplateElementViewModel DuplicateElementForDrag(ITemplateElementViewModel element)
     {
-        var clone = InsertClonedSnapshot(BuildRawSnapshot(element));
+        var clone = InsertClonedSnapshot(element.ToSnapshot());
         _pendingCoalesceProperty = "OverlayGeometry";
         return clone;
     }
@@ -5477,7 +5439,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        _clipboardSnapshot = BuildRawSnapshot(selected);
+        _clipboardSnapshot = selected.ToSnapshot();
         PasteElementCommand.NotifyCanExecuteChanged();
     }
 
@@ -5489,7 +5451,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        _clipboardSnapshot = BuildRawSnapshot(selected);
+        _clipboardSnapshot = selected.ToSnapshot();
         RemoveOverlayElement(selected);
         PasteElementCommand.NotifyCanExecuteChanged();
     }
@@ -5511,13 +5473,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         if (_clipboardSnapshot is { } snapshot)
         {
             var pasted = InsertClonedSnapshot(snapshot);
-            _clipboardSnapshot = BuildRawSnapshot(pasted);
+            _clipboardSnapshot = pasted.ToSnapshot();
         }
     }
 
     /// <summary>TX workflow modernization plan, Phase 1 -- Copy/Paste Style. A SEPARATE clipboard
     /// field from <see cref="_clipboardSnapshot"/> (element copy/paste): copying an element's style
-    /// must not clobber a pending element paste, and vice versa. Reuses <see cref="BuildRawSnapshot"/>
+    /// must not clobber a pending element paste, and vice versa. Reuses <see cref="ITemplateElementViewModel.ToSnapshot"/>
     /// wholesale rather than a second, narrower snapshot type -- <see cref="PasteSelectedElementStyle"/>
     /// picks out only the style-relevant fields when applying, so nothing new needs to track "which
     /// fields count as style" in two places. Gated to same-element-kind-only paste (text style onto
@@ -5539,7 +5501,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
             return;
         }
 
-        _styleClipboardSnapshot = BuildRawSnapshot(SelectedOverlayElement);
+        _styleClipboardSnapshot = SelectedOverlayElement.ToSnapshot();
         PasteSelectedElementStyleCommand.NotifyCanExecuteChanged();
     }
 
