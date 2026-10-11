@@ -6,10 +6,8 @@ namespace ScanlineStudio.Core.Sstv;
 ///
 /// <b>Always the unwindowed branch, never Kaiser.</b> `CNotch::SetNotchFreq` always calls
 /// `Create(tap, ffBEF, SampFreq, fl, fh, att: 10, gain: 1.0)` (`fir.cpp:292`) -- `att=10 &lt; 21`,
-/// so the Kaiser-window branch of `CFIR2::MakeFilter` (`fir.cpp:373-383`) is structurally
-/// unreachable for this filter. This class ports only the unwindowed path, matching the "port the
-/// real reachable behavior, not invented generality" precedent already set by
-/// <see cref="TxOutputBandpassFilter"/>'s always-Kaiser path.
+/// so the shared <see cref="FirDesign.MakeFilter"/> never takes its Kaiser-window branch
+/// (`fir.cpp:373-383`) for this filter.
 ///
 /// <b>Tap count</b> (`CNotch::CNotch`, `fir.cpp:264-272`): `tap = (int)(96.0 * sampleRate /
 /// 11025.0)` -- C++ integer TRUNCATION, not rounding, then bumped up to even if odd, capped at 256
@@ -22,13 +20,13 @@ namespace ScanlineStudio.Core.Sstv;
 /// <b>Bandwidth</b> (`CNotch::SetNotchFreq`, `fir.cpp:279-292`): center frequency `fq`; outside the
 /// voice passband (`fq &lt; 1050 || fq &gt; 2350`), half-bandwidth is 30Hz; inside it, 15Hz.
 ///
-/// <b>BEF coefficient transform</b> (`fir.cpp:403-421`, the non-BPF branch under the
+/// <b>BEF coefficient transform</b> (`fir.cpp:415-419`, the non-BPF branch under the
 /// frequency-transform fork), `w0 = pi*(fcl+fch)/sampleRate`: `h[0] = 1.0 - 2.0*h[0]`, and for
-/// `j=1..tap/2`: `h[j] *= -2.0*cos(j*w0)` -- the sign-flipped, DC-inverted counterpart to
-/// <see cref="SearchBandpassFilter.MakeFilter"/>'s BPF transform (`*= +2.0*cos(j*w0)` for ALL j
-/// including 0). Everything up to that transform (prototype cutoff, unwindowed impulse response,
-/// DC-sum normalization, and the final two-loop mirror into a symmetric kernel) is the same shape
-/// already ported there and in <see cref="TxOutputBandpassFilter"/>.
+/// `j=1..tap/2`: `h[j] *= -2.0*cos(j*w0)` -- the sign-flipped, DC-inverted counterpart to the BPF
+/// transform (`*= +2.0*cos(j*w0)` for ALL j including 0). Both transforms, and everything around them
+/// (prototype cutoff, impulse response, DC-sum normalization, two-loop mirror), live in the shared
+/// <see cref="FirDesign.MakeFilter"/>, which <see cref="SearchBandpassFilter"/> and
+/// <see cref="TxOutputBandpassFilter"/> also use.
 ///
 /// <b>Retuning must not reset the delay line.</b> `CFIR2::Create` only reallocates/zeroes the delay
 /// buffer when the TAP COUNT changes; `SetNotchFreq` always passes the same tap for a given sample
@@ -45,6 +43,7 @@ namespace ScanlineStudio.Core.Sstv;
 internal sealed class NotchFilter
 {
     private const int NotchTapMax = 256; // NOTCHTAPMAX, fir.h:120
+    private const double NotchAttenuationDb = 10.0; // CNotch::SetNotchFreq, fir.cpp:292
 
     private readonly int _tap;
     private readonly double _sampleRate;
@@ -109,60 +108,9 @@ internal sealed class NotchFilter
         fch = centerHz + halfBandwidth;
     }
 
-    /// <summary>Literal port of `MakeFilter` (`fir.cpp:346-427`), `ffBEF` mode, unwindowed branch
-    /// only (see class doc comment for why the Kaiser branch is unreachable for this filter). `fc =
-    /// (fch-fcl)/2` is the same half-bandwidth prototype cutoff `ffBPF` uses (`fir.cpp:355-357`);
-    /// the two families diverge only at the frequency-transform step below. Mirrors legacy's exact
-    /// two-loop mirroring bounds (`fir.cpp:421-426`).</summary>
-    internal static double[] MakeFilter(int tap, double sampleRate, double fcl, double fch)
-    {
-        var half = tap / 2;
-        var fc = (fch - fcl) / 2.0;
-        var sumArg = 2.0 * Math.PI * fc / sampleRate;
-
-        var prototype = new double[half + 1];
-        for (var j = 0; j <= half; j++)
-        {
-            prototype[j] = j == 0
-                ? fc * 2.0 / sampleRate
-                : Math.Sin(j * sumArg) / (Math.PI * j);
-        }
-
-        var dcSum = prototype[0];
-        for (var j = 1; j <= half; j++)
-        {
-            dcSum += 2.0 * prototype[j];
-        }
-
-        if (dcSum > 0.0)
-        {
-            for (var j = 0; j <= half; j++)
-            {
-                prototype[j] /= dcSum;
-            }
-        }
-
-        // BEF transform (fir.cpp:415-419) -- the DC-inverted, sign-flipped counterpart to ffBPF's
-        // `*= +2*cos(j*w0)` applied to every tap including j=0 (SearchBandpassFilter.MakeFilter).
-        var w0 = Math.PI * (fcl + fch) / sampleRate;
-        prototype[0] = 1.0 - (2.0 * prototype[0]);
-        for (var j = 1; j <= half; j++)
-        {
-            prototype[j] *= -2.0 * Math.Cos(j * w0);
-        }
-
-        var h = new double[tap + 1]; // zero-init -- matters for odd tap's untouched trailing slot
-        var outIndex = 0;
-        for (var j = half; j >= 0; j--)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        for (var j = 1; j <= half; j++)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        return h;
-    }
+    /// <summary>`CNotch::SetNotchFreq`'s `MakeFilter` call (`fir.cpp:292`) via the shared
+    /// <see cref="FirDesign.MakeFilter"/>: `ffBEF`, att <see cref="NotchAttenuationDb"/> (unwindowed),
+    /// gain 1.0.</summary>
+    internal static double[] MakeFilter(int tap, double sampleRate, double fcl, double fch) =>
+        FirDesign.MakeFilter(FirKind.Bef, tap, sampleRate, fcl, fch, NotchAttenuationDb);
 }

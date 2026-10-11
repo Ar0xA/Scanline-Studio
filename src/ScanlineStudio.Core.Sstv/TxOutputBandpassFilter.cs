@@ -16,17 +16,9 @@ namespace ScanlineStudio.Core.Sstv;
 /// real transmit spectral-purity/RF-hygiene property a ham-radio product's output is expected to
 /// have, not just an internal test-fidelity concern.
 ///
-/// <b>Not a reuse of <see cref="SearchBandpassFilter"/>, though its own <c>MakeFilter</c> is now
-/// operation-for-operation identical at this file's own parameters</b> — Tier A Batch 7 chunk 7d
-/// round 1 found and corrected a stale claim here: this doc comment previously said reusing
-/// <see cref="SearchBandpassFilter.MakeFilter"/> at <c>att=40</c> would "silently produce a
-/// rectangular-window filter," on the premise that class's Kaiser branch was provably unreachable.
-/// That premise stopped being true once Band-1 item 4b added H1 at <c>att=40/50</c> (Narrow/
-/// VeryNarrow) to <see cref="SearchBandpassFilter"/> — its <c>MakeFilter</c> fully implements Kaiser
-/// and takes <c>tap</c> as a parameter, so at <c>tap=24, att=40</c> the two implementations are
-/// bit-identical, verified operation-by-operation. This class still keeps its own independent copy —
-/// not a functional necessity, just avoiding a cross-class dependency between an RX-search-path type
-/// and the TX encoder for two small, stable, already-duplicated static functions.
+/// <b>Coefficients come from the shared <see cref="FirDesign.MakeFilter"/></b>, the same designer the
+/// RX <see cref="SearchBandpassFilter"/> and <see cref="NotchFilter"/> use, called with legacy's TX
+/// arguments (`ffBPF`, 700-2800Hz, att 40, gain 1.0), so it always takes the Kaiser branch.
 ///
 /// <b>Constructed locally per encode, not held as a field</b>: <c>AnalogFmSstvEncoder</c> is
 /// registered as a DI singleton and is otherwise fully stateless. A ctor-field filter here would leak
@@ -103,92 +95,8 @@ internal sealed class TxOutputBandpassFilter
         return sum;
     }
 
-    // Literal port of MakeFilter's att>=21 Kaiser/Bessel branch (fir.cpp:346-427) -- this filter's
-    // att=40 always takes the Kaiser branch, so that's the branch exercised here (SearchBandpassFilter
-    // .MakeFilter implements this same branch too, as of Band-1 item 4b -- see class doc comment).
-    // att>=50's alternate alpha formula (fir.cpp:361-363) is unreachable at att=40 -- omitted, matching
-    // SearchBandpassFilter's own precedent for documenting (not silently dropping) an unreachable branch.
-    internal static double[] MakeFilter(double sampleRate, int tap = DefaultTapCount)
-    {
-        var half = tap / 2;
-        var fc = (HighCutoffHz - LowCutoffHz) / 2.0;
-        var sumArg = 2.0 * Math.PI * fc / sampleRate;
-
-        // fir.cpp:365: alpha = 0.5842*pow(att-21,0.4) + 0.07886*(att-21), the 21<=att<50 branch.
-        var alpha = 0.5842 * Math.Pow(AttenuationDb - 21.0, 0.4) + 0.07886 * (AttenuationDb - 21.0);
-        var i0Alpha = I0(alpha);
-
-        var prototype = new double[half + 1];
-        for (var j = 0; j <= half; j++)
-        {
-            if (j == 0)
-            {
-                prototype[j] = fc * 2.0 / sampleRate;
-                continue;
-            }
-
-            var fm = (2.0 * j) / tap;
-            var win = I0(alpha * Math.Sqrt(1.0 - fm * fm)) / i0Alpha;
-            prototype[j] = Math.Sin(j * sumArg) / (Math.PI * j) * win;
-        }
-
-        var dcSum = prototype[0];
-        for (var j = 1; j <= half; j++)
-        {
-            dcSum += 2.0 * prototype[j];
-        }
-
-        if (dcSum > 0.0)
-        {
-            for (var j = 0; j <= half; j++)
-            {
-                prototype[j] /= dcSum;
-            }
-        }
-
-        var w0 = Math.PI * (LowCutoffHz + HighCutoffHz) / sampleRate;
-        for (var j = 0; j <= half; j++)
-        {
-            prototype[j] *= 2.0 * Math.Cos(j * w0);
-        }
-
-        var h = new double[tap + 1];
-        var outIndex = 0;
-        for (var j = half; j >= 0; j--)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        for (var j = 1; j <= half; j++)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        return h;
-    }
-
-    // Literal port of fir.cpp:310-325's I0 -- a TRUNCATED series with its own convergence break
-    // (`(1e-8*sum) - xj*xj > 0`), not an exact modified-Bessel-function-of-the-first-kind
-    // implementation. Ported verbatim, including the truncation, because independently-computed
-    // reference coefficients in this class's own test file are generated with this exact series --
-    // substituting an exact I0 would silently fail those fixtures at their stated tolerance for
-    // reasons unrelated to correctness (see this class's test file for the exact figure).
-    private static double I0(double x)
-    {
-        var sum = 1.0;
-        var xj = 1.0;
-        var j = 1;
-        while (true)
-        {
-            xj *= (0.5 * x) / j;
-            sum += xj * xj;
-            j++;
-            if (1e-8 * sum - xj * xj > 0)
-            {
-                break;
-            }
-        }
-
-        return sum;
-    }
+    /// <summary>Legacy's TX `MakeFilter` call (`sstv.cpp:2766-2772`) via the shared
+    /// <see cref="FirDesign.MakeFilter"/>: `ffBPF`, 700-2800Hz, att 40, gain 1.0.</summary>
+    internal static double[] MakeFilter(double sampleRate, int tap = DefaultTapCount) =>
+        FirDesign.MakeFilter(FirKind.Bpf, tap, sampleRate, LowCutoffHz, HighCutoffHz, AttenuationDb);
 }

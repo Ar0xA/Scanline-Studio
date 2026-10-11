@@ -42,7 +42,7 @@ namespace ScanlineStudio.Core.Sstv;
 ///
 /// <b>The Kaiser/Bessel-windowed branch of legacy's filter designer (`MakeFilter`, `fir.cpp:346-427`)
 /// IS ported</b>, since `Narrow`/`VeryNarrow`'s H1 attenuation (40/50dB) both clear the `att&gt;=21`
-/// threshold that activates it (`fir.cpp:373-383`) -- see <see cref="MakeFilter"/>'s own doc comment.
+/// threshold that activates it (`fir.cpp:373-383`) -- see <see cref="FirDesign"/>'s own doc comment.
 ///
 /// <b>Input is piece 15's already-ported 2-tap moving-average pre-filter's OUTPUT, not raw samples</b>
 /// (`sstv.cpp:1824-1834`: `d=(s+m_ad)*0.5` &#8594; `if(m_bpf) d=m_BPF.Do(d,...)` &#8594; `m_lvl.Do(d)`) --
@@ -71,8 +71,8 @@ namespace ScanlineStudio.Core.Sstv;
 /// (3 presets x 11025/22050/44100Hz, 8 distinct tap values -- {24,48,96} union {64,128,256} union
 /// {96,192,384}, 96 recurring at both Wide@44100Hz and VeryNarrow@11025Hz), all of them even because
 /// the rate ratios (1/2/4) are exact multiples of the base tap-per-preset value.
-/// This stops holding at a non-standard rate (e.g. 48000Hz) -- that's what `MakeFilter`'s own odd-tap
-/// trailing-zero handling below is for, not currently exercised by any of this port's 9 reachable
+/// This stops holding at a non-standard rate (e.g. 48000Hz) -- that's what <see cref="FirDesign"/>'s
+/// odd-tap trailing-zero handling is for, not currently exercised by any of this port's 9 reachable
 /// combinations but not special-cased away either. Even tap rules out a coefficient-reversal sign risk
 /// (unlike <see cref="HilbertFmDemodulator"/>'s antisymmetric kernel), but does NOT make the window's
 /// causal-vs-centered alignment irrelevant: a centered window would pass a symmetry check, a
@@ -324,120 +324,9 @@ internal sealed class SearchBandpassFilter
         return _z.Convolve(h);
     }
 
-    /// <summary>Literal port of `MakeFilter` (`fir.cpp:346-427`), BPF mode only (this filter is never
-    /// constructed in LPF/HPF mode, so those branches aren't ported). `fc=(fch-fcl)/2` is the
-    /// `ffBPF`-specific half-bandwidth prototype cutoff (`fir.cpp:355-357`). Ports the `if(sum&gt;0.0)`
-    /// DC-normalization guard literally (`fir.cpp:399`) rather than assuming the prototype's DC sum is
-    /// always positive, even though it provably is for every one of this filter's reachable parameter
-    /// combinations -- a real conditional in the source, not invented. Mirrors legacy's EXACT two-loop
-    /// mirroring bounds (`fir.cpp:421-426`, 2*(tap/2)+1 total entries written, not tap+1) so odd-tap
-    /// inputs get legacy's real trailing-zero behavior via C#'s own array zero-init, not a "helpfully"
-    /// always-fully-populated array -- see class doc comment for why this port's own 9 reachable
-    /// preset/rate combinations never actually hit an odd tap, latent but not special-cased away.
-    ///
-    /// <b>Kaiser-Bessel window (`att&gt;=21`, `fir.cpp:373-383`).</b> `alpha` is computed via the same
-    /// three-way threshold as legacy (`fir.cpp:361-369`): `0.1102*(att-8.7)` for `att&gt;=50`,
-    /// `0.5842*(att-21)^0.4 + 0.07886*(att-21)` for `21&lt;=att&lt;50`, else 0 (never reached here since
-    /// this branch only runs when `att&gt;=21`). Each non-DC tap `j` gets multiplied by
-    /// `I0(alpha*sqrt(1-fm²))/I0(alpha)` where `fm=2j/tap` -- ported into the same `j==0`/`j!=0` branch
-    /// legacy uses (`fir.cpp:377-382`), matching legacy's own choice to leave the `j==0` prototype value
-    /// unwindowed (numerically identical to windowing it anyway, since `fm=0` there makes the window
-    /// factor exactly `I0(alpha)/I0(alpha)=1.0`, but this port doesn't rely on that -- it just doesn't
-    /// touch `j==0` under the window multiply, same as legacy).</summary>
-    internal static double[] MakeFilter(int tap, double sampleRate, double fcl, double fch, double att)
-    {
-        var half = tap / 2;
-        var fc = (fch - fcl) / 2.0;
-        var sumArg = 2.0 * Math.PI * fc / sampleRate;
-
-        var useKaiser = att >= 21.0;
-        var alpha = 0.0;
-        var i0Alpha = 1.0;
-        if (useKaiser)
-        {
-            alpha = att >= 50.0
-                ? 0.1102 * (att - 8.7)
-                : (0.5842 * Math.Pow(att - 21.0, 0.4)) + (0.07886 * (att - 21.0));
-            i0Alpha = I0(alpha);
-        }
-
-        var prototype = new double[half + 1];
-        for (var j = 0; j <= half; j++)
-        {
-            if (j == 0)
-            {
-                prototype[j] = fc * 2.0 / sampleRate;
-                continue;
-            }
-
-            prototype[j] = Math.Sin(j * sumArg) / (Math.PI * j);
-            if (useKaiser)
-            {
-                var fm = 2.0 * j / tap;
-                prototype[j] *= I0(alpha * Math.Sqrt(1.0 - (fm * fm))) / i0Alpha;
-            }
-        }
-
-        var dcSum = prototype[0];
-        for (var j = 1; j <= half; j++)
-        {
-            dcSum += 2.0 * prototype[j];
-        }
-
-        if (dcSum > 0.0)
-        {
-            for (var j = 0; j <= half; j++)
-            {
-                prototype[j] /= dcSum;
-            }
-        }
-
-        var w0 = Math.PI * (fcl + fch) / sampleRate;
-        for (var j = 0; j <= half; j++)
-        {
-            prototype[j] *= 2.0 * Math.Cos(j * w0);
-        }
-
-        var h = new double[tap + 1]; // zero-init -- matters for odd tap's untouched trailing slot
-        var outIndex = 0;
-        for (var j = half; j >= 0; j--)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        for (var j = 1; j <= half; j++)
-        {
-            h[outIndex++] = prototype[j];
-        }
-
-        return h;
-    }
-
-    /// <summary>Literal port of the modified Bessel function series `I0` (`fir.cpp:310-325`), used only
-    /// by the Kaiser-window branch above. Converging series `I0(x) = Σ[(x/2)^k/k!]²`, computed
-    /// iteratively (`xj *= (0.5*x)/j; sum += xj*xj`) rather than via factorials directly, matching
-    /// legacy's own loop shape exactly, including its exit condition (`fir.cpp:322`:
-    /// `if(((0.00000001*sum) - (xj*xj)) > 0) break;`) -- the term that FAILS this threshold check (i.e.
-    /// is still large enough to matter) is added to `sum` BEFORE the check runs, so the final
-    /// below-threshold term IS included in the result; a naive `while(term &gt; threshold)` guard
-    /// restructuring would exclude it, a real last-ulp divergence from legacy that this port avoids by
-    /// keeping the add-then-check order.</summary>
-    private static double I0(double x)
-    {
-        var sum = 1.0;
-        var xj = 1.0;
-        var j = 1;
-        while (true)
-        {
-            xj *= 0.5 * x / j;
-            sum += xj * xj;
-            j++;
-            if ((0.00000001 * sum) - (xj * xj) > 0)
-            {
-                break;
-            }
-        }
-
-        return sum;
-    }
+    /// <summary>Legacy's `MakeFilter` (`fir.cpp:346-427`) in `ffBPF` mode, gain 1.0, via the shared
+    /// <see cref="FirDesign.MakeFilter"/>: Kaiser-windowed when <paramref name="att"/> is at least 21
+    /// (Narrow/VeryNarrow H1 and H3), unwindowed otherwise.</summary>
+    internal static double[] MakeFilter(int tap, double sampleRate, double fcl, double fch, double att) =>
+        FirDesign.MakeFilter(FirKind.Bpf, tap, sampleRate, fcl, fch, att);
 }
