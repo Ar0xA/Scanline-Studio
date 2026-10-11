@@ -2435,7 +2435,14 @@ public sealed class TxImageEditorPaneViewModelTests
             new ImageAdjustments(Brightness: 11, Contrast: -22, Saturation: 33, Gamma: -44, Sharpen: 55, Denoise: 66),
             [new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                 X: 0.25, Y: 0.75, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
-                Text: "DE %m", FontSizeRelative: 0.15, Color: new Rgb24(10, 20, 30))]);
+                Text: "DE %m", FontSizeRelative: 0.15, Color: new Rgb24(10, 20, 30),
+                FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                GradientStartColor: null, GradientEndColor: null,
+                Bold: false, Italic: false,
+                StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false)]);
 
         var vm = new TxImageEditorPaneViewModel(
             CreateSource(8, 8), WideMode, new FakeTransmitImagePreparer(), new MacroTextResolver(),
@@ -2481,13 +2488,34 @@ public sealed class TxImageEditorPaneViewModelTests
             [
                 new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                     X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 5, Locked: false,
-                    Text: "Z5", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+                    Text: "Z5", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0),
+                    FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                    ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                    GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                    GradientStartColor: null, GradientEndColor: null,
+                    Bold: false, Italic: false,
+                    StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                    BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false),
                 new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                     X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 1, Locked: false,
-                    Text: "Z1", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+                    Text: "Z1", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0),
+                    FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                    ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                    GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                    GradientStartColor: null, GradientEndColor: null,
+                    Bold: false, Italic: false,
+                    StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                    BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false),
                 new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                     X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 3, Locked: false,
-                    Text: "Z3", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0)),
+                    Text: "Z3", FontSizeRelative: 0.1, Color: new Rgb24(0, 0, 0),
+                    FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                    ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                    GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                    GradientStartColor: null, GradientEndColor: null,
+                    Bold: false, Italic: false,
+                    StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                    BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false),
             ]);
 
         var vm = new TxImageEditorPaneViewModel(
@@ -2513,10 +2541,24 @@ public sealed class TxImageEditorPaneViewModelTests
             [
                 new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                     X: 0.2, Y: 0.2, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
-                    Text: "A", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255)),
+                    Text: "A", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255),
+                    FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                    ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                    GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                    GradientStartColor: null, GradientEndColor: null,
+                    Bold: false, Italic: false,
+                    StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                    BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false),
                 new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                     X: 0.3, Y: 0.3, Width: 0.3, Height: 0.18, Z: 1, Locked: false,
-                    Text: "B", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255)),
+                    Text: "B", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255),
+                    FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                    ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                    GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                    GradientStartColor: null, GradientEndColor: null,
+                    Bold: false, Italic: false,
+                    StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                    BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false),
             ]);
 
         _ = new TxImageEditorPaneViewModel(
@@ -8474,7 +8516,14 @@ public sealed class TxImageEditorPaneViewModelTests
             new NormalizedRect(0, 0, 1, 1), PreserveAspect: true, new ImageAdjustments(),
             [new TxImageEditorPaneViewModel.RawTextElementSnapshot(
                 X: 0.5, Y: 0.5, Width: 0.3, Height: 0.18, Z: 0, Locked: false,
-                Text: "{his_call}", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255))],
+                Text: "{his_call}", FontSizeRelative: 0.1, Color: new Rgb24(255, 255, 255),
+                FontFamily: "", StrokeColor: null, StrokeThickness: 0.02,
+                ShadowColor: null, ShadowOffsetX: 0.02, ShadowOffsetY: 0.02, RotationDegrees: 0,
+                GradientEnabled: false, GradientKind: TextGradientKind.Horizontal,
+                GradientStartColor: null, GradientEndColor: null,
+                Bold: false, Italic: false,
+                StackColor: null, StackStepX: 0.02, StackStepY: 0.02,
+                BitmapFillEnabled: false, BitmapFillSource: null, GrowToFillEnabled: false)],
             new Dictionary<string, string> { ["his_call"] = "K1ABC" });
 
         var vm = new TxImageEditorPaneViewModel(

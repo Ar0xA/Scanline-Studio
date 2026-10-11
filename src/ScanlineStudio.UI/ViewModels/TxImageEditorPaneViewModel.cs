@@ -51,14 +51,11 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// one subtype per <see cref="ITemplateElementViewModel"/> concrete type.</summary>
     public abstract record RawElementSnapshot(double X, double Y, double Width, double Height, int Z, bool Locked);
 
-    /// <summary><paramref name="FontFamily"/>/<paramref name="StrokeColor"/>/
-    /// <paramref name="StrokeThickness"/> are Phase 4 (spec/15-template-designer.md) additions,
-    /// all trailing/optional so pre-Phase-4 call sites/tests keep compiling unchanged.
-    /// <paramref name="ShadowColor"/>/<paramref name="ShadowOffsetX"/>/<paramref name="ShadowOffsetY"/>/
-    /// <paramref name="RotationDegrees"/>/<paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
-    /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> are Phase 8
-    /// (YONIQ-style text-effects follow-up) additions, same trailing/optional treatment -- mirror
-    /// <see cref="OverlayElementViewModel"/>'s own simplified 2-stop-gradient VM shape exactly (see
+    /// <summary>No parameter has a default, so adding a field fails the build at every construction
+    /// site instead of silently dropping the value there.
+    /// <paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
+    /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/>
+    /// mirror <see cref="OverlayElementViewModel"/>'s own simplified 2-stop-gradient VM shape exactly (see
     /// that class's own doc comment for why the gradient isn't stored as a raw
     /// <see cref="TextGradient"/> here).
     /// <para>TX editor gap-items plan, item 4b (picture fill, 2026-09-01):
@@ -69,13 +66,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     public sealed record RawTextElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
         string Text, double FontSizeRelative, Rgb24 Color,
-        string FontFamily = "", Rgb24? StrokeColor = null, double StrokeThickness = 0.02,
-        Rgb24? ShadowColor = null, double ShadowOffsetX = 0.02, double ShadowOffsetY = 0.02, double RotationDegrees = 0,
-        bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
-        bool Bold = false, bool Italic = false,
-        Rgb24? StackColor = null, double StackStepX = 0.02, double StackStepY = 0.02,
-        bool BitmapFillEnabled = false, IImageSource? BitmapFillSource = null,
+        string FontFamily, Rgb24? StrokeColor, double StrokeThickness,
+        Rgb24? ShadowColor, double ShadowOffsetX, double ShadowOffsetY, double RotationDegrees,
+        bool GradientEnabled, TextGradientKind GradientKind,
+        Rgb24? GradientStartColor, Rgb24? GradientEndColor,
+        bool Bold, bool Italic,
+        Rgb24? StackColor, double StackStepX, double StackStepY,
+        bool BitmapFillEnabled, IImageSource? BitmapFillSource,
         // User-requested (2026-09-15) grow-to-fill toggle -- yoniq-auditor-flagged risk: without this
         // field, Undo/Redo silently reset EVERY text element's own toggle to off (ApplyState's own
         // recreate-every-element-from-a-snapshot path has nowhere else to read it from), a much wider
@@ -84,13 +81,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // (that method copies fields explicitly, one at a time -- this one is simply never among
         // them), so Copy Style/Paste Style still correctly does NOT carry it between elements, only
         // Undo/Redo/Duplicate/Copy-Paste (which reuse this same record) do.
-        bool GrowToFillEnabled = false)
+        bool GrowToFillEnabled)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary><paramref name="GradientEnabled"/>/<paramref name="GradientKind"/>/
     /// <paramref name="GradientStartColor"/>/<paramref name="GradientEndColor"/> (TX editor gap-items
     /// plan, 2026-09-01) mirror <see cref="RawTextElementSnapshot"/>'s own identical fields exactly
-    /// -- same trailing/optional treatment, same simplified 2-stop VM shape.
+    /// -- same simplified 2-stop VM shape, and likewise no parameter defaults.
     /// <para><paramref name="PerspectiveEnabled"/>/<paramref name="Corner0X"/>..<paramref name="Corner3Y"/>
     /// (TX editor gap-items plan, item 3, 2026-09-02) -- without these, the FIRST Undo after enabling
     /// perspective on a box would silently revert the warp, since <c>ApplyState</c>'s own recreate-
@@ -100,18 +97,17 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// nested <c>PerspectiveCorners?</c>).</para></summary>
     public sealed record RawBoxElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius = 0,
-        bool GradientEnabled = false, TextGradientKind GradientKind = TextGradientKind.Horizontal,
-        Rgb24? GradientStartColor = null, Rgb24? GradientEndColor = null,
-        bool PerspectiveEnabled = false,
-        double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
-        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
+        Rgb24 FillColor, Rgb24? BorderColor, double BorderThickness, double Opacity, double CornerRadius,
+        bool GradientEnabled, TextGradientKind GradientKind,
+        Rgb24? GradientStartColor, Rgb24? GradientEndColor,
+        bool PerspectiveEnabled,
+        double Corner0X, double Corner0Y, double Corner1X, double Corner1Y,
+        double Corner2X, double Corner2Y, double Corner3X, double Corner3Y,
         // Legacy `.mtm` import -- see TemplateBoxElement.FillEnabled's own doc comment.
-        bool FillEnabled = true,
-        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as RotationDegrees on
-        // RawTextElementSnapshot; without this, the first Undo after rotating a box would silently
-        // revert it, same reasoning as this record's own Perspective fields above.
-        double RotationDegrees = 0)
+        bool FillEnabled,
+        // Without this, the first Undo after rotating a box would silently revert it, same
+        // reasoning as this record's own Perspective fields above.
+        double RotationDegrees)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Line element (TX editor gap-items plan, 2026-09-01) -- base <paramref name="X"/>/
@@ -147,20 +143,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     public sealed record RawImageElementSnapshot(
         double X, double Y, double Width, double Height, int Z, bool Locked,
-        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin, bool IsBackground = false,
-        // TX workflow modernization plan, Phase 7 -- trailing, defaulted (0 = unknown, same
-        // convention IsBackground itself established), so ApplyState's own recreate-every-element-
-        // from-a-snapshot path doesn't lose this field on the first Undo.
-        int NaturalPixelWidth = 0, int NaturalPixelHeight = 0,
-        // TX editor gap-items plan, item 3 (perspective transform, 2026-09-02) -- same 9-flat-scalar
-        // convention as RawBoxElementSnapshot's own Perspective fields; see that record's own doc
-        // comment.
-        bool PerspectiveEnabled = false,
-        double Corner0X = 0, double Corner0Y = 0, double Corner1X = 0, double Corner1Y = 0,
-        double Corner2X = 0, double Corner2Y = 0, double Corner3X = 0, double Corner3Y = 0,
-        // Element rotation (2026-09-20) -- same trailing/defaulted treatment as RawBoxElementSnapshot's
-        // own identical addition.
-        double RotationDegrees = 0)
+        IImageSource Source, ImageFitMode Fit, ImageSourceOrigin Origin, bool IsBackground,
+        // 0 = unknown; carried here so ApplyState's own recreate-every-element-from-a-snapshot
+        // path doesn't lose this field on the first Undo.
+        int NaturalPixelWidth, int NaturalPixelHeight,
+        // Same 9-flat-scalar convention as RawBoxElementSnapshot's own Perspective fields; see that
+        // record's own doc comment.
+        bool PerspectiveEnabled,
+        double Corner0X, double Corner0Y, double Corner1X, double Corner1Y,
+        double Corner2X, double Corner2Y, double Corner3X, double Corner3Y,
+        double RotationDegrees)
         : RawElementSnapshot(X, Y, Width, Height, Z, Locked);
 
     /// <summary>Prior edit state to seed a re-opened editor with (spec/18-path-to-1.0.md Medium
@@ -1507,26 +1499,35 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     private static RawElementSnapshot BuildRawSnapshot(ITemplateElementViewModel element) => element switch
     {
         OverlayElementViewModel text => new RawTextElementSnapshot(
-            text.X, text.Y, text.Width, text.Height, text.Z, text.Locked, text.Text, text.FontSizeRelative, text.Color,
-            text.FontFamily, text.StrokeColor, text.StrokeThickness,
-            text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-            text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
-            text.Bold, text.Italic,
-            text.StackColor, text.StackStepX, text.StackStepY,
-            text.BitmapFillEnabled, text.BitmapFillSource, text.GrowToFillEnabled),
+            X: text.X, Y: text.Y, Width: text.Width, Height: text.Height, Z: text.Z, Locked: text.Locked,
+            Text: text.Text, FontSizeRelative: text.FontSizeRelative, Color: text.Color,
+            FontFamily: text.FontFamily, StrokeColor: text.StrokeColor, StrokeThickness: text.StrokeThickness,
+            ShadowColor: text.ShadowColor, ShadowOffsetX: text.ShadowOffsetX, ShadowOffsetY: text.ShadowOffsetY,
+            RotationDegrees: text.RotationDegrees,
+            GradientEnabled: text.GradientEnabled, GradientKind: text.GradientKind,
+            GradientStartColor: text.GradientStartColor, GradientEndColor: text.GradientEndColor,
+            Bold: text.Bold, Italic: text.Italic,
+            StackColor: text.StackColor, StackStepX: text.StackStepX, StackStepY: text.StackStepY,
+            BitmapFillEnabled: text.BitmapFillEnabled, BitmapFillSource: text.BitmapFillSource,
+            GrowToFillEnabled: text.GrowToFillEnabled),
         BoxElementViewModel box => new RawBoxElementSnapshot(
-            box.X, box.Y, box.Width, box.Height, box.Z, box.Locked, box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity,
-            box.CornerRadius,
-            box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
-            box.PerspectiveEnabled,
-            box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-            box.FillEnabled, box.RotationDegrees),
+            X: box.X, Y: box.Y, Width: box.Width, Height: box.Height, Z: box.Z, Locked: box.Locked,
+            FillColor: box.FillColor, BorderColor: box.BorderColor, BorderThickness: box.BorderThickness,
+            Opacity: box.Opacity, CornerRadius: box.CornerRadius,
+            GradientEnabled: box.GradientEnabled, GradientKind: box.GradientKind,
+            GradientStartColor: box.GradientStartColor, GradientEndColor: box.GradientEndColor,
+            PerspectiveEnabled: box.PerspectiveEnabled,
+            Corner0X: box.Corner0X, Corner0Y: box.Corner0Y, Corner1X: box.Corner1X, Corner1Y: box.Corner1Y,
+            Corner2X: box.Corner2X, Corner2Y: box.Corner2Y, Corner3X: box.Corner3X, Corner3Y: box.Corner3Y,
+            FillEnabled: box.FillEnabled, RotationDegrees: box.RotationDegrees),
         ImageElementViewModel image => new RawImageElementSnapshot(
-            image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, image.Source, image.Fit, image.Origin, image.IsBackground,
-            image.NaturalPixelWidth, image.NaturalPixelHeight,
-            image.PerspectiveEnabled,
-            image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
-            image.RotationDegrees),
+            X: image.X, Y: image.Y, Width: image.Width, Height: image.Height, Z: image.Z, Locked: image.Locked,
+            Source: image.Source, Fit: image.Fit, Origin: image.Origin, IsBackground: image.IsBackground,
+            NaturalPixelWidth: image.NaturalPixelWidth, NaturalPixelHeight: image.NaturalPixelHeight,
+            PerspectiveEnabled: image.PerspectiveEnabled,
+            Corner0X: image.Corner0X, Corner0Y: image.Corner0Y, Corner1X: image.Corner1X, Corner1Y: image.Corner1Y,
+            Corner2X: image.Corner2X, Corner2Y: image.Corner2Y, Corner3X: image.Corner3X, Corner3Y: image.Corner3Y,
+            RotationDegrees: image.RotationDegrees),
         LineElementViewModel line => new RawLineElementSnapshot(
             line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
             line.X1, line.Y1, line.X2, line.Y2, line.StrokeColor, line.StrokeThickness, line.Opacity),
@@ -3990,21 +3991,29 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 }
 
                 return new RawTextElementSnapshot(
-                    text.X, text.Y, text.Width, text.Height, text.Z, text.Locked,
-                    text.Text, text.FontSizeRelative, text.Color, text.FontFamily, text.StrokeColor, text.StrokeThickness,
-                    text.ShadowColor, text.ShadowOffsetX, text.ShadowOffsetY, text.RotationDegrees,
-                    text.GradientEnabled, text.GradientKind, text.GradientStartColor, text.GradientEndColor,
-                    text.Bold, text.Italic,
-                    text.StackColor, text.StackStepX, text.StackStepY,
-                    bitmapFillSource is not null, bitmapFillSource);
+                    X: text.X, Y: text.Y, Width: text.Width, Height: text.Height, Z: text.Z, Locked: text.Locked,
+                    Text: text.Text, FontSizeRelative: text.FontSizeRelative, Color: text.Color,
+                    FontFamily: text.FontFamily, StrokeColor: text.StrokeColor, StrokeThickness: text.StrokeThickness,
+                    ShadowColor: text.ShadowColor, ShadowOffsetX: text.ShadowOffsetX, ShadowOffsetY: text.ShadowOffsetY,
+                    RotationDegrees: text.RotationDegrees,
+                    GradientEnabled: text.GradientEnabled, GradientKind: text.GradientKind,
+                    GradientStartColor: text.GradientStartColor, GradientEndColor: text.GradientEndColor,
+                    Bold: text.Bold, Italic: text.Italic,
+                    StackColor: text.StackColor, StackStepX: text.StackStepX, StackStepY: text.StackStepY,
+                    BitmapFillEnabled: bitmapFillSource is not null, BitmapFillSource: bitmapFillSource,
+                    // Grow-to-fill is not persisted; a loaded text element starts with it off.
+                    GrowToFillEnabled: false);
             case PersistedBoxElement box:
                 return new RawBoxElementSnapshot(
-                    box.X, box.Y, box.Width, box.Height, box.Z, box.Locked,
-                    box.FillColor, box.BorderColor, box.BorderThickness, box.Opacity, box.CornerRadius,
-                    box.GradientEnabled, box.GradientKind, box.GradientStartColor, box.GradientEndColor,
-                    box.PerspectiveEnabled,
-                    box.Corner0X, box.Corner0Y, box.Corner1X, box.Corner1Y, box.Corner2X, box.Corner2Y, box.Corner3X, box.Corner3Y,
-                    box.FillEnabled, box.RotationDegrees);
+                    X: box.X, Y: box.Y, Width: box.Width, Height: box.Height, Z: box.Z, Locked: box.Locked,
+                    FillColor: box.FillColor, BorderColor: box.BorderColor, BorderThickness: box.BorderThickness,
+                    Opacity: box.Opacity, CornerRadius: box.CornerRadius,
+                    GradientEnabled: box.GradientEnabled, GradientKind: box.GradientKind,
+                    GradientStartColor: box.GradientStartColor, GradientEndColor: box.GradientEndColor,
+                    PerspectiveEnabled: box.PerspectiveEnabled,
+                    Corner0X: box.Corner0X, Corner0Y: box.Corner0Y, Corner1X: box.Corner1X, Corner1Y: box.Corner1Y,
+                    Corner2X: box.Corner2X, Corner2Y: box.Corner2Y, Corner3X: box.Corner3X, Corner3Y: box.Corner3Y,
+                    FillEnabled: box.FillEnabled, RotationDegrees: box.RotationDegrees);
             case PersistedImageElement image:
                 var assetPath = _templateStore.GetAssetPath(templateId, image.AssetFileName);
                 var source = await _imageFileLoader.LoadOriginalAsync(assetPath);
@@ -4015,16 +4024,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
                 // the four are safe to re-resolve from later).
                 var origin = new ImageSourceOrigin(ImageSourceKind.File, assetPath);
                 return new RawImageElementSnapshot(
-                    image.X, image.Y, image.Width, image.Height, image.Z, image.Locked, source, image.Fit, origin, image.IsBackground,
+                    X: image.X, Y: image.Y, Width: image.Width, Height: image.Height, Z: image.Z, Locked: image.Locked,
+                    Source: source, Fit: image.Fit, Origin: origin, IsBackground: image.IsBackground,
                     // Pre-Phase-7 templates carry no natural size. Falling back to the ASSET's own
                     // dimensions is the honest value (the asset IS the pixels this element has) and
                     // needs no migration -- same additive convention IsBackground's own doc comment
                     // describes.
-                    image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
-                    image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height,
-                    image.PerspectiveEnabled,
-                    image.Corner0X, image.Corner0Y, image.Corner1X, image.Corner1Y, image.Corner2X, image.Corner2Y, image.Corner3X, image.Corner3Y,
-                    image.RotationDegrees);
+                    NaturalPixelWidth: image.NaturalPixelWidth > 0 ? image.NaturalPixelWidth : source.Width,
+                    NaturalPixelHeight: image.NaturalPixelHeight > 0 ? image.NaturalPixelHeight : source.Height,
+                    PerspectiveEnabled: image.PerspectiveEnabled,
+                    Corner0X: image.Corner0X, Corner0Y: image.Corner0Y, Corner1X: image.Corner1X, Corner1Y: image.Corner1Y,
+                    Corner2X: image.Corner2X, Corner2Y: image.Corner2Y, Corner3X: image.Corner3X, Corner3Y: image.Corner3Y,
+                    RotationDegrees: image.RotationDegrees);
             case PersistedLineElement line:
                 return new RawLineElementSnapshot(
                     line.X, line.Y, line.Width, line.Height, line.Z, line.Locked,
