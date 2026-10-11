@@ -663,7 +663,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            _soundFileIdValidationCts?.Cancel();
+            _soundFileIdValidation.Cancel();
             SoundFileIdSuccessMessage = null;
             SoundFileIdErrorMessage = null;
         }
@@ -698,11 +698,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty]
     private string? _soundFileIdErrorMessage;
 
-    private CancellationTokenSource? _soundFileIdValidationCts;
+    private readonly Debouncer _soundFileIdValidation;
 
     partial void OnSoundFileMmvPathChanged(string? value)
     {
-        _soundFileIdValidationCts?.Cancel();
+        _soundFileIdValidation.Cancel();
         // Code-review finding: a path edit that lands while the OFF/Cw method is selected (e.g.
         // ApplyFromSnapshot sets CwIdMode before SoundFileMmvPath on load, so OnCwIdModeChanged's own
         // clear-on-switch-away branch never fires for that ordering) must not validate at all --
@@ -714,27 +714,22 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _soundFileIdValidationCts = cts;
-        _ = ValidateSoundFileIdDebouncedAsync(value, cts.Token);
+        _ = _soundFileIdValidation.Schedule(ct => ValidateSoundFileIdAsync(value, ct));
     }
 
-    private async Task ValidateSoundFileIdDebouncedAsync(string path, CancellationToken ct)
+    private async Task ValidateSoundFileIdAsync(string path, CancellationToken ct)
     {
         SoundFileIdValidationResult result;
         try
         {
-            await Task.Delay(SoundFileIdValidationDebounce, ct).ConfigureAwait(false);
-            // Code-review finding: ISstvSessionService.ValidateStationIdSoundFileAsync's own contract
-            // is "never throws" -- but Task.Run(f, ct) itself throws OperationCanceledException if ct
-            // fires between the delay completing and the delegate starting, on this fire-and-forget
-            // task, an unobserved exception. Caught below alongside the delay's own cancellation.
+            // ISstvSessionService.ValidateStationIdSoundFileAsync's own contract is "never throws" --
+            // but Task.Run(f, ct) itself throws OperationCanceledException if ct fires before the
+            // delegate starts, on this fire-and-forget task, an unobserved exception. Caught below.
             result = await _sstvSession.ValidateStationIdSoundFileAsync(path, ct).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
-            // Normal control flow -- a newer edit/pick/mode-switch superseded this one. Not worth a
-            // log line, same reasoning as PersistTxVolumeDebouncedAsync's own identical catch.
+            // Normal control flow -- a newer edit/pick/mode-switch superseded this one. Not worth a log line.
             return;
         }
 
@@ -828,8 +823,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         IAppLocationsService appLocationsService,
         IApplicationRestarter applicationRestarter,
         IAppearanceSettingsService appearanceSettings,
-        ILogger<OptionsWindowViewModel> logger)
+        ILogger<OptionsWindowViewModel> logger,
+        TimeProvider? timeProvider = null)
     {
+        var time = timeProvider ?? TimeProvider.System;
+        _txVolumePersist = new Debouncer(TxVolumePersistDebounce, time, resumeOnCapturedContext: false);
+        _soundFileIdValidation = new Debouncer(SoundFileIdValidationDebounce, time, resumeOnCapturedContext: false);
         _optionsSettingsService = optionsSettingsService;
         _localization = localization;
         _audioDeviceEnumerator = audioDeviceEnumerator;
@@ -2278,7 +2277,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     public string TxVolumeDisplay => TxVolumePercent.ToString(CultureInfo.InvariantCulture);
 
     private bool _suppressTxVolumePersist;
-    private CancellationTokenSource? _txVolumePersistCts;
+    private readonly Debouncer _txVolumePersist;
 
     private async Task LoadTxVolumeSafeAsync()
     {
@@ -2314,24 +2313,11 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         // Debounced, same reasoning as RadioStatusViewModel.OnTxVolumePercentChanged's own comment:
         // a slider drag can fire dozens of times a second, and overlapping un-awaited settings-store
         // writes could race each other and let a stale write clobber a fresher one.
-        _txVolumePersistCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _txVolumePersistCts = cts;
-        _ = PersistTxVolumeDebouncedAsync(value, cts.Token);
+        _ = _txVolumePersist.Schedule(ct => PersistTxVolumeAsync(value, ct));
     }
 
-    private async Task PersistTxVolumeDebouncedAsync(int value, CancellationToken ct)
+    private async Task PersistTxVolumeAsync(int value, CancellationToken ct)
     {
-        try
-        {
-            await Task.Delay(TxVolumePersistDebounce, ct).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException)
-        {
-            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
-            return;
-        }
-
         try
         {
             await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);

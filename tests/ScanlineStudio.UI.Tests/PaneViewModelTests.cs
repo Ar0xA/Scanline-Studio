@@ -7,6 +7,7 @@ using Avalonia.Platform;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Logbook;
@@ -26,6 +27,9 @@ namespace ScanlineStudio.UI.Tests;
 
 public sealed class PaneViewModelTests
 {
+    private static readonly TimeSpan WorkedBeforeDebounce = TimeSpan.FromMilliseconds(250);
+    private static readonly TimeSpan NoteDebounce = TimeSpan.FromMilliseconds(600);
+
     private static readonly SstvModeDefinition TestMode = new(
         Id: "test",
         DisplayName: "Test",
@@ -144,16 +148,20 @@ public sealed class PaneViewModelTests
                 new RxPaneUiSettings { QuickModeGridIds = customIds },
                 RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings),
         };
-        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), settingsStore, NullLogger<WaterfallPaneViewModel>.Instance);
+        var clock = new FakeTimeProvider();
+        var vm = new WaterfallPaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), settingsStore, NullLogger<WaterfallPaneViewModel>.Instance, clock);
 
         vm.ZeroDb = -20.0;
         vm.GainDb = 40.0;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(399)));
         Dispatcher.UIThread.RunJobs();
         var beforeDebounce = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
         Assert.Equal(0.0, beforeDebounce?.ZeroDb); // not persisted yet -- still debouncing
 
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(1)));
+        await TestWait.WaitUntilAsync(
+            () => settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings)?.ZeroDb == -20.0,
+            "gain/zero persist after the 400 ms debounce");
 
         var rxPaneUi = settingsStore.Settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings);
         Assert.Equal(-20.0, rxPaneUi?.ZeroDb);
@@ -1096,7 +1104,8 @@ public sealed class PaneViewModelTests
         {
             EntriesToReturn = [new ReceiveHistoryEntry("entry1", DateTimeOffset.UtcNow, "sc1", "/tmp/frame.png", null, ReceiveDecodeState.Completed)],
         };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var clock = new FakeTimeProvider();
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
         var receivedImage = (FakeReceivedImageBuffer)sstvSession.ReceivedImage;
         receivedImage.RaiseSaved("/tmp/frame.png", receivedImage.Generation);
         Dispatcher.UIThread.RunJobs();
@@ -1104,10 +1113,13 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
 
         vm.Note = "call back tomorrow";
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(599)));
         Dispatcher.UIThread.RunJobs();
         Assert.Null(historyStore.EntriesToReturn[0].Note); // not persisted yet -- still debouncing
+        Assert.Empty(historyStore.SetNoteCalls);
 
-        await Task.Delay(700);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(1)));
+        await TestWait.WaitUntilAsync(() => historyStore.EntriesToReturn[0].Note == "call back tomorrow", "note persist after the 600 ms debounce");
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("call back tomorrow", historyStore.EntriesToReturn[0].Note);
@@ -1243,7 +1255,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_StationIdDecodedEvent_CallsignDifferentFromOwn_AutoFillsOverrideCallsign()
     {
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         Assert.Null(vm.OverrideCallsign);
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
@@ -1271,7 +1283,7 @@ public sealed class PaneViewModelTests
         // fsk_cwid.md A3: "the card reads e.g. W1AW with a secondary FSK · 14:02:11Z".
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
         Dispatcher.UIThread.RunJobs();
@@ -1285,7 +1297,7 @@ public sealed class PaneViewModelTests
     {
         var localization = new FakeLocalizationService();
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, localization, new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
         Dispatcher.UIThread.RunJobs();
@@ -1372,7 +1384,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_CwIdDecodedEvent_AddsOneStationsHeardRowWithCwSource()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
         Dispatcher.UIThread.RunJobs();
@@ -1486,7 +1498,7 @@ public sealed class PaneViewModelTests
         // auto-fills. A real, if unusual, station-ID decode could plausibly differ only by case since
         // the wire protocol itself doesn't enforce a single canonical case.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "w1aw"));
         Dispatcher.UIThread.RunJobs();
@@ -1547,7 +1559,7 @@ public sealed class PaneViewModelTests
         // OverrideCallsign only, never an automatic network lookup on decode.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "W1AW" };
         var logbookSession = new FakeLogbookSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "K1ABC"));
         Dispatcher.UIThread.RunJobs();
@@ -1652,7 +1664,7 @@ public sealed class PaneViewModelTests
     {
         // fsk_cwid.md §9/B-P3: the CW ID row shows the decoder's raw text.
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         Assert.Equal("—", vm.CwIdDisplay);
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
@@ -1665,7 +1677,7 @@ public sealed class PaneViewModelTests
     public void RxImagePaneViewModel_CwIdDecodedEvent_LowConfidence_AppendsHintToCwIdDisplay()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.5, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
         Dispatcher.UIThread.RunJobs();
@@ -1679,7 +1691,7 @@ public sealed class PaneViewModelTests
         // Mutation-relevant boundary check: 0.6 itself (the threshold) must NOT trigger the hint --
         // pins the guard's "<" (strictly below), not "<=".
         var sstvSession = new FakeSstvSessionService();
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.6, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
         Dispatcher.UIThread.RunJobs();
@@ -1692,7 +1704,7 @@ public sealed class PaneViewModelTests
     {
         // fsk_cwid.md §9's routing rule: fills OverrideCallsign when it's still empty.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         Assert.Null(vm.OverrideCallsign);
         sstvSession.RaiseCwIdDecoded(new CwIdDecodedInfo(ReceptionSequence: 0, Text: "DE W1AW", Callsign: "W1AW", Confidence: 0.9, ToneHz: 800, Wpm: 20, Backend: CwDecoderBackend.Classical));
@@ -1708,7 +1720,7 @@ public sealed class PaneViewModelTests
         // -- FSK arrives first and fills OverrideCallsign, then CW decodes a DIFFERENT callsign for
         // the same reception; FSK's value must survive, and the CW text still fills its own row.
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         sstvSession.RaiseStationIdDecoded(new FskStationIdDecodedInfo(Callsign: "W1AW"));
         Dispatcher.UIThread.RunJobs();
@@ -3075,7 +3087,7 @@ public sealed class PaneViewModelTests
         // Round-2 fix: the button used to stay enabled with a real callsign typed in, only
         // failing after the click, when QRZ lookup wasn't actually configured in Options.
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = false };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         vm.OverrideCallsign = "W1AW";
 
         Assert.False(vm.LookupQrzCommand.CanExecute(null));
@@ -3096,7 +3108,7 @@ public sealed class PaneViewModelTests
         // Exercises the same refresh path MainWindow.axaml.cs calls on Options close, so
         // toggling QRZ lookup on/off while the app is running takes effect without a restart.
         var logbookSession = new FakeLogbookSessionService { IsQrzLookupConfiguredResult = true };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         Assert.True(vm.IsQrzLookupConfigured);
 
         logbookSession.IsQrzLookupConfiguredResult = false;
@@ -3133,7 +3145,7 @@ public sealed class PaneViewModelTests
         var session = new FakeSstvSessionService();
         var logbook = new FakeLogbookSessionService { LookupGate = gate.Task };
         var vm = new RxImagePaneViewModel(session, new FakeLocalizationService(), logbook,
-            new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+            new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         vm.OverrideCallsign = "W1AW";
         var pending = vm.LookupQrzCommand.ExecuteAsync(null);
         session.RaiseModeDetected(TestMode);
@@ -3156,7 +3168,7 @@ public sealed class PaneViewModelTests
         {
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         vm.OverrideCallsign = "  W1AW  ";
 
         await vm.LookupQrzCommand.ExecuteAsync(null);
@@ -3183,7 +3195,7 @@ public sealed class PaneViewModelTests
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
         var sstvSession = new FakeSstvSessionService { OperatorGrid = "EM12" };
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         // OperatorGrid is loaded via a construction-time fire-and-forget (LoadOperatorGridAsync) --
         // give it a turn to complete before asserting, same reasoning as any other async-in-ctor field.
         await Task.Yield();
@@ -3206,7 +3218,7 @@ public sealed class PaneViewModelTests
             LookupResultToReturn = new QrzCallsignLookupResult(true, "Hiram Maxim", "Newington (United States)", "FN31pr", null),
         };
         var localization = new FakeLocalizationService();
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), localization, logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
         vm.OverrideCallsign = "W1AW";
         await vm.LookupQrzCommand.ExecuteAsync(null);
         Assert.Equal("Hiram Maxim", vm.LookupName);
@@ -3225,19 +3237,23 @@ public sealed class PaneViewModelTests
     }
 
     /// <summary>Worked-before plan (2026-09-01): auto-fires on a real callsign change, no manual
-    /// button. Real wall-clock wait, same established pattern as this file's
-    /// RxHistoryPaneViewModel note-persist debounce tests -- 400ms comfortably clears the 250ms
-    /// WorkedBeforeDebounce.</summary>
+    /// button, after the 250 ms worked-before debounce, driven on a fake clock.</summary>
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_OverrideCallsignChanged_PriorContactFound_ShowsSummary()
     {
+        var clock = new FakeTimeProvider();
         var logbookSession = new FakeLogbookSessionService { WorkedBeforeBandToReturn = "20m" };
         logbookSession.Records.Add(new QsoRecord("1", "N0CALL", new DateTimeOffset(2026, 8, 12, 0, 0, 0, TimeSpan.Zero), null, 14_230_000, null, null, null, null, null, null, null, null, null, null, false, false));
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
 
         vm.OverrideCallsign = "N0CALL";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce - TimeSpan.FromMilliseconds(1));
         Dispatcher.UIThread.RunJobs();
+        Assert.Empty(logbookSession.GetWorkedBeforeCalls);
+        Assert.Equal(WorkedBeforeStatus.Unknown, vm.WorkedBeforeStatus);
+
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await TestWait.WaitUntilAsync(() => vm.WorkedBeforeStatus != WorkedBeforeStatus.Unknown, "worked-before lookup after the 250 ms debounce");
 
         Assert.Equal(WorkedBeforeStatus.Found, vm.WorkedBeforeStatus);
         Assert.Equal("20m · 2026-08-12", vm.WorkedBeforeDisplay);
@@ -3246,10 +3262,11 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_OverrideCallsignChanged_NoPriorContact_ShowsNewStation()
     {
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var clock = new FakeTimeProvider();
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
 
         vm.OverrideCallsign = "N0CALL";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(WorkedBeforeStatus.None, vm.WorkedBeforeStatus);
@@ -3281,15 +3298,16 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_RapidRetyping_OnlyTheFinalCallsignIsQueried()
     {
+        var clock = new FakeTimeProvider();
         var logbookSession = new FakeLogbookSessionService();
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
 
         vm.OverrideCallsign = "P";
         vm.OverrideCallsign = "PA";
         vm.OverrideCallsign = "PA3";
         vm.OverrideCallsign = "PA3B";
         vm.OverrideCallsign = "PA3BX";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
 
         var call = Assert.Single(logbookSession.GetWorkedBeforeCalls);
@@ -3309,11 +3327,12 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_GetWorkedBeforeFails_ShowsUnknownDash_NotNewStation()
     {
+        var clock = new FakeTimeProvider();
         var logbookSession = new FakeLogbookSessionService { WorkedBeforeOutcomeOverride = WorkedBeforeOutcome.Failed };
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
 
         vm.OverrideCallsign = "N0CALL";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(WorkedBeforeStatus.Unknown, vm.WorkedBeforeStatus);
@@ -3323,10 +3342,11 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_NotifyQsoLogged_MatchingCallsignCaseInsensitive_RefreshesIndicator()
     {
+        var clock = new FakeTimeProvider();
         var logbookSession = new FakeLogbookSessionService();
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
         vm.OverrideCallsign = "N0CALL";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(WorkedBeforeStatus.None, vm.WorkedBeforeStatus);
 
@@ -3335,7 +3355,7 @@ public sealed class PaneViewModelTests
         // a DIFFERENT case than OverrideCallsign currently holds.
         logbookSession.Records.Add(new QsoRecord("1", "N0CALL", DateTimeOffset.UtcNow, null, 14_230_000, null, null, null, null, null, null, null, null, null, null, false, false));
         vm.NotifyQsoLogged("n0call");
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(WorkedBeforeStatus.Found, vm.WorkedBeforeStatus);
@@ -3344,17 +3364,18 @@ public sealed class PaneViewModelTests
     [AvaloniaFact]
     public async Task RxImagePaneViewModel_NotifyQsoLogged_DifferentCallsign_DoesNotOverwriteIndicator()
     {
+        var clock = new FakeTimeProvider();
         var logbookSession = new FakeLogbookSessionService();
-        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(new FakeSstvSessionService(), new FakeLocalizationService(), logbookSession, new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: clock);
         vm.OverrideCallsign = "N0CALL";
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
         var callCountBefore = logbookSession.GetWorkedBeforeCalls.Count;
 
         // A QSO logged for a DIFFERENT callsign than whatever this pane currently shows must not
         // touch this indicator at all.
         vm.NotifyQsoLogged("W1AW");
-        await Task.Delay(400);
+        clock.Advance(WorkedBeforeDebounce);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(callCountBefore, logbookSession.GetWorkedBeforeCalls.Count);
@@ -6274,7 +6295,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed, Note: "sked 2nd frame", IsFlagged: true)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -6285,7 +6307,7 @@ public sealed class PaneViewModelTests
         Assert.True(vm.SelectedEntryIsFlagged);
         // Loading the selection must not itself count as an edit -- no SetNoteAsync/SetFlaggedAsync
         // call yet, only ever fired by an actual user change (asserted below in the edit tests).
-        await Task.Delay(700);
+        clock.Advance(NoteDebounce);
         Dispatcher.UIThread.RunJobs();
         Assert.Empty(historyStore.SetNoteCalls);
         Assert.Empty(historyStore.SetFlaggedCalls);
@@ -6301,14 +6323,15 @@ public sealed class PaneViewModelTests
                 new ReceiveHistoryEntry("B", DateTimeOffset.UtcNow, "robot36", "/tmp/b.png", null, ReceiveDecodeState.Completed),
             ],
         };
-        var vm = CreateRxHistoryPaneViewModel(store);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(store, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
         vm.SelectedEntryNote = "note A";
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "B");
         vm.SelectedEntryNote = "note B";
-        await Task.Delay(750);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => store.SetNoteCalls.Count == 2, "both entries' debounced note writes");
         await vm.RefreshCommand.ExecuteAsync(null);
         Assert.Equal("note A", vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note);
         Assert.Equal("note B", vm.Entries.Single(e => e.Entry.Id == "B").Entry.Note);
@@ -6330,20 +6353,24 @@ public sealed class PaneViewModelTests
                 if (id == "A" && note == "old") { entered.SetResult(); await release.Task; }
             },
         };
-        var vm = CreateRxHistoryPaneViewModel(store);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(store, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
         vm.SelectedEntryNote = "old";
+        clock.Advance(NoteDebounce);
+        Dispatcher.UIThread.RunJobs();
         await entered.Task.WaitAsync(TimeSpan.FromSeconds(5));
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "B");
         vm.SelectedEntryNote = "B";
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
         vm.SelectedEntryNote = "new";
-        await Task.Delay(750);
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => store.SetNoteCalls.Any(c => c.Note == "B"), "entry B's debounced note write");
         Assert.DoesNotContain(store.SetNoteCalls, c => c.Note == "new");
         release.SetResult();
-        await Task.Delay(100);
-        Dispatcher.UIThread.RunJobs();
+        // Wait for the write-back post, not just the store write, so no pool-thread post outlives the test.
+        await TestWait.WaitUntilAsync(() => vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note == "new", "entry A's newer write and its write-back");
         Assert.Equal("new", vm.SelectedEntryNote);
         await vm.RefreshCommand.ExecuteAsync(null);
         Assert.Equal("new", vm.Entries.Single(e => e.Entry.Id == "A").Entry.Note);
@@ -6367,17 +6394,18 @@ public sealed class PaneViewModelTests
                 ? throw new IOException("Injected note write failure")
                 : Task.CompletedTask,
         };
-        var vm = CreateRxHistoryPaneViewModel(store, logger: new ThrowOnSetNoteFailedLogger());
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(store, logger: new ThrowOnSetNoteFailedLogger(), timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "A");
 
         vm.SelectedEntryNote = "first";
-        await Task.Delay(750);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => store.SetNoteCalls.Any(c => c.Note == "first"), "the \"first\" note write");
 
         vm.SelectedEntryNote = "second";
-        await Task.Delay(750);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => store.SetNoteCalls.Any(c => c.Note == "second"), "the \"second\" note write");
 
         Assert.Contains(store.SetNoteCalls, c => c.EntryId == "A" && c.Note == "second");
         await vm.RefreshCommand.ExecuteAsync(null);
@@ -6410,7 +6438,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -6420,10 +6449,12 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.Null(historyStore.EntriesToReturn[0].Note); // not persisted yet -- still debouncing
 
-        await Task.Delay(700);
+        clock.Advance(NoteDebounce - TimeSpan.FromMilliseconds(1));
         Dispatcher.UIThread.RunJobs();
+        Assert.Empty(historyStore.SetNoteCalls);
 
-        Assert.Equal("call back tomorrow", historyStore.EntriesToReturn[0].Note);
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        await TestWait.WaitUntilAsync(() => historyStore.EntriesToReturn[0].Note == "call back tomorrow", "note persist after the 600 ms debounce");
     }
 
     [AvaloniaFact]
@@ -6636,7 +6667,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [new ReceiveHistoryEntry("1", DateTimeOffset.UtcNow, "robot36", "/tmp/a.png", null, ReceiveDecodeState.Completed)],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -6651,12 +6683,13 @@ public sealed class PaneViewModelTests
         Dispatcher.UIThread.RunJobs();
         Assert.Equal("note from dialog", historyStore.EntriesToReturn[0].Note);
 
-        // The pending debounce from before must be CANCELLED, not just outrun by timing -- wait past
+        // The pending debounce from before must be CANCELLED, not just outrun by timing -- advance past
         // its own 600ms window and confirm the dialog's write survives instead of being overwritten.
-        await Task.Delay(700);
+        clock.Advance(NoteDebounce);
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("note from dialog", historyStore.EntriesToReturn[0].Note);
+        Assert.DoesNotContain(historyStore.SetNoteCalls, c => c.Note == "stale typed text");
     }
 
     [AvaloniaFact]
@@ -6688,7 +6721,7 @@ public sealed class PaneViewModelTests
     public async Task RxHistoryPaneViewModel_SwitchingAwayMidEdit_PreviousEntrysPendingSaveStillCompletes()
     {
         // Auditor round-2 gap: the original version of this test never edited anything, so it could
-        // not actually prove PersistNoteDebouncedAsync's captured-entryId design claim (a pending
+        // not actually prove OnSelectedEntryNoteChanged's captured-entryId design claim (a pending
         // save for the entry just switched AWAY from is still let complete). This one does: edit
         // entry 1, switch to entry 2 before the debounce fires, then confirm entry 1's edit still
         // lands in the store AND, on switching back, in Entries/SelectedEntryNote too (the
@@ -6703,7 +6736,8 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
 
@@ -6715,8 +6749,8 @@ public sealed class PaneViewModelTests
         vm.SelectedEntry = vm.Entries.Single(e => e.Entry.Id == "2");
         Dispatcher.UIThread.RunJobs();
 
-        await Task.Delay(700);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => vm.Entries.Single(e => e.Entry.Id == "1").Entry.Note == "edited before switching away", "entry 1's pending note save");
 
         Assert.Equal("edited before switching away", historyStore.EntriesToReturn.Single(e => e.Id == "1").Note);
 
@@ -6741,7 +6775,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -6759,8 +6794,8 @@ public sealed class PaneViewModelTests
 
         Assert.Equal("typing...", vm.SelectedEntryNote);
 
-        await Task.Delay(700);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => historyStore.EntriesToReturn.Single(e => e.Id == "1").Note == "typing...", "the in-progress note's save");
 
         Assert.Equal("typing...", historyStore.EntriesToReturn.Single(e => e.Id == "1").Note);
     }
@@ -6785,7 +6820,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -6798,8 +6834,8 @@ public sealed class PaneViewModelTests
 
         vm.SelectedEntryNote = "note via real listbox";
         Dispatcher.UIThread.RunJobs();
-        await Task.Delay(700); // past the debounce -- UpdateEntryInPlace's Entries[index]=... runs here
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce); // past the debounce -- UpdateEntryInPlace's Entries[index]=... runs here
+        await TestWait.WaitUntilAsync(() => vm.Entries.Single(e => e.Entry.Id == "1").Entry.Note == "note via real listbox", "note write-back");
 
         // The real proof: selection and preview both survived the replace, and the write-back
         // actually reached Entries (not just the store).
@@ -6828,7 +6864,8 @@ public sealed class PaneViewModelTests
             ],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         Dispatcher.UIThread.RunJobs();
 
         var listBox = new ListBox { ItemsSource = vm.Entries };
@@ -6845,8 +6882,8 @@ public sealed class PaneViewModelTests
 
         // Entry "a"'s debounced save (and its UpdateEntryInPlace write-back, replacing a NON-selected
         // index since "b" is now selected) fires here.
-        await Task.Delay(700);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => vm.Entries.Single(e => e.Entry.Id == "a").Entry.Note == "edited before switching away", "entry a's note write-back");
 
         Assert.NotNull(vm.SelectedEntry);
         Assert.Equal("b", vm.SelectedEntry!.Entry.Id);
@@ -6862,7 +6899,8 @@ public sealed class PaneViewModelTests
             EntriesToReturn = [entry],
             ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]),
         };
-        var vm = CreateRxHistoryPaneViewModel(historyStore);
+        var clock = new FakeTimeProvider();
+        var vm = CreateRxHistoryPaneViewModel(historyStore, timeProvider: clock);
         await vm.RefreshCommand.ExecuteAsync(null);
         Dispatcher.UIThread.RunJobs();
         vm.SelectedEntry = vm.Entries[0];
@@ -6874,8 +6912,8 @@ public sealed class PaneViewModelTests
 
         vm.SelectedEntryNote = "too late";
         Dispatcher.UIThread.RunJobs();
-        await Task.Delay(700);
-        Dispatcher.UIThread.RunJobs();
+        clock.Advance(NoteDebounce);
+        await TestWait.WaitUntilAsync(() => vm.ErrorMessage is not null, "the missing-entry error");
 
         // FakeLocalizationService.GetString returns the raw key -- asserting the exact key (not just
         // NotNull) distinguishes this from the wrong-error-message / exception-path findings the
@@ -8323,7 +8361,8 @@ public sealed class PaneViewModelTests
         FakeLogbookSessionService? logbookSession = null,
         FakeLocalizationService? localization = null,
         FakeRxStationIdAttacher? stationIdAttacher = null,
-        ILogger<RxHistoryPaneViewModel>? logger = null) =>
+        ILogger<RxHistoryPaneViewModel>? logger = null,
+        TimeProvider? timeProvider = null) =>
         new(
             historyStore,
             localization ?? new FakeLocalizationService(),
@@ -8337,7 +8376,8 @@ public sealed class PaneViewModelTests
             clipboardImageService ?? new FakeClipboardImageService(),
             NullLogger<ImageViewerWindowViewModel>.Instance,
             audioAutoSaver ?? new FakeRxAudioAutoSaver(),
-            stationIdAttacher ?? new FakeRxStationIdAttacher());
+            stationIdAttacher ?? new FakeRxStationIdAttacher(),
+            timeProvider);
 
     [AvaloniaFact]
     public async Task RxHistoryPaneViewModel_NoFilterActive_FilteredEntriesMatchesEntries()

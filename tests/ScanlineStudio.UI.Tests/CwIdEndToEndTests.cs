@@ -1,6 +1,7 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Cw;
 using ScanlineStudio.Abstractions.Imaging;
@@ -88,7 +89,7 @@ public sealed class CwIdEndToEndTests
             new MacroTextResolver(), new FakeWaterfallSource(), receivedImage, new NoOpRadioSessionService(),
             new ClassicalCwDecoder(), NullLogger<SstvSessionService>.Instance);
 
-        var vm = new RxImagePaneViewModel(session, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(session, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         var cwIdDecodedTask = new TaskCompletionSource<CwIdDecodedInfo>(TaskCreationOptions.RunContinuationsAsynchronously);
         session.CwIdDecoded += info => cwIdDecodedTask.TrySetResult(info);

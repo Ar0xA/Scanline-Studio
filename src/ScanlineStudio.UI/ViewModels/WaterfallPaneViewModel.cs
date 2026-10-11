@@ -7,6 +7,7 @@ using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Application;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI.Controls;
+using ScanlineStudio.UI.Services;
 using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
@@ -111,14 +112,16 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     private readonly ISettingsStore _settingsStore;
     private readonly ILogger<WaterfallPaneViewModel> _logger;
     private bool _suppressGainZeroPersist;
-    private CancellationTokenSource? _gainZeroPersistCts;
+    private readonly Debouncer _gainZeroPersist;
 
     public WaterfallPaneViewModel(
         ISstvSessionService sstvSession,
         ILocalizationService localization,
         ISettingsStore settingsStore,
-        ILogger<WaterfallPaneViewModel> logger)
+        ILogger<WaterfallPaneViewModel> logger,
+        TimeProvider? timeProvider = null)
     {
+        _gainZeroPersist = new Debouncer(GainZeroPersistDebounce, timeProvider ?? TimeProvider.System, resumeOnCapturedContext: false);
         _sstvSession = sstvSession;
         _localization = localization;
         _settingsStore = settingsStore;
@@ -172,16 +175,6 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
     {
         try
         {
-            await Task.Delay(GainZeroPersistDebounce, ct).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException)
-        {
-            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
-            return;
-        }
-
-        try
-        {
             await _settingsStore.UpdateAsync(settings =>
             {
                 var current = settings.GetSection(RxPaneUiSettings.SectionKey, RxPaneUiSettingsJsonContext.Default.RxPaneUiSettings) ?? new RxPaneUiSettings();
@@ -202,10 +195,10 @@ public sealed partial class WaterfallPaneViewModel : ViewModelBase
             return;
         }
 
-        _gainZeroPersistCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _gainZeroPersistCts = cts;
-        _ = PersistGainZeroSettingsAsync(ZeroDb, GainDb, cts.Token);
+        // Captured now, not read inside the action, so the persisted pair is the one that triggered it.
+        var zeroDb = ZeroDb;
+        var gainDb = GainDb;
+        _ = _gainZeroPersist.Schedule(ct => PersistGainZeroSettingsAsync(zeroDb, gainDb, ct));
     }
 
     partial void OnZeroDbChanged(double value) => RequestPersistGainZero();

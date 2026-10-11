@@ -39,7 +39,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private readonly DispatcherTimer _utcClockTimer;
     private readonly DispatcherTimer _rxAudioLevelTimer;
     private bool _suppressVolumePersist;
-    private CancellationTokenSource? _txVolumePersistCts;
+    private readonly Debouncer _txVolumePersist;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FrequencyDisplayOrPlaceholder))]
@@ -836,8 +836,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// this VM just needs a way to reach it.</summary>
     public TxControlsPaneViewModel? TxControls { get; set; }
 
-    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger)
+    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger, TimeProvider? timeProvider = null)
     {
+        _txVolumePersist = new Debouncer(VolumePersistDebounce, timeProvider ?? TimeProvider.System, resumeOnCapturedContext: false);
         _radioSession = radioSession;
         _sstvSession = sstvSession;
         _localization = localization;
@@ -1789,24 +1790,11 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // Debounced (not one settings write per slider tick, per the Piece 5 plan) -- a slider drag
         // can fire dozens of times a second, and overlapping un-awaited settings-store SaveAsync
         // calls could race each other and let a stale write clobber a fresher one.
-        _txVolumePersistCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _txVolumePersistCts = cts;
-        _ = PersistVolumeDebouncedAsync(value, cts.Token);
+        _ = _txVolumePersist.Schedule(ct => PersistVolumeAsync(value, ct));
     }
 
-    private async Task PersistVolumeDebouncedAsync(int value, CancellationToken ct)
+    private async Task PersistVolumeAsync(int value, CancellationToken ct)
     {
-        try
-        {
-            await Task.Delay(VolumePersistDebounce, ct).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException)
-        {
-            // Normal control flow -- a newer slider tick superseded this one. Not worth a log line.
-            return;
-        }
-
         try
         {
             await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);

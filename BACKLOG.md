@@ -394,9 +394,6 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
 - **CQ-08-F1. Two PTT features with no production caller** — `SetPttLockAsync`, and
   `TuneAsync(leaveKeyedAfterTune: true)` (never passed `true`). ~54% of ~2,000 PTT lines. Removal also
   closes 08-F7's races. Needs the removal-rule check and the full review cadence.
-- **CQ-07-F1. Debounces on the real clock** (8 VM sites); UI tests sleep past them with margins down to
-  100 ms (`PaneViewModelTests.cs:1110` vs `RxImagePaneViewModel.cs:68`). Fix: one `Debouncer` with a
-  `TimeProvider`. Also fixes 05-F4 drift.
 
 ### CQ-P2. OPEN — fix when touching the code
 
@@ -468,3 +465,6 @@ Listed with evidence in the area reports. Pick them up only when already working
 - **CQ-01-F4 (+12-F10 decoder half).** DONE 2026-10-11 — `beb082f7`: `RestartableSstvDecoder` holds one
   `ResolvedSstvDecoderSettings` record; every setter stores and forwards under `_gate` (fixes a lost-update race in
   four Request methods); full-snapshot swap-survival tests plus a surface guard; 4 mutations fail.
+- **CQ-07-F1 (+12-F3, 05-F4 debounce part).** DONE 2026-10-11 — one `Debouncer`/`KeyedDebouncer` on an injected
+  `TimeProvider` replaces 8 hand-rolled UI debounces; 29 fixed test sleeps removed (UI.Tests ~30 s → ~11 s); 0/40
+  flakes after moving 3 dispatcher-posting tests to `[AvaloniaFact]` and giving 21 never-waiting tests a fake clock.

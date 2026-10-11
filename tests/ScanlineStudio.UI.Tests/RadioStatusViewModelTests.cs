@@ -1,6 +1,7 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.UI.ViewModels;
 
@@ -8,8 +9,8 @@ namespace ScanlineStudio.UI.Tests;
 
 public sealed class RadioStatusViewModelTests
 {
-    private static RadioStatusViewModel CreateViewModel(FakeRadioSessionService? radioSession = null, FakeSstvSessionService? sstvSession = null, FakeAppearanceSettingsService? appearanceSettings = null)
-        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), appearanceSettings ?? new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
+    private static RadioStatusViewModel CreateViewModel(FakeRadioSessionService? radioSession = null, FakeSstvSessionService? sstvSession = null, FakeAppearanceSettingsService? appearanceSettings = null, TimeProvider? timeProvider = null)
+        => new(radioSession ?? new FakeRadioSessionService(), sstvSession ?? new FakeSstvSessionService(), new FakeLocalizationService(), appearanceSettings ?? new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance, timeProvider);
 
     [AvaloniaFact]
     public void Constructor_LoadsPersistedPresetsAndTxState()
@@ -1004,17 +1005,17 @@ public sealed class RadioStatusViewModelTests
     public async Task TxVolumePercentChange_PersistsAfterDebounceDelay()
     {
         var sstvSession = new FakeSstvSessionService();
-        var vm = CreateViewModel(sstvSession: sstvSession);
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
         Dispatcher.UIThread.RunJobs();
 
         vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(399)));
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(100, sstvSession.TxVolumePercent); // not persisted yet -- still debouncing
 
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
-
-        Assert.Equal(55, sstvSession.TxVolumePercent);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(1)));
+        await TestWait.WaitUntilAsync(() => sstvSession.TxVolumePercent == 55, "TX volume persist after the 400 ms debounce");
     }
 
     [AvaloniaFact]

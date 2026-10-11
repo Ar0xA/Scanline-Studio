@@ -1,6 +1,7 @@
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Imaging;
@@ -103,7 +104,7 @@ public sealed class StationIdEndToEndTests
         Assert.Contains(decodedEvents, e => e.CompactNr == 123);
 
         var sstvSession = new FakeSstvSessionService { OperatorCallsign = "K2ABC" }; // operator B, different from A
-        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), new FakeReceiveHistoryStore(), new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance, timeProvider: new FakeTimeProvider());
 
         LatchReceptionSequence(sstvSession, decodedEvents[0].ReceptionSequence);
 

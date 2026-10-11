@@ -63,8 +63,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
 
     /// <summary>Same value as <c>RxHistoryPaneViewModel.NotePersistDebounce</c> -- this card's Note
     /// field is the same underlying <see cref="IReceiveHistoryStore.SetNoteAsync"/> write, just a
-    /// second UI surface for it (the Gallery tab's own Note field, on a user-SELECTED history entry,
-    /// already used this debounce/persist shape first).</summary>
+    /// second UI surface for it (the Gallery tab's own Note field, on a user-SELECTED history entry).</summary>
     private static readonly TimeSpan NotePersistDebounce = TimeSpan.FromMilliseconds(600);
 
     /// <summary>Worked-before plan (2026-09-01): absorbs per-keystroke manual typing into
@@ -244,15 +243,15 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// memory footprint that scales with the operator's full receive history.</summary>
     private const int PreviousFramesThumbnailMaxDimension = 240;
 
-    private CancellationTokenSource? _notePersistCts;
+    private readonly Debouncer _notePersist;
 
     /// <summary>Worked-before plan (2026-09-01): cancel-and-replace debounce, same shape as
-    /// <see cref="_notePersistCts"/> -- guards both against per-keystroke manual-typing queries in
+    /// <see cref="_notePersist"/> -- guards both against per-keystroke manual-typing queries in
     /// <see cref="OnOverrideCallsignChanged"/> AND against a stale in-flight query for a callsign the
     /// operator has since cleared/changed latching a wrong result (cancelled unconditionally, before
     /// any other branching, in both <see cref="OnOverrideCallsignChanged"/> and
     /// <see cref="NotifyQsoLogged"/>).</summary>
-    private CancellationTokenSource? _workedBeforeCts;
+    private readonly Debouncer _workedBefore;
 
     /// <summary>Same ordering-safety shape as <c>RxHistoryPaneViewModel._pendingFlagPersist</c> --
     /// chained onto whatever's currently pending rather than fired independently, so a rapid
@@ -752,8 +751,12 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         ILogger<RxImagePaneViewModel> logger,
         IUrlLauncher? urlLauncher = null,
         IClipboardImageService? clipboardImageService = null,
-        ILogger<ImageViewerWindowViewModel>? imageViewerLogger = null)
+        ILogger<ImageViewerWindowViewModel>? imageViewerLogger = null,
+        TimeProvider? timeProvider = null)
     {
+        var time = timeProvider ?? TimeProvider.System;
+        _notePersist = new Debouncer(NotePersistDebounce, time, resumeOnCapturedContext: false);
+        _workedBefore = new Debouncer(WorkedBeforeDebounce, time, resumeOnCapturedContext: true);
         _receivedImage = sstvSession.ReceivedImage;
         _sstvSession = sstvSession;
         _localization = localization;
@@ -881,7 +884,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             // Worked-before plan (2026-09-01): AFTER _imagePool.Dispose(), not before -- a throw from
             // Cancel() ahead of it would skip pool disposal and mislog as ImagePoolDisposeFailed.
             // Cancellation itself is thread-safe even though this whole block runs off the UI thread.
-            _workedBeforeCts?.Cancel();
+            _workedBefore.Cancel();
         }
         catch (Exception ex)
         {
@@ -2245,11 +2248,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Mirrors <c>RxHistoryPaneViewModel.OnSelectedEntryNoteChanged</c>/
-    /// <c>PersistNoteDebouncedAsync</c> exactly -- same debounce/cancel-supersedes/error-surfacing
-    /// shape, just against <see cref="_currentEntryId"/> instead of a list-selected entry's id (this
-    /// pane only ever tracks the one currently-displayed frame, so there's no in-place list
-    /// write-back needed -- <see cref="Note"/> already IS the display).</summary>
+    /// <summary>Debounced note persist for the displayed frame (<see cref="_currentEntryId"/>), with the
+    /// same delay and last-wins behaviour as <c>RxHistoryPaneViewModel.OnSelectedEntryNoteChanged</c>, but
+    /// deliberately not the same shape. This pane has one debounce slot, because it only tracks one frame;
+    /// RxHistory keys its debounce per entry. Here the debounce token goes into
+    /// <see cref="IReceiveHistoryStore.SetNoteAsync"/>, so a newer keystroke cancels an in-flight write;
+    /// RxHistory's write is not cancellable. Writes here are not chained; RxHistory orders them through a
+    /// per-entry write chain. There is no list write-back, because <see cref="Note"/> already is the display.</summary>
     partial void OnNoteChanged(string? value)
     {
         if (_suppressFrameMetadataEdits || _currentEntryId is not { } entryId)
@@ -2257,25 +2262,11 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _notePersistCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _notePersistCts = cts;
-        _ = PersistNoteDebouncedAsync(entryId, value, cts.Token);
+        _ = _notePersist.Schedule(ct => PersistNoteAsync(entryId, value, ct));
     }
 
-    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationToken ct)
+    private async Task PersistNoteAsync(string entryId, string? note, CancellationToken ct)
     {
-        try
-        {
-            await Task.Delay(NotePersistDebounce, ct).ConfigureAwait(false);
-        }
-        catch (TaskCanceledException)
-        {
-            // Normal control flow -- a newer edit superseded this one, same convention as
-            // RxHistoryPaneViewModel's own identical catch.
-            return;
-        }
-
         Dispatcher.UIThread.Post(() => FrameMetadataErrorMessage = null);
 
         bool succeeded;
@@ -2487,13 +2478,13 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// of <see cref="OverrideCallsign"/> -- the once-per-decode auto-fill (already deduped by the
     /// generated setter's no-op-on-equal-value behavior) AND the editable TextBox
     /// (`MainWindow.axaml`'s <c>OverrideCallsign</c> binding), which updates per keystroke -- the
-    /// debounce inside <see cref="RefreshWorkedBeforeCoreAsync"/> absorbs that.</summary>
+    /// <see cref="_workedBefore"/> debounce absorbs that.</summary>
     partial void OnOverrideCallsignChanged(string? oldValue, string? newValue)
     {
         // Cancelled FIRST, unconditionally, before any branching below -- clearing the callsign (or
         // starting a new reception) must not let an in-flight query for the OLD callsign resolve and
         // latch a stale Found/None onto the new, unrelated state.
-        _workedBeforeCts?.Cancel();
+        _workedBefore.Cancel();
 
         ++_qrzLookupGeneration;
 
@@ -2515,9 +2506,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        var cts = new CancellationTokenSource();
-        _workedBeforeCts = cts;
-        _ = RefreshWorkedBeforeCoreAsync(newValue.Trim(), cts.Token);
+        var callsign = newValue.Trim();
+        _ = _workedBefore.Schedule(ct => RefreshWorkedBeforeCoreAsync(callsign, ct));
     }
 
     /// <summary>Worked-before plan (2026-09-01): re-fires the SAME query
@@ -2537,10 +2527,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        _workedBeforeCts?.Cancel();
-        var cts = new CancellationTokenSource();
-        _workedBeforeCts = cts;
-        _ = RefreshWorkedBeforeCoreAsync(callsign, cts.Token);
+        _ = _workedBefore.Schedule(ct => RefreshWorkedBeforeCoreAsync(callsign, ct));
     }
 
     /// <summary>Shared by <see cref="OnOverrideCallsignChanged"/> and <see cref="NotifyQsoLogged"/> --
@@ -2549,14 +2536,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// "checking..." state (the query is sub-millisecond locally; a spinner would only ever flash for
     /// one frame -- the PREVIOUS value stays displayed during the debounce window instead of
     /// blanking). Threading: bare <see langword="await"/> throughout, matching
-    /// <see cref="LookupQrzAsync"/>'s own shape -- simpler than <see cref="PersistNoteDebouncedAsync"/>'s
+    /// <see cref="LookupQrzAsync"/>'s own shape -- simpler than <see cref="PersistNoteAsync"/>'s
     /// <c>ConfigureAwait(false)</c> + <see cref="Dispatcher"/>.Post pairing, and safe here because
-    /// both callers of this method already run on the UI thread.</summary>
+    /// both callers schedule it from the UI thread on <see cref="_workedBefore"/>, which resumes on the
+    /// captured context.</summary>
     private async Task RefreshWorkedBeforeCoreAsync(string callsign, CancellationToken ct)
     {
         try
         {
-            await Task.Delay(WorkedBeforeDebounce, ct);
             var lookup = await _logbookSession.GetWorkedBeforeAsync(callsign, ct);
 
             // Captured-callsign compare-before-apply -- a SECOND guard, not redundant with the CTS
@@ -2590,7 +2577,7 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         catch (OperationCanceledException)
         {
             // Normal control flow -- a newer change superseded this one, same convention as
-            // PersistNoteDebouncedAsync's own identical catch.
+            // PersistNoteAsync's own identical catch.
         }
     }
 

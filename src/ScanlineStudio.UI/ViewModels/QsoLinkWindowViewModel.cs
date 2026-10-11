@@ -19,7 +19,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// this VM only needs 4 already-injectable services.
 ///
 /// <b>Thread affinity</b>: deliberately does NOT use <c>ConfigureAwait(false)</c> anywhere (code-review
-/// correction -- an earlier version did, matching <c>RxHistoryPaneViewModel.PersistNoteDebouncedAsync</c>'s
+/// correction -- an earlier version did, matching <c>RxHistoryPaneViewModel.PersistNoteAfterAsync</c>'s
 /// convention, but that was wrong here: every command below is invoked from the UI thread and then
 /// mutates UI-bound state -- <see cref="SearchResults"/>, <see cref="ErrorMessage"/>,
 /// <see cref="CreateAndLinkCommand"/>'s own <c>NotifyCanExecuteChanged</c>, and

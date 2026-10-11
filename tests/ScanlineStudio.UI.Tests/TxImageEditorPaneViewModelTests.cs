@@ -7463,7 +7463,8 @@ public sealed class TxImageEditorPaneViewModelTests
     // real-time convexity clamp, same "public static, unit-testable without simulating real Avalonia
     // pointer events" precedent as ComputeElementResize above.
 
-    [Fact]
+    // Drives a perspective rebuild that posts to Dispatcher.UIThread, so it must run inside the headless session.
+    [AvaloniaFact]
     public void TryWritePerspectiveCorner_ValidPosition_WritesTheCorner()
     {
         var box = new BoxElementViewModel
@@ -7481,7 +7482,8 @@ public sealed class TxImageEditorPaneViewModelTests
         AssertClose(1, box.Corner2Y);
     }
 
-    [Fact]
+    // Drives a perspective rebuild that posts to Dispatcher.UIThread, so it must run inside the headless session.
+    [AvaloniaFact]
     public void TryWritePerspectiveCorner_WouldMakeTheQuadNonConvex_RejectsAndLeavesTheCornerUnchanged()
     {
         // Square quad, TopLeft=Corner0. Dragging it far past TopRight (Corner1) on the X axis

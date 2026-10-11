@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reactive.Subjects;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Time.Testing;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using ScanlineStudio.Abstractions.Audio;
@@ -3588,6 +3589,23 @@ public sealed class OptionsWindowViewModelTests
         Assert.Equal("/tmp/station-id.mmv", vm.SoundFileMmvPath);
     }
 
+    [AvaloniaFact]
+    public async Task TxVolumePercent_Changed_PersistsOnlyAfterDebounceDelay()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(399)));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(100, sstvSession.TxVolumePercent);
+
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(1)));
+        await TestWait.WaitUntilAsync(() => sstvSession.TxVolumePercent == 55, "TX volume persist after the 400 ms debounce");
+    }
+
     /// <summary>ui_transition_plan.md step 8 (T2-2): a typed/picked path re-validates (debounced,
     /// same shape as TxVolumePercent's own persist debounce) via
     /// ISstvSessionService.ValidateStationIdSoundFileAsync, showing a real duration on success.</summary>
@@ -3595,14 +3613,19 @@ public sealed class OptionsWindowViewModelTests
     public async Task SoundFileMmvPath_Changed_ValidatesAndShowsDurationOnSuccess()
     {
         var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
         sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
         Dispatcher.UIThread.RunJobs();
 
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/good.mmv";
-        await Task.Delay(600);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(399)));
         Dispatcher.UIThread.RunJobs();
+        Assert.Empty(sstvSession.ValidateStationIdSoundFileCalls);
+
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(1)));
+        await TestWait.WaitUntilAsync(() => vm.SoundFileIdSuccessMessage is not null, "sound-file validation after the 400 ms debounce");
 
         Assert.Equal("Options.Radio.SoundFileId.Valid", vm.SoundFileIdSuccessMessage);
         Assert.Null(vm.SoundFileIdErrorMessage);
@@ -3613,14 +3636,15 @@ public sealed class OptionsWindowViewModelTests
     public async Task SoundFileMmvPath_Changed_ShowsErrorMessageOnFailure()
     {
         var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
         sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.UnplayableHeader);
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
         Dispatcher.UIThread.RunJobs();
 
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/bad.mmv";
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await TestWait.WaitUntilAsync(() => vm.SoundFileIdErrorMessage is not null, "sound-file validation failure");
 
         Assert.Equal("Options.Radio.SoundFileId.Error.UnplayableHeader", vm.SoundFileIdErrorMessage);
         Assert.Null(vm.SoundFileIdSuccessMessage);
@@ -3630,18 +3654,18 @@ public sealed class OptionsWindowViewModelTests
     public async Task SoundFileMmvPath_ClearedToBlank_ClearsBothMessagesWithoutValidating()
     {
         var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
         sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
         Dispatcher.UIThread.RunJobs();
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/good.mmv";
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
-        Assert.NotNull(vm.SoundFileIdSuccessMessage);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await TestWait.WaitUntilAsync(() => vm.SoundFileIdSuccessMessage is not null, "sound-file validation success");
         sstvSession.ValidateStationIdSoundFileCalls.Clear();
 
         vm.SoundFileMmvPath = null;
-        await Task.Delay(600);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
         Dispatcher.UIThread.RunJobs();
 
         Assert.Null(vm.SoundFileIdSuccessMessage);
@@ -3655,14 +3679,14 @@ public sealed class OptionsWindowViewModelTests
     public async Task IsIdMethodSoundFileSelected_SwitchedAway_ClearsValidationMessages()
     {
         var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
         sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.FileNotFound);
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
         Dispatcher.UIThread.RunJobs();
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/bad.mmv";
-        await Task.Delay(600);
-        Dispatcher.UIThread.RunJobs();
-        Assert.NotNull(vm.SoundFileIdErrorMessage);
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await TestWait.WaitUntilAsync(() => vm.SoundFileIdErrorMessage is not null, "sound-file validation failure");
 
         vm.IsIdMethodOffSelected = true;
 
@@ -3687,15 +3711,14 @@ public sealed class OptionsWindowViewModelTests
                 StationIdSettingsJsonContext.Default.StationIdSettings),
         };
         var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
         sstvSession.SoundFileValidationResults["/tmp/leftover.mmv"] = SoundFileIdValidationResult.Ok(1.5);
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
 
-        Dispatcher.UIThread.RunJobs();
-        // Code-review finding: must actually wait past the debounce -- an assert taken immediately
-        // after construction passes trivially either way, since the (pre-fix) fire-and-forget
-        // validation would still be sitting on its own 400ms Task.Delay at that point regardless of
-        // whether the guard this test exists to pin was ever added.
-        await Task.Delay(600);
+        await TestWait.WaitUntilAsync(() => vm.SoundFileMmvPath == "/tmp/leftover.mmv", "settings load");
+        // Must advance past the debounce: an assert taken straight after load passes trivially, since an
+        // unguarded validation would still be waiting out its 400 ms delay.
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal("/tmp/leftover.mmv", vm.SoundFileMmvPath);
@@ -3715,7 +3738,7 @@ public sealed class OptionsWindowViewModelTests
         var sstvSession = new FakeSstvSessionService();
         sstvSession.SoundFileValidationResults["/tmp/bad.mmv"] = SoundFileIdValidationResult.Fail(SoundFileIdValidationFailure.FileTooLarge);
         var settingsStore = new FakeSettingsStore();
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, new FakeTimeProvider());
         Dispatcher.UIThread.RunJobs();
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/bad.mmv";
@@ -3737,7 +3760,7 @@ public sealed class OptionsWindowViewModelTests
         var sstvSession = new FakeSstvSessionService();
         sstvSession.SoundFileValidationResults["/tmp/good.mmv"] = SoundFileIdValidationResult.Ok(1.5);
         var settingsStore = new FakeSettingsStore();
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(settingsStore), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), settingsStore, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, new FakeTimeProvider());
         Dispatcher.UIThread.RunJobs();
         vm.IsIdMethodSoundFileSelected = true;
         vm.SoundFileMmvPath = "/tmp/good.mmv";

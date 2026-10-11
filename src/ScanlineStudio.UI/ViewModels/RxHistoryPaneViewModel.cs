@@ -183,8 +183,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// this a fresh selection would immediately re-save its own just-loaded value back to the store.</summary>
     private bool _suppressSelectedEntryEdits;
 
-    // UI-thread-owned: debounce only the same entry, and serialize admitted writes per entry.
-    private readonly Dictionary<string, CancellationTokenSource> _noteDebounces = [];
+    // Debounce per entry; admitted writes are serialized per entry by _noteWrites, which stays UI-thread-owned.
+    private readonly KeyedDebouncer<string> _noteDebounces;
     private readonly Dictionary<string, Task> _noteWrites = [];
 
     [ObservableProperty]
@@ -496,8 +496,12 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         IClipboardImageService clipboardImageService,
         ILogger<ImageViewerWindowViewModel> imageViewerLogger,
         IRxAudioAutoSaver audioAutoSaver,
-        IRxStationIdAttacher stationIdAttacher)
+        IRxStationIdAttacher stationIdAttacher,
+        TimeProvider? timeProvider = null)
     {
+        var time = timeProvider ?? TimeProvider.System;
+        _noteDebounces = new KeyedDebouncer<string>(NotePersistDebounce, time, resumeOnCapturedContext: true);
+        _search = new Debouncer(SearchDebounce, time, resumeOnCapturedContext: true);
         _historyStore = historyStore;
         _localization = localization;
         _logger = logger;
@@ -601,39 +605,18 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// filter chips and refreshes still publish immediately.</summary>
     private static readonly TimeSpan SearchDebounce = TimeSpan.FromMilliseconds(200);
 
-    private CancellationTokenSource? _searchDebounce;
+    private readonly Debouncer _search;
 
     /// <summary>True while a search keystroke is waiting out <see cref="SearchDebounce"/>. Public only so
     /// tests can wait for the publish deterministically (this project has no InternalsVisibleTo); no UI binds it.</summary>
-    public bool IsSearchPublishPending => _searchDebounce is not null;
+    public bool IsSearchPublishPending => _search.IsPending;
 
-    partial void OnSearchTextChanged(string? value) => _ = ApplySearchDebouncedAsync();
-
-    // Resumes on the UI thread (no ConfigureAwait(false)); only the newest keystroke's CTS publishes.
-    private async Task ApplySearchDebouncedAsync()
+    // Resumes on the captured UI context; only the newest keystroke publishes, reading the filters current then.
+    partial void OnSearchTextChanged(string? value) => _ = _search.Schedule(_ =>
     {
-        _searchDebounce?.Cancel();
-        _searchDebounce?.Dispose();
-        var debounce = new CancellationTokenSource();
-        _searchDebounce = debounce;
-        try
-        {
-            await Task.Delay(SearchDebounce, debounce.Token);
-        }
-        catch (TaskCanceledException)
-        {
-            return;
-        }
-
-        if (!ReferenceEquals(_searchDebounce, debounce))
-        {
-            return;
-        }
-
-        _searchDebounce = null;
-        debounce.Dispose();
         UpdateFilteredEntries();
-    }
+        return Task.CompletedTask;
+    });
 
     partial void OnFilterUnloggedOnlyChanged(bool value) => UpdateFilteredEntries();
 
@@ -1418,7 +1401,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
     /// keystroke from the Selected-frame panel, still pending when this dialog's OK lands within its
     /// own 600ms window, would otherwise chain onto <see cref="_noteWrites"/> AFTER this write and
     /// silently clobber it with the older, stale text), then writes directly via
-    /// <see cref="PersistNoteNowAsync"/> (the same underlying chain <see cref="PersistNoteDebouncedAsync"/>
+    /// <see cref="PersistNoteNowAsync"/> (the same underlying chain <see cref="OnSelectedEntryNoteChanged"/>
     /// uses, extracted so both share one persistence path), so the note lands on the entry the user
     /// actually right-clicked regardless of what <see cref="SelectedEntry"/> becomes in the meantime.
     /// <para>Code-review finding: the "still selected" re-check below MUST compare
@@ -1448,10 +1431,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return;
         }
 
-        if (_noteDebounces.TryGetValue(entry.Entry.Id, out var pendingDebounce))
-        {
-            pendingDebounce.Cancel();
-        }
+        _noteDebounces.Cancel(entry.Entry.Id);
         await PersistNoteNowAsync(entry.Entry.Id, note);
 
         if (SelectedEntry?.Entry.Id == entry.Entry.Id)
@@ -1766,13 +1746,13 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
         if (value?.Entry.Id != _loadedEditsEntryId)
         {
             _loadedEditsEntryId = value?.Entry.Id;
-            // A pending note debounce is deliberately NOT cancelled here -- PersistNoteDebouncedAsync
+            // A pending note debounce is deliberately NOT cancelled here -- OnSelectedEntryNoteChanged
             // captures its own target entryId at schedule time (not "whatever's currently selected"),
             // so a pending save for the entry just switched AWAY from is still correct to let
             // complete; cancelling on every selection change would silently drop an edit made just
             // before switching. The one acknowledged narrow gap: switching back to that same entry
             // before its ~600ms debounce has fired shows the pre-edit value here (Entries' own copy
-            // isn't updated until PersistNoteDebouncedAsync's/PersistFlaggedAsync's success path
+            // isn't updated until PersistNoteNowAsync's/PersistFlaggedAsync's success path
             // runs) -- the pending save still lands correctly regardless, only the interim display
             // is stale.
             // Tier B audit finding: try/finally -- see the reconcile branch's own comment above
@@ -1914,39 +1894,15 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
             return;
         }
 
-        if (_noteDebounces.TryGetValue(entry.Entry.Id, out var previous)) previous.Cancel();
-        var cts = new CancellationTokenSource();
-        _noteDebounces[entry.Entry.Id] = cts;
-        _ = PersistNoteDebouncedAsync(entry.Entry.Id, value, cts);
+        // The write is not cancellable once admitted; ordering is _noteWrites' job, not the debounce's.
+        var entryId = entry.Entry.Id;
+        _ = _noteDebounces.Schedule(entryId, _ => PersistNoteNowAsync(entryId, value));
     }
 
-    private async Task PersistNoteDebouncedAsync(string entryId, string? note, CancellationTokenSource debounce)
-    {
-        try
-        {
-            await Task.Delay(NotePersistDebounce, debounce.Token);
-            if (debounce.IsCancellationRequested || !ReferenceEquals(_noteDebounces.GetValueOrDefault(entryId), debounce))
-                return;
-        }
-        catch (TaskCanceledException)
-        {
-            return;
-        }
-        finally
-        {
-            if (_noteDebounces.TryGetValue(entryId, out var current) && ReferenceEquals(current, debounce))
-                _noteDebounces.Remove(entryId);
-            debounce.Dispose();
-        }
-
-        await PersistNoteNowAsync(entryId, note);
-    }
-
-    /// <summary>Extracted 2026-09-19 (Gallery "Add note..." context-menu request) from
-    /// <see cref="PersistNoteDebouncedAsync"/>'s own tail, so <see cref="AddNoteToSelectedEntryAsync"/>
-    /// can commit a note IMMEDIATELY (a one-shot dialog OK, not continuous typing) through the exact
-    /// same <see cref="_noteWrites"/> per-entry ordering chain, without waiting out
-    /// <see cref="NotePersistDebounce"/> first.</summary>
+    /// <summary>Commits a note through the per-entry <see cref="_noteWrites"/> ordering chain. Shared by the
+    /// debounced keystroke path (<see cref="OnSelectedEntryNoteChanged"/>) and
+    /// <see cref="AddNoteToSelectedEntryAsync"/>, which commits a one-shot dialog OK immediately, without
+    /// waiting out <see cref="NotePersistDebounce"/>.</summary>
     private async Task PersistNoteNowAsync(string entryId, string? note)
     {
         var previous = _noteWrites.GetValueOrDefault(entryId, Task.CompletedTask);
@@ -2084,7 +2040,7 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
                 return;
             }
 
-            // Same reasoning as PersistNoteDebouncedAsync's own identical write-back.
+            // Same reasoning as PersistNoteAfterAsync's own identical write-back.
             Dispatcher.UIThread.Post(() => UpdateEntryInPlace(entryId, e => e with { IsFlagged = isFlagged }));
         }
         catch (Exception ex)

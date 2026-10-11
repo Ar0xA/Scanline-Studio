@@ -1039,6 +1039,8 @@ internal static partial class Program
         services.AddSingleton<ILogFileRelocator, NoneLogFileRelocator>();
         services.AddTransient<IAppLocationsService, AppLocationsService>();
         services.AddSingleton<IApplicationRestarter, ApplicationRestarter>();
+        // View-models take an optional TimeProvider so tests can drive their debounce delays on a fake clock.
+        services.AddSingleton(TimeProvider.System);
 
         // Fixed-shell pane view-models (spec/09-ui.md) -- singletons, one per app session, resolved
         // automatically by DI straight into MainViewModel's constructor (replaces the former

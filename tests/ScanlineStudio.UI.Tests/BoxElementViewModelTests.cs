@@ -39,7 +39,8 @@ public sealed class BoxElementViewModelTests
         }
     }
 
-    [Fact]
+    // Drives a perspective rebuild that posts to Dispatcher.UIThread, so it must run inside the headless session.
+    [AvaloniaFact]
     public void Width_WhenPerspectiveEnabled_ScalesCornerXOffsetsAboutTheBboxCenter()
     {
         var element = MakeElement();
