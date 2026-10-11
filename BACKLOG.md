@@ -437,6 +437,7 @@ Test integrity:
 Structure (do as partial-file splits first, then extract):
 - **CQ-GOD.** 01-F1 decoder (2,645 code lines), 04-F2 TX editor VM, 05-F2 Options VM, 08-F2 session
   service, 10-F1 `TransmitImagePreparer`, 12-F2. Seams are named in each report.
+  - step 1 (partial-file split, plan cq-q2) done for TransmitImagePreparer (62845f7e)
 - **CQ-04-F7 / F8.** Interaction policy in code-behind; non-re-entrant batch flag. (F3/F6 done, see below.)
 - **CQ-06-F1.** `MainWindow` code-behind acts as the dialog service.
 - **CQ-08-F4.** `ISstvSessionService` has ~86 members.
