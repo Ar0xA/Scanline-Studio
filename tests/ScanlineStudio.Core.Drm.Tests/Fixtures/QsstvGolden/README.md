@@ -157,6 +157,7 @@ reuse the stale buffer tail there; that only affects audio after the signal has 
 | `rx_stripes_12k` | double port: \|Δ\| ≤ 1e-9; float port: \|Δ\| ≤ 0.1 int16 units |
 | `rx_sync` | discrete fields exact; `freqOffset` \|Δ\| ≤ 0.01 Hz; `WMERFAC` \|Δ\| ≤ 0.1 dB |
 | `rx_frames`, `rx_msc_bits`, saved files | exact |
+| `rx_cells` (P5c) | integer state exact; Wiener weights bit-exact; tracking and cells per `RxChannelEstimationGoldenTests` (FFTW vs our float FFT, about 10× the measured worst). Two cases diverge at one bit-equal peak-search tie; with the tracker forced to the other bin at that symbol they match to the end |
 
 **Why 0.1 for `rx_stripes_12k` in a float port:**
 - **Worst case:** the decimator is a 180-tap FIR over int16 input, and the normalized taps have
@@ -215,6 +216,7 @@ make            # needs deps/ (see Makefile); builds qsstv-drm-harness
 python3 -I make_fixtures.py   # rewrites this directory, including this README and cases.json
 python3 -I make_rx_hilbert.py  # then rx_hilbert/ (P5a); make_fixtures.py deletes it
 python3 -I make_rx_acq.py      # then rx_acq/ (P5b): RX acquisition state, see rx_acq/README.md
+python3 -I make_rx_cells.py    # then rx_cells/ (P5c): RX channel estimation per frame, see rx_cells/README.md
 ```
 
 ## Cases

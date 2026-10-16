@@ -109,4 +109,46 @@ internal sealed class DrmDemodState
     public float DeltaTimeOffsetIInit;
 
     public int DeltaTimeOffsetInteger;
+
+    /// <summary>Global <c>transmission_frame_buffer[82980]</c> (drm.cpp:115): interleaved complex equalized cells,
+    /// a ring of 6 frames of <c>Tu · symbols_per_frame</c> cells; the frame stage writes one frame at
+    /// <see cref="TransmissionFrameBufferWptr"/>, channel decoding (P6) owns the pointer.</summary>
+    public readonly float[] TransmissionFrameBuffer = new float[82980];
+
+    /// <summary>Global <c>channel_transfer_function_buffer[82980]</c> (drm.cpp:116): the channel estimate H per cell, same layout.</summary>
+    public readonly float[] ChannelTransferFunctionBuffer = new float[82980];
+
+    /// <summary>Global <c>transmission_frame_buffer_wptr</c> (drm.cpp:117), in complex cells. Written by channel decoding (P6).</summary>
+    public int TransmissionFrameBufferWptr;
+
+    /// <summary>Global <c>transmission_frame_buffer_data_valid</c> (drm.cpp:58): 1 when the frame's FAC SNR passed (demodulator.cpp:1109).</summary>
+    public int TransmissionFrameBufferDataValid;
+
+    /// <summary>Global <c>fac_valid</c> (drm.cpp:59); channel decoding (P6) overwrites it.</summary>
+    public int FacValid;
+
+    /// <summary>Global <c>FACAvailable</c> (demodulator.cpp:22).</summary>
+    public bool FacAvailable;
+
+    /// <summary>Global <c>FAC_cells_k[65]</c> (drm.cpp:114): the FAC cell positions from mkfacmap, in complex
+    /// cells relative to the frame start.</summary>
+    public readonly int[] FacCellsK = new int[65];
+
+    /// <summary>Global <c>lFAC</c> (drm.cpp:118): number of FAC cells.</summary>
+    public int LFac;
+
+    /// <summary>Global <c>FAC_cells_sequence[200]</c> (demodulator.cpp:21): the last frame's equalized FAC cells, interleaved complex.</summary>
+    public readonly float[] FacCellsSequence = new float[200];
+
+    /// <summary>Global <c>mean_energy_of_used_cells</c> (drm.cpp:113).</summary>
+    public float MeanEnergyOfUsedCells;
+
+    /// <summary>Global <c>WMERFAC</c> (drm.cpp:138): the weighted FAC MER in dB of the last frame.</summary>
+    public float WMerFac;
+
+    /// <summary>Global display <c>freqOffset</c> in Hz (demodulator.cpp:24,1032).</summary>
+    public float FreqOffset;
+
+    /// <summary>Global display <c>deltaFS</c> (demodulator.cpp:23,1033).</summary>
+    public float DeltaFs;
 }

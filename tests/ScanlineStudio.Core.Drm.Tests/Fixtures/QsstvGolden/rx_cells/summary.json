@@ -1,0 +1,397 @@
+{
+ "A0_q16_high_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "A0_q16_high_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "A0_q16_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A0_q16_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A0_q4_high_long": {
+  "frames": 51,
+  "full": true,
+  "w": true
+ },
+ "A0_q4_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A0_q4_low_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A0_q4_low_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A0_q64_high_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A0_q64_high_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A0_q64_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A0_q64_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q16_high_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q16_high_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q16_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q16_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q4_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": true
+ },
+ "A1_q4_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A1_q4_low_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A1_q4_low_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "A1_q64_high_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q64_high_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q64_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "A1_q64_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B0_q16_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B0_q16_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B0_q16_low_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B0_q16_low_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B0_q4_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": true
+ },
+ "B0_q4_high_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B0_q4_low_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B0_q4_low_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B0_q64_high_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B0_q64_high_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B0_q64_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B0_q64_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B1_q16_high_long": {
+  "frames": 52,
+  "full": true,
+  "w": true
+ },
+ "B1_q16_high_long_jp2": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B1_q16_high_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B1_q16_low_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B1_q16_low_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_bsr": {
+  "frames": 58,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_rs1": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_rs1_jp2": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_rs2": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_rs3": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_long_rs4": {
+  "frames": 55,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_low_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B1_q4_low_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "B1_q64_high_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B1_q64_high_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B1_q64_low_long": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "B1_q64_low_short": {
+  "frames": 54,
+  "full": false,
+  "w": false
+ },
+ "E0_q16_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E0_q16_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E0_q16_low_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E0_q16_low_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E0_q4_high_long": {
+  "frames": 59,
+  "full": false,
+  "w": true
+ },
+ "E0_q4_high_short": {
+  "frames": 59,
+  "full": false,
+  "w": false
+ },
+ "E0_q4_low_long": {
+  "frames": 59,
+  "full": false,
+  "w": false
+ },
+ "E0_q4_low_short": {
+  "frames": 59,
+  "full": false,
+  "w": false
+ },
+ "E0_q64_high_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E0_q64_high_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E0_q64_low_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E0_q64_low_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E1_q16_high_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E1_q16_high_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E1_q16_low_long": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E1_q16_low_short": {
+  "frames": 51,
+  "full": false,
+  "w": false
+ },
+ "E1_q4_high_long": {
+  "frames": 53,
+  "full": true,
+  "w": true
+ },
+ "E1_q4_high_short": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "E1_q4_low_long": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "E1_q4_low_short": {
+  "frames": 53,
+  "full": false,
+  "w": false
+ },
+ "E1_q64_high_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E1_q64_high_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E1_q64_low_long": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ },
+ "E1_q64_low_short": {
+  "frames": 52,
+  "full": false,
+  "w": false
+ }
+}

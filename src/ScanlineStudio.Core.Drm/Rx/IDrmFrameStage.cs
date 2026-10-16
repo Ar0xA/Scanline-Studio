@@ -6,12 +6,14 @@ namespace ScanlineStudio.Core.Drm.Rx;
 /// <remarks>All calls come from <see cref="DrmDemodulator"/> on the receive worker, in QSSTV's order.</remarks>
 internal interface IDrmFrameStage
 {
-    /// <summary>The frame-stage share of <c>demodulator::init</c> (demodulator.cpp:43,50-52,63-65,68,71-84):
-    /// FACAvailable, fac_not_valid_counter, mode_and_occupancy_code_last, the SNR counters, the sample-rate
-    /// converter fields, the cell-count and noise tables.</summary>
+    /// <summary>The frame-stage share of <c>demodulator::init</c> (demodulator.cpp:50-52,63-65,71-84):
+    /// fac_not_valid_counter, mode_and_occupancy_code_last, the SNR counters, the sample-rate converter fields,
+    /// the cell-count and noise tables. FACAvailable and transmission_frame_buffer_data_valid (:43,68) live on
+    /// <see cref="DrmDemodState"/> and are reset by <see cref="DrmDemodulator"/>.</summary>
     void Reset();
 
-    /// <summary>Start of every <c>demodulate</c> call (demodulator.cpp:91): <c>transmission_frame_buffer_data_valid = 0</c>.</summary>
+    /// <summary>Start of every <c>demodulate</c> call (demodulator.cpp:91), after <see cref="DrmDemodulator"/> has
+    /// cleared <c>transmission_frame_buffer_data_valid</c>.</summary>
     void BeginDemodulate();
 
     /// <summary>The end of <c>frameSync</c> (demodulator.cpp:502-516): pilot history and Wiener-filter

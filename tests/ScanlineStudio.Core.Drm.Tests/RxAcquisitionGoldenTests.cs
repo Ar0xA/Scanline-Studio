@@ -8,33 +8,31 @@ using Xunit.Abstractions;
 
 namespace ScanlineStudio.Core.Drm.Tests;
 
-/// <summary>P5b: mode detection and time/frequency/frame acquisition against QSSTV, per stripe, all 79 cases.</summary>
+/// <summary>P5b: mode detection and time/frequency/frame acquisition against QSSTV, per stripe, all 79 cases,
+/// run with the real frame stage (<see cref="DrmChannelEstimator"/>, P5c) through <see cref="RxGoldenRun"/>.</summary>
 /// <remarks>
 /// <para><b>Input.</b> The six cases with a stored full <c>out48k</c> use QSSTV's own TX stream. The other 73
 /// use our P3 TX output, and the test requires its SHA-256 to equal QSSTV's <c>out48k</c> sha256, so every
 /// case runs on QSSTV's exact input. Both run through our P5a front end (48 kHz path, 4096 blocks, 8 zero tail
 /// blocks) as in the harness.</para>
-/// <para><b>Compared exactly</b> (rx_sync): time_sync, freq_sync, frame_sync, robustness_mode,
-/// spectrum_occupancy_estimation. (rx_acq): iterationCounter, counter, time_offset_integer, freq_offset_integer;
-/// and, while QSSTV's channel estimator has not yet consumed samples (golden symbol_counter == 0): rsbufwidx,
-/// symbufwidx, input_samples_buffer_request, and Zi once frequencySync has run; at frame-sync stripes up to
-/// QSSTV's first equalized frame, symbol_counter (which also catches frame sync and the first frame landing in
-/// the same call). Later symbol_counter values depend on P5c's tracking and are not compared.</para>
-/// <para><b>Float fields</b> (time_offset, samplerate_offset_estimation, frequency_offset_fractional_init,
-/// freq_offset_init, time_offset_fractional_init, delta_time_offset_I_init, and Zi)
-/// are compared bit-exact: none of them passes through the FFT. The FFT only reaches the decisions
-/// (integer frequency offset, occupancy, frame start), which are compared exactly. Tolerance 0 assumes glibc
-/// libm on both sides (QSSTV's g++ build binds float atan2/tanh/cos to atan2f/tanhf/cosf; .NET's MathF calls
-/// the C runtime). Windows UCRT or macOS libm may differ by 1 ulp in these fields; the product is unaffected,
-/// only this bit-exact comparison would need a tolerance there.</para>
-/// <para><b>Not compared here</b> (belong to P5c/P6): rx_sync spectrum_occupancy (set by channelEstimation
-/// and channel_decoding), freqOffset and WMERFAC (channelEstimation's tracking and SNR), fac_valid (FAC decode).</para>
-/// <para><b>Range.</b> Stripes up to the last frame QSSTV decoded; the zero tail after it is not compared
-/// (fixtures README). B0_q4_high_long is knife-edge (probes/pre-p5.md) and is compared up to stripe 104.</para>
-/// <para><b>Seam.</b> The frame stage is <see cref="GoldenResyncFrameStage"/>: it consumes samples like
-/// channelEstimation's bookkeeping and requests re-acquisition exactly where QSSTV's did. QSSTV's resync is
-/// its SNR rule (WMERFAC &lt; 3 dB, demodulator.cpp:1090-1105), not FAC validity, so the stub takes the
-/// resync stripes from the golden time_sync drops and checks that WMERFAC there is below 3 dB.</para>
+/// <para><b>Compared exactly on every stripe</b> (rx_sync): time_sync, freq_sync, frame_sync,
+/// robustness_mode, spectrum_occupancy_estimation, spectrum_occupancy. (rx_acq): iterationCounter, counter,
+/// rsbufwidx, symbufwidx, symbol_counter, input_samples_buffer_request, time_offset_integer,
+/// freq_offset_integer.</para>
+/// <para><b>Float fields.</b> time_offset, samplerate_offset_estimation, frequency_offset_fractional_init,
+/// freq_offset_init, time_offset_fractional_init, delta_time_offset_I_init, and Zi from frequencySync until the
+/// first equalized frame, are bit-exact: none of them passes through the FFT. The FFT only reaches the
+/// acquisition decisions, which are exact. Tolerance 0 assumes glibc libm on both sides (QSSTV's g++ build binds
+/// float atan2/tanh/cos to atan2f/tanhf/cosf; .NET's MathF calls the C runtime); Windows UCRT or macOS libm may
+/// differ by 1 ulp there. Once frames are equalized, Zi is the tracker's state and carries the FFTW-vs-ours
+/// rounding: it is compared with <see cref="ZiTrackingTolerance"/>; freqOffset (|Δ| ≤ 0.01 Hz) and WMERFAC
+/// (|Δ| ≤ 0.1 dB) use the fixture README's bounds.</para>
+/// <para><b>Range.</b> Every stripe, including the zero tail, up to <see cref="RxGoldenRun.Result.LastStripe"/>:
+/// B0_q4_high_long is knife-edge (probes/pre-p5.md) and is compared up to stripe 104 (its full run is checked
+/// per stripe by <see cref="SnrResync_FullB0Run_MatchesQsstvPerStripe"/>). Two cases run with the tracker forced
+/// at one bit-equal peak-search tie (see <see cref="RxChannelEstimationGoldenTests"/>) and are compared to the end.</para>
+/// <para><b>Seam.</b> The re-acquisition test keeps the P5b stub stage (<see cref="GoldenResyncFrameStage"/>):
+/// it injects QSSTV's only in-signal resync, which lies after B0_q4_high_long's knife edge.</para>
 /// </remarks>
 public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
 {
@@ -42,12 +40,15 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
     /// codelets vs our mixed-radix FFT differ in float rounding only; measured worst 1.24e-7 (B1_q16_high_long).</summary>
     private const double HandoffSymbolRelTolerance = 1e-6;
 
+    /// <summary>Zi while tracking, |Δ| per entry; Zi1 (a phase) uses its own bound modulo 2π. Measured in
+    /// <see cref="RxChannelEstimationGoldenTests"/>.</summary>
+    internal const double ZiTrackingTolerance = RxChannelEstimationGoldenTests.ZiTolerance;
+
     private const int Block48k = 4096;
     private const int TailZeroBlocks = 8;
-    private const int KnifeEdgeLastStripe = 104;
+    private const int KnifeEdgeLastStripe = RxGoldenRun.KnifeEdgeLastStripe;
 
-    private static readonly string[] FullStreamCases =
-        ["A0_q4_high_long", "A1_q4_high_long", "B0_q4_high_long", "B1_q16_high_long", "E0_q4_high_long", "E1_q4_high_long"];
+    private static readonly string[] FullStreamCases = RxGoldenRun.FullStreamCases;
 
     public static TheoryData<string> Cases()
     {
@@ -69,12 +70,18 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
     [MemberData(nameof(Cases))]
     public void Acquisition_MatchesQsstvPerStripe(string caseId)
     {
-        CaseRun run = RunCase(caseId);
-        AcqStats s = Compare(caseId, run);
+        RxGoldenRun.Result run = RxGoldenRun.Get(caseId);
+        int last = run.LastStripe;
+        AcqStats s = Compare(caseId, run.Stripes, run.ExactInput, run.TxShaEqual, 0, last, realStage: true);
         output.WriteLine(s.ToString());
+        Assert.Equal(0, run.ZeroRequestCalls);
         Assert.True(s.Failures.Count == 0, $"{caseId}: {string.Join("; ", s.Failures.Take(8))}");
         Assert.True(s.StripesCompared > 50, $"{caseId}: only {s.StripesCompared} stripes compared");
         Assert.True(s.FrameSyncStripes > 0, $"{caseId}: frame sync never reached");
+        if (run.TieCutReason is not null)
+            output.WriteLine($"compared to stripe {last}: {run.TieCutReason}");
+        if (last < run.Stripes.Count - 1)
+            RxChannelEstimationGoldenTests.AssertKeepsDecodingAfter(caseId, run, last, output);
     }
 
     [Theory]
@@ -90,8 +97,7 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
         float[] golden = MemoryMarshal.Cast<byte, float>(GoldenFixtures.ReadStored(dir, "handoff.f32.gz")).ToArray();
         Assert.Equal(2 * (nSym + nRs), golden.Length);
 
-        var stage = new GoldenResyncFrameStage(new HashSet<int>());
-        var demod = new DrmDemodulator(stage);
+        var demod = new DrmDemodulator();
         double[] stripes = FrontEnd(LoadInput(caseId, out _));
         for (int b = 0; b <= stripe; b++)
             demod.RunStripe(stripes.AsSpan(b * 1024, 1024));
@@ -116,47 +122,60 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
         Assert.True(rsUlp == 0, $"rs residual {rsUlp} ulp");
     }
 
+    /// <summary>The WMERFAC &lt; 3 dB resync rule in situ (demodulator.cpp:1090-1112): B0_q4_high_long's whole run,
+    /// beyond the planned knife-edge range, matches QSSTV per stripe on identical input, including QSSTV's only
+    /// in-signal resync (stripe 170).</summary>
+    [Fact]
+    public void SnrResync_FullB0Run_MatchesQsstvPerStripe()
+    {
+        const string caseId = "B0_q4_high_long";
+        RxGoldenRun.Result run = RxGoldenRun.Get(caseId);
+        string[][] sync = Csv(caseId, "rx/rx_sync.csv.gz");
+        AcqStats s = Compare(caseId, run.Stripes, run.ExactInput, run.TxShaEqual, 0, run.Stripes.Count - 1, realStage: true);
+        output.WriteLine(s.ToString());
+        Assert.True(s.Failures.Count == 0, string.Join("; ", s.Failures.Take(8)));
+        int[] resyncs = Enumerable.Range(0, sync.Length - 1).Where(b => sync[b][1] == "1" && sync[b][3] == "1" && sync[b + 1][1] == "0").ToArray();
+        output.WriteLine($"QSSTV resyncs after stripes {string.Join(", ", resyncs)}");
+        Assert.Contains(170, resyncs);
+        foreach (int b in resyncs)
+        {
+            RxGoldenRun.FrameRecord f = run.Frames.Single(x => x.Stripe == b);
+            Assert.True(f.DoSynchronize, $"stripe {b}");
+            Assert.True(f.WMerFac < DrmRxTables.SnrMinDb, $"stripe {b}: WMERFAC {f.WMerFac}");
+        }
+    }
+
     /// <summary>The re-acquisition path: QSSTV's only in-signal resync (B0_q4_high_long, SNR drop at stripe 170,
-    /// pre-p5.md) is injected through the seam; from there to the next frame-sync handoff everything is
-    /// acquisition on the input alone and must match exactly, although frame-by-frame comparison of this
-    /// knife-edge case stops at stripe 104.</summary>
+    /// pre-p5.md) is injected through the seam with the P5b stub stage; from there to the next frame-sync handoff
+    /// everything is acquisition on the input alone and must match exactly, although frame-by-frame comparison of
+    /// this knife-edge case stops at stripe 104.</summary>
     [Fact]
     public void Reacquisition_AfterInjectedResync_MatchesQsstv()
     {
         const string caseId = "B0_q4_high_long";
-        CaseRun run = RunCase(caseId);
-        Assert.Equal(1, run.Resyncs);
         string[][] sync = Csv(caseId, "rx/rx_sync.csv.gz");
         string[][] acq = Csv(Path.Combine("rx_acq", caseId), "rx_acq.csv.gz");
+        (List<RxGoldenRun.StripeSnapshot> snaps, int resyncs) = RunWithStub(caseId);
+        Assert.Equal(1, resyncs);
         int resync = Enumerable.Range(0, sync.Length - 1).Single(s => sync[s][1] == "1" && sync[s][3] == "1" && sync[s + 1][1] == "0");
         int handoff = Enumerable.Range(resync + 1, sync.Length - resync - 1).First(s => sync[s][3] == "1");
         int end = handoff;
         while (end + 1 < acq.Length && acq[end + 1][5] == "0")
             end++;
-        AcqStats s = Compare(caseId, run, resync + 1, end);
+        AcqStats s = Compare(caseId, snaps, true, true, resync + 1, end, realStage: false);
         output.WriteLine($"resync at stripe {resync}, frame sync again at {handoff}, compared {resync + 1}..{end}: {s}");
         Assert.Empty(s.Failures);
         Assert.True(s.FrameSyncStripes > 0);
         Assert.True(handoff - resync > 5, "re-acquisition must wait for a full 20-symbol window");
     }
 
-    private sealed record CaseRun(string CaseId, bool ExactInput, bool TxShaEqual, List<Snapshot> Snapshots, int Resyncs);
-
-    private readonly record struct Snapshot(
-        bool TimeSync, bool FreqSync, bool FrameSync, int Mode, int SoEstimate,
-        int IterationCounter, int Counter, int RsBufWidx, int SymBufWidx, int SymbolCounter, int Request,
-        float TimeOffset, int TimeOffsetInteger, float SroEstimate, float FreqFractInit, float FreqOffsetInteger,
-        float FreqOffsetInit, float TimeFractInit, float DtoIInit, float[] Zi);
-
-    private static CaseRun RunCase(string caseId)
+    private static (List<RxGoldenRun.StripeSnapshot> Snaps, int Resyncs) RunWithStub(string caseId)
     {
         string[][] sync = Csv(caseId, "rx/rx_sync.csv.gz");
-        int[] timeSync = sync.Select(r => int.Parse(r[1], CultureInfo.InvariantCulture)).ToArray();
-        int[] frameSync = sync.Select(r => int.Parse(r[3], CultureInfo.InvariantCulture)).ToArray();
         var resync = new HashSet<int>();
-        for (int s = 0; s + 1 < timeSync.Length; s++)
+        for (int s = 0; s + 1 < sync.Length; s++)
         {
-            if (timeSync[s] == 1 && frameSync[s] == 1 && timeSync[s + 1] == 0)
+            if (sync[s][1] == "1" && sync[s][3] == "1" && sync[s + 1][1] == "0")
             {
                 resync.Add(s);
                 float wmer = float.Parse(sync[s][9], CultureInfo.InvariantCulture);
@@ -164,45 +183,36 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
             }
         }
 
-        short[] input = LoadInput(caseId, out bool txShaEqual);
-        bool exact = FullStreamCases.Contains(caseId);
-        double[] stripes = FrontEnd(input);
-        Assert.Equal(sync.Length * 1024, stripes.Length);
-
+        double[] stripes = FrontEnd(LoadInput(caseId, out _));
         var stage = new GoldenResyncFrameStage(resync);
         var demod = new DrmDemodulator(stage);
-        var snaps = new List<Snapshot>(sync.Length);
+        var snaps = new List<RxGoldenRun.StripeSnapshot>(sync.Length);
         for (int b = 0; b < sync.Length; b++)
         {
             stage.CurrentStripe = b;
             demod.RunStripe(stripes.AsSpan(b * 1024, 1024));
             DrmDemodState st = demod.State;
-            snaps.Add(new Snapshot(st.TimeSyncFlag, st.FrequencySyncFlag, st.FrameSyncFlag, st.RobustnessMode, st.SpectrumOccupancyEstimation,
+            snaps.Add(new RxGoldenRun.StripeSnapshot(st.TimeSyncFlag, st.FrequencySyncFlag, st.FrameSyncFlag, st.RobustnessMode,
+                st.SpectrumOccupancyEstimation, st.SpectrumOccupancy, st.FreqOffset, st.WMerFac,
                 st.IterationCounter, st.Counter, st.RsBufWidx, st.SymBufWidx, st.SymbolCounter, st.InputSamplesBufferRequest,
                 st.TimeOffset, st.TimeOffsetInteger, st.SamplerateOffsetEstimation, st.FrequencyOffsetFractionalInit, st.FreqOffsetInteger,
-                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone()));
+                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone(), stage.Frames));
         }
 
         Assert.Equal(0, stage.ZeroRequestCalls);
-        return new CaseRun(caseId, exact, txShaEqual, snaps, resync.Count);
+        return (snaps, resync.Count);
     }
 
-    private static AcqStats Compare(string caseId, CaseRun run, int first = 0, int? lastStripe = null)
+    private static AcqStats Compare(string caseId, List<RxGoldenRun.StripeSnapshot> snaps, bool exactInput, bool txShaEqual, int first, int last,
+        bool realStage)
     {
         string[][] sync = Csv(caseId, "rx/rx_sync.csv.gz");
         string[][] acq = Csv(Path.Combine("rx_acq", caseId), "rx_acq.csv.gz");
-        string[][] frames = Csv(caseId, "rx/rx_frames.csv.gz");
-        int last = frames.Length == 0 ? sync.Length - 1 : frames.Max(r => int.Parse(r[1], CultureInfo.InvariantCulture));
-        if (caseId == "B0_q4_high_long")
-            last = Math.Min(last, KnifeEdgeLastStripe);
-        if (lastStripe is int ls)
-            last = ls;
-
-        var s = new AcqStats(caseId, run.ExactInput, run.TxShaEqual) { Resyncs = run.Resyncs };
+        var s = new AcqStats(caseId, exactInput, txShaEqual);
         const float tol = 0f;
         for (int b = first; b <= last; b++)
         {
-            Snapshot o = run.Snapshots[b];
+            RxGoldenRun.StripeSnapshot o = snaps[b];
             string[] g = sync[b];
             string[] a = acq[b];
             Exact(s, b, "time_sync", I(g[1]), o.TimeSync ? 1 : 0);
@@ -220,29 +230,41 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
             Float(s, b, "freq_offset_init", F(a[12]), o.FreqOffsetInit, tol);
             Float(s, b, "time_offset_fractional_init", F(a[13]), o.TimeFractInit, tol);
             Float(s, b, "delta_time_offset_I_init", F(a[14]), o.DtoIInit, tol);
-            if (I(a[5]) == 0)
+            bool acquiring = I(a[5]) == 0;
+            if (realStage || acquiring)
             {
                 Exact(s, b, "rsbufwidx", I(a[3]), o.RsBufWidx);
                 Exact(s, b, "symbufwidx", I(a[4]), o.SymBufWidx);
-                Exact(s, b, "symbol_counter", 0, o.SymbolCounter);
-                Exact(s, b, "input_samples_buffer_request", I(a[6]), o.Request);
-                // Zi is not reset by init(); before this acquisition's frequencySync it holds P5c's tracking state.
-                if (I(g[2]) == 1)
-                {
-                    for (int z = 0; z < 6; z++)
-                        Float(s, b, $"Zi{z}", F(a[15 + z]), o.Zi[z], tol);
-                }
-            }
-
-            // symbol_counter += 1 per equalized symbol (demodulator.cpp:910); the stub adds symbols_per_frame per frame.
-            // Checked through the first frame only: later frame timing follows getofdmsync's ±1 steps (P5c), which the stub omits.
-            if (I(g[3]) == 1 && I(a[5]) <= DrmRxTables.SymbolsPerFrame[o.Mode])
-            {
                 Exact(s, b, "symbol_counter", I(a[5]), o.SymbolCounter);
-                if (I(a[5]) != 0 && (b == 0 || I(sync[b - 1][3]) == 0))
-                    s.OnsetsWithFrameInSameCall++;
+                Exact(s, b, "input_samples_buffer_request", I(a[6]), o.Request);
             }
 
+            // Zi is not reset by init(); before this acquisition's frequencySync it holds the tracker's state.
+            if (acquiring && I(g[2]) == 1)
+            {
+                for (int z = 0; z < 6; z++)
+                    Float(s, b, $"Zi{z}", F(a[15 + z]), o.Zi[z], tol);
+            }
+            else if (realStage)
+            {
+                for (int z = 0; z < 6; z++)
+                    s.Tracking(b, $"Zi{z}", F(a[15 + z]), o.Zi[z], z == 1 ? RxChannelEstimationGoldenTests.ZiPhaseTolerance : ZiTrackingTolerance, z == 1);
+            }
+
+            if (realStage)
+            {
+                Exact(s, b, "spectrum_occupancy", I(g[6]), o.SpectrumOccupancy);
+                s.Tracking(b, "freqOffset", F(g[7]), o.FreqOffset, RxChannelEstimationGoldenTests.FreqOffsetToleranceHz, false);
+                s.Tracking(b, "WMERFAC", F(g[9]), o.WMerFac, RxChannelEstimationGoldenTests.WMerFacToleranceDb, false);
+            }
+            else if (I(g[3]) == 1 && I(a[5]) <= DrmRxTables.SymbolsPerFrame[o.Mode])
+            {
+                // The stub adds symbols_per_frame per frame without the tracker's ±1 steps: checked through the first frame only.
+                Exact(s, b, "symbol_counter", I(a[5]), o.SymbolCounter);
+            }
+
+            if (I(a[5]) != 0 && I(g[3]) == 1 && (b == 0 || I(sync[b - 1][3]) == 0))
+                s.OnsetsWithFrameInSameCall++;
             s.StripesCompared++;
             if (o.FrameSync)
                 s.FrameSyncStripes++;
@@ -279,11 +301,7 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
 
     private static float F(string v) => float.Parse(v, CultureInfo.InvariantCulture);
 
-    private static string[][] Csv(string dir, string file)
-    {
-        string text = System.Text.Encoding.ASCII.GetString(GoldenFixtures.ReadStored(dir, file));
-        return text.Split('\n', StringSplitOptions.RemoveEmptyEntries).Skip(1).Select(l => l.Split(',')).ToArray();
-    }
+    private static string[][] Csv(string dir, string file) => RxGoldenRun.Csv(dir, file);
 
     /// <summary>The case's 48 kHz int16 TX stream: QSSTV's when stored in full, else our P3 TX output proven sha-equal to it.</summary>
     internal static short[] LoadInput(string caseId, out bool shaEqualToQsstv)
@@ -334,7 +352,7 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
         return max;
     }
 
-    private sealed class AcqStats(string caseId, bool exactInput, bool txShaEqual)
+    internal sealed class AcqStats(string caseId, bool exactInput, bool txShaEqual)
     {
         public string CaseId { get; } = caseId;
         public bool ExactInput { get; } = exactInput;
@@ -343,12 +361,33 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
         public int StripesCompared { get; set; }
         public int FrameSyncStripes { get; set; }
         public int OnsetsWithFrameInSameCall { get; set; }
-        public int Resyncs { get; set; }
         public double MaxFloatDelta { get; set; }
         public string MaxFloatDeltaField { get; set; } = "-";
+        public Dictionary<string, double> MaxTrackingDelta { get; } = [];
+
+        /// <summary>A tracking-stage float: |Δ| within <paramref name="tol"/> (modulo 2π for a phase); NaN/Inf only match their class.</summary>
+        public void Tracking(int stripe, string field, float golden, float ours, double tol, bool phase)
+        {
+            if (golden.Equals(ours))
+            {
+                MaxTrackingDelta.TryAdd(field, 0);
+                return;
+            }
+
+            double d = Math.Abs((double)golden - ours);
+            if (phase)
+                d = Math.Min(d, Math.Abs(d - 2 * Math.PI));
+            if (!(d <= tol))
+            {
+                Failures.Add($"stripe {stripe} {field}: QSSTV {golden:R}, ours {ours:R}");
+                return;
+            }
+
+            MaxTrackingDelta[field] = Math.Max(MaxTrackingDelta.GetValueOrDefault(field), d);
+        }
 
         public override string ToString() =>
-            $"{CaseId}: input {(ExactInput ? "QSSTV" : TxShaEqual ? "ourTX(sha=)" : "ourTX")}, stripes {StripesCompared}, frame-sync stripes {FrameSyncStripes} (onsets with a frame in the same call {OnsetsWithFrameInSameCall}), resyncs {Resyncs}, max float Δ {MaxFloatDelta:E3} ({MaxFloatDeltaField}), failures {Failures.Count}"
+            $"{CaseId}: input {(ExactInput ? "QSSTV" : TxShaEqual ? "ourTX(sha=)" : "ourTX")}, stripes {StripesCompared}, frame-sync stripes {FrameSyncStripes} (onsets with a frame in the same call {OnsetsWithFrameInSameCall}), max acquisition float Δ {MaxFloatDelta:E3} ({MaxFloatDeltaField}), tracking max |Δ| {string.Join(" ", MaxTrackingDelta.Select(kv => $"{kv.Key}={kv.Value:E2}"))}, failures {Failures.Count}"
             + (Failures.Count > 0 ? " first: " + Failures[0] : string.Empty);
     }
 }

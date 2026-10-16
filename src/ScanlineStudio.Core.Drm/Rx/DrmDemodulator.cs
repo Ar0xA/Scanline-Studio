@@ -35,6 +35,12 @@ internal sealed class DrmDemodulator
     private readonly float[] _resampSignal = new float[2 * StripeSize];
     private readonly float[] _symbolTemp = new float[2 * DrmRxTables.TuMax];
 
+    /// <summary>The receiver with QSSTV's channel estimator as the frame stage.</summary>
+    public DrmDemodulator()
+        : this(new DrmChannelEstimator())
+    {
+    }
+
     public DrmDemodulator(IDrmFrameStage frameStage)
     {
         ArgumentNullException.ThrowIfNull(frameStage);
@@ -67,6 +73,7 @@ internal sealed class DrmDemodulator
     public bool Demodulate(ReadOnlySpan<float> sigin, int numSamples)
     {
         DrmDemodState st = State;
+        st.TransmissionFrameBufferDataValid = 0;
         _frameStage.BeginDemodulate();
         if (st.DoSynchronize)
         {
@@ -90,12 +97,12 @@ internal sealed class DrmDemodulator
         if (!FrameSync())
             return false;
 
-        // true: QSSTV runs channel_decoding() and srcDecoder->decode() here (demodulator.cpp:158-162), P6.
+        // When this is true QSSTV runs channel_decoding() and srcDecoder->decode() (demodulator.cpp:158-162), P6.
         _frameStage.ProcessFrame(st);
         return true;
     }
 
-    // demodulator::init (demodulator.cpp:40-85); the frame-stage fields go to IDrmFrameStage.Reset.
+    // demodulator::init (demodulator.cpp:40-85); the estimator's own fields go to IDrmFrameStage.Reset.
     private void Init()
     {
         DrmDemodState st = State;
@@ -112,6 +119,8 @@ internal sealed class DrmDemodulator
         st.SamplerateOffsetEstimation = 0;
         st.SamplerateOffset = 0;
         st.Counter = 0;
+        st.FacAvailable = false;
+        st.TransmissionFrameBufferDataValid = 0;
         _frameStage.Reset();
     }
 
