@@ -27,7 +27,7 @@ internal sealed record DrmTxFileName(string FileName)
 /// <summary>QSSTV's TX naming (drmtx.cpp:45-78,109-125,339-344). Per-transmitter state: the UTC
 /// time stamp is taken once and reused until <see cref="ForgetTxFileName"/>, which QSSTV calls when
 /// a template is applied. Hybrid ("de_") naming is not ported.</summary>
-internal sealed class DrmTxNaming
+public sealed class DrmTxNaming
 {
     private readonly TimeProvider _timeProvider;
     private string _stamp = string.Empty;
@@ -43,7 +43,7 @@ internal sealed class DrmTxNaming
 
     /// <summary>drmTx::getTxFileName plus initDRMImage's ".jp2" rename (drmtx.cpp:50-78,114).
     /// <paramref name="binary"/> = false is the image path: the name becomes <c>completeBaseName + ".jp2"</c>.</summary>
-    public DrmTxFileName GetTxFileName(string fileName, bool binary)
+    internal DrmTxFileName GetTxFileName(string fileName, bool binary)
     {
         if (_stamp.Length == 0)
             _stamp = _timeProvider.GetUtcNow().ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);

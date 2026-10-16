@@ -1,0 +1,15 @@
+# OpenJPEG 2.5.4, unmodified binaries from the official release
+# https://github.com/uclouvain/openjpeg/releases/tag/v2.5.4
+# LICENSE is https://raw.githubusercontent.com/uclouvain/openjpeg/v2.5.4/LICENSE (BSD-2-Clause).
+#
+# Release assets (also the digests GitHub publishes for them):
+77915284c4823bbb5f75053d2b6ec8af11378c9fc5f3d1742a17e1bed984277d  openjpeg-v2.5.4-linux-x86_64.tar.gz
+214b8b32cf42d32d79698ad766eea75366d1fb214a7ffe5ae3c563a7e7418981  openjpeg-v2.5.4-osx-arm64.zip
+655f6111449da83f5424f76d74873116bc01ce50cc10361d2b0b4667c3e5e8c3  openjpeg-v2.5.4-windows-x64.zip
+#
+# Files taken from them (lib/libopenjp2.so.2.5.4, lib/libopenjp2.2.5.4.dylib, bin/openjp2.dll):
+8aeff1337a466b45f042d4561aeca3e0451272cda5e71b8bc9b1f6bb3008278a  linux-x64/libopenjp2.so.2.5.4
+0886f8911034f34c00ebe3b00ad514c9cfd2f000da9bbcdcb0d37fe2cf40d1c5  osx-arm64/libopenjp2.2.5.4.dylib
+4e5261df72ca0702b2de0bac29d772e86a316a24373e16aaf6aec84c7081aeb9  win-x64/openjp2.dll
+#
+# linux-x64 needs glibc >= 2.34 (objdump -T). win-x64 imports VCRUNTIME140.dll, as scanlineaudio.dll does.

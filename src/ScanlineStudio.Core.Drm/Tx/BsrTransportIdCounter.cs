@@ -4,9 +4,12 @@ namespace ScanlineStudio.Core.Drm.Tx;
 /// that starts at 2 and advances mod 3 on every SetMOTObject of a BSR, including the one at end of
 /// transmission (DABMOT.cpp:56,98-102). Here it is per-transmitter state with the same sequence:
 /// the first BSR goes out as 0 and its end-of-transmission blocks as 1. Not thread-safe.</summary>
-internal sealed class BsrTransportIdCounter
+public sealed class BsrTransportIdCounter
 {
     private int _id = 2;
+
+    /// <summary>An independent counter in the same state, for a dry run that must not advance this one.</summary>
+    internal BsrTransportIdCounter Clone() => new() { _id = _id };
 
     /// <summary>The last ID handed out (2 before the first call).</summary>
     public int Current => _id;

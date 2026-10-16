@@ -1,4 +1,5 @@
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Radio;
 using ScanlineStudio.Abstractions.Sstv;
@@ -239,6 +240,10 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
     public Task DecodeFromFileAsync(string path, CancellationToken ct = default) => throw NotExercised();
 
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default) => throw NotExercised();
+
+    public Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => throw NotExercised();
+
+    public void ForgetDrmTxFileName() => throw NotExercised();
 
     public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default) => throw NotExercised();
 

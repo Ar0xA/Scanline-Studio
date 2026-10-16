@@ -10,6 +10,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
@@ -20,6 +21,7 @@ using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
 using ScanlineStudio.Core.Cw;
+using ScanlineStudio.Core.Drm.Tx;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
 using ScanlineStudio.Core.Logbook;
@@ -31,6 +33,7 @@ using ScanlineStudio.Core.Radio.Rigctld;
 using ScanlineStudio.Core.Sstv;
 using ScanlineStudio.Credentials.SecretService;
 using ScanlineStudio.Credentials.Windows;
+using ScanlineStudio.Imaging.OpenJpeg;
 using ScanlineStudio.Settings;
 using ScanlineStudio.UI;
 using ScanlineStudio.UI.Services;
@@ -1103,6 +1106,12 @@ internal static partial class Program
         // Gallery pane's "Export frame" (2026-08-15) -- re-saves an already-received image file to a
         // user-chosen location, optionally re-encoded as JPEG.
         services.AddSingleton<IReceivedFrameExporter, ReceivedFrameExporter>();
+        // JPEG 2000 for DRM images: optional native OpenJPEG, loaded on first use; missing = DRM TX unavailable.
+        services.AddSingleton<IJpeg2000Codec, OpenJpegJpeg2000Codec>();
+        // QSSTV's TX file-name stamp and BSR transport ID outlive one transmission (drmtx.cpp:45-78, DABMOT.cpp:56).
+        services.AddSingleton(sp => new DrmTxNaming(sp.GetRequiredService<TimeProvider>()));
+        services.AddSingleton<BsrTransportIdCounter>();
+        services.AddSingleton<IDrmTransmitter, DrmTransmitter>();
         // TX template editor persistence (Phase 5, spec/15-template-designer.md) -- IImageSourceWriter
         // is the missing "write an IImageSource out as a PNG" counterpart to IImageFileLoader;
         // TemplateStore (Application layer) depends on it, IImageFileLoader, and

@@ -342,7 +342,14 @@ real QSSTV/EasyPal WAVs for P8.
 - **DRM-P3.** DONE — TX channel side: dispersal, K=7 conv code + puncturing, bit/symbol interleavers, QAM,
   per-symbol FIFO cell mapping, OFDM (IFFT, guard, −5650 Hz rotation), x86 int16 truncation. Sample-exact against
   QSSTV on all compared cases (8.7M samples, 0 off by one). Auditor: 1 code-review round, EQUIVALENT, go.
-- **DRM-P4a / P4b.** OPEN — TX core + OpenJPEG binding / TX UI (own plan review).
+- **DRM-P4a.** DONE — `ISstvSessionService.TransmitDrmAsync` (VOX tone, fresh name stamp per send as QSSTV, PTT/RX
+  safety via PlayWithPttAsync, bounded 3-frame producer), `IJpeg2000Codec` + `ScanlineStudio.Imaging.OpenJpeg`
+  (official OpenJPEG 2.5.4 binaries, SHA-256 pinned, header-first decode limits; JP2 byte-identical to QSSTV's on
+  linux-x64). QSSTV harness RX decodes our TX output to the identical file. Auditor: 2 code-review rounds, go.
+- **DRM-REL.** OPEN — release checklist: (1) per OS, confirm `libopenjp2` sits beside the published exe and the
+  "OpenJPEG 2.5.4 loaded" log appears on first DRM use (release workflows run no tests); (2) state "macOS 14+,
+  glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34).
+- **DRM-P4b.** OPEN — TX UI (own plan review). Includes the DRM drive level: DRM is 12-14 dB below SSTV at the same Pwr.
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
   and the lost-frame attribution (fixture README).
 - **DRM-P7a / P7b.** OPEN — RX source + Application integration / RX UI (own plan review).

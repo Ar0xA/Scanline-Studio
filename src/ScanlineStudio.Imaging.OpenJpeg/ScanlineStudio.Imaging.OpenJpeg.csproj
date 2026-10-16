@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Optional native module (CLAUDE.md §4): the only P/Invoke into OpenJPEG. Wired in Host DI only. -->
+  <PropertyGroup>
+    <!-- Unmanaged function pointers and UnmanagedCallersOnly stream callbacks. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ScanlineStudio.Abstractions\ScanlineStudio.Abstractions.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="8.0.2" />
+  </ItemGroup>
+
+  <!-- Official OpenJPEG 2.5.4 release binaries, vendored with pinned hashes (native/SHA256SUMS). One per
+       build OS, like the MiniAudio shim: each release workflow builds on its own OS (release-windows.yml,
+       release-macos.yml). Statically declared, so they flow to referencing projects' build and publish
+       output. The loader opens exactly this file name next to the app, never a system copy. -->
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Linux'))">
+    <None Include="native\linux-x64\libopenjp2.so.2.5.4" Link="libopenjp2.so.7" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="native\osx-arm64\libopenjp2.2.5.4.dylib" Link="libopenjp2.7.dylib" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <None Include="native\win-x64\openjp2.dll" Link="openjp2.dll" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="native\LICENSE" Link="openjpeg-LICENSE.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

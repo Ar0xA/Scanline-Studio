@@ -4,6 +4,7 @@ using Avalonia.Media.Imaging;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Logbook;
@@ -880,6 +881,12 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     /// which only supports the cancel case. Checked before <see cref="BlockUntilCancelled"/>; that
     /// field is untouched so existing callers keep working unchanged.</summary>
     public TaskCompletionSource? TransmitGate { get; set; }
+
+    public Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => Task.CompletedTask;
+
+    public void ForgetDrmTxFileName()
+    {
+    }
 
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default)
     {

@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
@@ -232,11 +233,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
         IReceivedImageBuffer receivedImage,
         IRadioSessionService radioSession,
         ICwIdDecoder cwIdDecoder,
-        ILogger<SstvSessionService> logger)
+        ILogger<SstvSessionService> logger,
+        IDrmTransmitter? drmTransmitter = null,
+        IJpeg2000Codec? jpeg2000Codec = null)
         : this(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, macroTextResolver,
                waterfall, receivedImage, radioSession, cwIdDecoder, logger,
                cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
-               inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null)
+               inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null,
+               drmTransmitter: drmTransmitter, jpeg2000Codec: jpeg2000Codec)
     {
     }
 
@@ -260,7 +264,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
         TimeSpan? cleanupTimeoutForTests,
         TimeSpan? playbackStopWaitBudgetForTests,
         TimeSpan? inFlightKeyedTransmitWaitForTests,
-        TimeSpan? playbackStallTimeoutForTests)
+        TimeSpan? playbackStallTimeoutForTests,
+        IDrmTransmitter? drmTransmitter = null,
+        IJpeg2000Codec? jpeg2000Codec = null)
     {
         _cleanupTimeout = cleanupTimeoutForTests ?? CleanupTimeout;
         _playbackStopWaitBudget = playbackStopWaitBudgetForTests ?? PlaybackStopWaitBudget;
@@ -279,6 +285,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _radioSession = radioSession;
         _cwIdDecoder = cwIdDecoder;
         _logger = logger;
+        _drmTransmitter = drmTransmitter;
+        _jpeg2000Codec = jpeg2000Codec;
 
         // Isolated fan-out (Phase-3 plan decision #3): a throwing/slow handler on one target must
         // never prevent the other from running -- this is what actually fixes the bug the pre-build

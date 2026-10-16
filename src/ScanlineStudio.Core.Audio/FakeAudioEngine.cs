@@ -134,6 +134,9 @@ public sealed class FakeAudioEngine : IAudioEngine
     /// long-lived open stream and needs an explicit live-apply request to pick up a change).</summary>
     public AudioDeviceInfo? LastRequestedPlaybackDevice { get; private set; }
 
+    /// <summary>The sample rate of the last <see cref="StartPlaybackAsync"/>.</summary>
+    public int? LastRequestedPlaybackSampleRate { get; private set; }
+
     public Task StartPlaybackAsync(
         AudioDeviceInfo device, int sampleRate, int periodSizeInFrames = 0, int periods = 0,
         bool stereoTx = false, CancellationToken ct = default)
@@ -148,6 +151,7 @@ public sealed class FakeAudioEngine : IAudioEngine
         LastRequestedPeriods = periods;
         LastRequestedStereoTx = stereoTx;
         LastRequestedPlaybackDevice = device;
+        LastRequestedPlaybackSampleRate = sampleRate;
         IsPlaying = true;
         return Task.CompletedTask;
     }

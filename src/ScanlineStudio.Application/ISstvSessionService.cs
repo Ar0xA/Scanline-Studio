@@ -1,4 +1,5 @@
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 
@@ -614,6 +615,19 @@ public interface ISstvSessionService : IAsyncDisposable
     /// with this method's own live PTT-keyed playback pump, and the self-test's own result dialog is
     /// MODAL, so it could otherwise pop up mid-transmission and block reaching Stop TX.</summary>
     Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default);
+
+    /// <summary>Transmits <paramref name="image"/> as a DRM (HamDRM/EasyPal-compatible) JPEG 2000 file, the way
+    /// QSSTV does: JP2 at the ratio derived from <see cref="DrmTxSettings.TargetJp2Bytes"/>, the optional
+    /// 1 s VOX tone, then the DRM frames at 48 kHz. Shares <see cref="TransmitAsync"/>'s PTT, RX-pause,
+    /// single-flight and progress behaviour, but applies no SSTV clock offset or TX filters. Throws
+    /// <see cref="InvalidOperationException"/> before touching PTT when the JPEG 2000 codec is unavailable.</summary>
+    /// <param name="fileName">Source name; QSSTV sends <c>stamp-name.jp2</c> (drmtx.cpp:50-78,114) with a new
+    /// UTC stamp on every transmission, so a repeated image gets a new transport ID.</param>
+    Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default);
+
+    /// <summary>Clears the DRM TX file-name stamp, as QSSTV does when a DRM parameter changes
+    /// (txwidget.cpp:201-218). <see cref="TransmitDrmAsync"/> already takes a new stamp on every call.</summary>
+    void ForgetDrmTxFileName();
 
     /// <summary>Stub survey Tier 3, "Loopback self-test" (Calibration menu). One-shot software
     /// preview: encodes <paramref name="image"/> as <paramref name="mode"/> and decodes the result
