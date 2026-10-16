@@ -1,0 +1,65 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.VersionNoticeDialogView"
+        x:DataType="vm:VersionNoticeDialogViewModel"
+        Title="{Binding Title}"
+        Width="480" SizeToContent="Height"
+        MinWidth="360"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Prose, not a settings-row value: IndustryRowValue right-aligns and uses the mono font. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.NoticeBody">
+            <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+            <Setter Property="FontSize" Value="{DynamicResource IndustryRowValueFontSize}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </Window.Styles>
+
+    <!-- Order: what's new, the feedback request (larger), then the beta caveat in an attention box,
+         then the footer. Same Border/Grid content-footer layout as RestartRequiredDialogView. -->
+    <Border Background="{DynamicResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Text="{Binding WhatsNewHeading}" IsVisible="{Binding ShowReleaseSummary}"
+                       FontFamily="{StaticResource IndustryHeadingFontFamily}" FontSize="{DynamicResource IndustryDialogTitleFontSize}" FontWeight="SemiBold"
+                       Foreground="{DynamicResource IndustryText}" />
+
+            <!-- Bullet in its own column so a wrapped line hangs under the text, not under the bullet. -->
+            <ItemsControl Grid.Row="1" HorizontalAlignment="Stretch" ItemsSource="{Binding ReleaseItems}" IsVisible="{Binding ShowReleaseSummary}">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate x:DataType="x:String">
+                        <Grid ColumnDefinitions="Auto,*" Margin="0,1">
+                            <TextBlock Grid.Column="0" Classes="NoticeBody" TextWrapping="NoWrap" Text="{loc:Translate VersionNotice.ListBullet}" Margin="4,0,8,0" />
+                            <TextBlock Grid.Column="1" Classes="NoticeBody" Text="{Binding}" />
+                        </Grid>
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+
+            <TextBlock Grid.Row="2" Classes="NoticeBody" Text="{Binding FeedbackText}"
+                       FontSize="{DynamicResource IndustryNoticeLeadFontSize}" FontWeight="SemiBold"
+                       />
+
+            <Border Grid.Row="3" IsVisible="{Binding ShowBeta}"
+                    Background="{DynamicResource IndustryAttentionTint}"
+                    BorderBrush="{DynamicResource IndustryAttentionTintBorder}" BorderThickness="1"
+                    CornerRadius="3" Padding="{StaticResource IndustryPaddingGroup}">
+                <TextBlock Classes="NoticeBody" Text="{Binding BetaText}"
+                           Foreground="{DynamicResource IndustryAttentionTintText}" />
+            </Border>
+
+            <Grid Grid.Row="4" ColumnDefinitions="*,Auto">
+                <CheckBox Grid.Column="0" VerticalAlignment="Center" Content="{Binding DontShowAgainLabel}" IsChecked="{Binding DontShowAgain}" />
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate VersionNotice.OkButton}" Command="{Binding CloseCommand}"
+                        IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

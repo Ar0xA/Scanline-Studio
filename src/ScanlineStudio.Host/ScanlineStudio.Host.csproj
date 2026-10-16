@@ -96,6 +96,14 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Help > Report a bug / Send feedback: page templates plus the shared form.css/form.js that
+       FeedbackFormLauncher inlines into a filled per-user copy before opening it in the browser. -->
+  <ItemGroup>
+    <None Include="..\..\assets\feedback\**\*.html;..\..\assets\feedback\**\*.css;..\..\assets\feedback\**\*.js"
+          Link="feedback\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- spec/18-path-to-1.0.md High item 5: previously not shipped with the app at all. A binary
        distribution had no delivery path for the LGPL notice these files satisfy (the roadmap's own
        stated gap: "the LGPL notice has no delivery path in a binary distribution without an About

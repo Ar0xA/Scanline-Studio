@@ -8,17 +8,21 @@ namespace ScanlineStudio.UI.Services;
 /// missing translated file falls back to English rather than failing to open the guide.</summary>
 public static class HelpGuidePathResolver
 {
-    public static string Resolve(string helpRootDirectory, string languageCode)
+    public static string Resolve(string helpRootDirectory, string languageCode) =>
+        Resolve(helpRootDirectory, languageCode, "index.html");
+
+    /// <summary>Same English-fallback rule for any bundled per-language page, e.g. the feedback forms.</summary>
+    public static string Resolve(string rootDirectory, string languageCode, string fileName)
     {
         if (languageCode != "en")
         {
-            var candidate = Path.Combine(helpRootDirectory, languageCode, "index.html");
+            var candidate = Path.Combine(rootDirectory, languageCode, fileName);
             if (File.Exists(candidate))
             {
                 return candidate;
             }
         }
 
-        return Path.Combine(helpRootDirectory, "index.html");
+        return Path.Combine(rootDirectory, fileName);
     }
 }

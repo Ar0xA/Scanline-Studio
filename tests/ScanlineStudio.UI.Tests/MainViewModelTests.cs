@@ -37,7 +37,7 @@ public sealed class MainViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
 
     private static (MainViewModel ViewModel, FakeSstvSessionService SstvSession, FakeReceivedImageBuffer ReceivedImage, FakeReceiveHistoryStore ReceiveHistoryStore, FakeFilePickerService FilePicker, FakeUrlLauncher UrlLauncher)
-        CreateMainViewModel()
+        CreateMainViewModel(FakeFeedbackFormLauncher? feedbackForms = null, FakeVersionNoticeService? versionNotice = null)
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var receiveHistoryStore = new FakeReceiveHistoryStore();
@@ -119,6 +119,8 @@ public sealed class MainViewModelTests
             TestOptionsSettings.Create(settingsStore),
             settingsStore,
             urlLauncher,
+            feedbackForms ?? new FakeFeedbackFormLauncher(),
+            versionNotice ?? new FakeVersionNoticeService(),
             new FakeAppearanceSettingsService(),
             new FakeServiceProvider(),
             NullLogger<MainViewModel>.Instance,
@@ -304,6 +306,58 @@ public sealed class MainViewModelTests
         viewModel.OpenWebsiteCommand.Execute(null);
 
         Assert.Equal(["https://scanlinestudio.app"], urlLauncher.OpenedUrls);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true, 1)]
+    [InlineData(false, 0)]
+    public async Task VersionNotice_DismissesOnlyWhenTicked_AndShowsOnce(bool tick, int expectedDismissCalls)
+    {
+        var versionNotice = new FakeVersionNoticeService { ShouldShow = true };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(versionNotice: versionNotice);
+        var shown = 0;
+        viewModel.VersionNoticeRequested = dialog =>
+        {
+            shown++;
+            dialog.DontShowAgain = tick;
+            return Task.CompletedTask;
+        };
+
+        await viewModel.ShowVersionNoticeIfNeededAsync();
+        await viewModel.ShowVersionNoticeIfNeededAsync();
+
+        Assert.Equal(1, shown);
+        Assert.Equal(expectedDismissCalls, versionNotice.DismissCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task VersionNotice_NotNeeded_NoDialog()
+    {
+        var versionNotice = new FakeVersionNoticeService { ShouldShow = false };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(versionNotice: versionNotice);
+        var shown = 0;
+        viewModel.VersionNoticeRequested = _ =>
+        {
+            shown++;
+            return Task.CompletedTask;
+        };
+
+        await viewModel.ShowVersionNoticeIfNeededAsync();
+
+        Assert.Equal(0, shown);
+        Assert.Equal(0, versionNotice.DismissCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task ReportBugAndSendFeedbackCommands_OpenTheMatchingForm()
+    {
+        var feedbackForms = new FakeFeedbackFormLauncher();
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(feedbackForms);
+
+        await viewModel.ReportBugCommand.ExecuteAsync(null);
+        await viewModel.SendFeedbackCommand.ExecuteAsync(null);
+
+        Assert.Equal([FeedbackForm.Bug, FeedbackForm.Feedback], feedbackForms.OpenedForms);
     }
 
     private sealed class FakeServiceProvider : IServiceProvider

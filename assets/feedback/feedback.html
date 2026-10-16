@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Send feedback — Scanline Studio</title>
+  <style>
+{{FORM_STYLE}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Send feedback</h1>
+  <p class="lead">Tell us what you think of Scanline Studio. Fields marked * are required.</p>
+
+  <form id="form">
+    <input type="hidden" name="subject" value="Scanline Studio feedback">
+    <input type="hidden" name="from_name" value="Scanline Studio feedback form">
+    <input type="hidden" name="form_type" value="feedback">
+    <input type="hidden" name="app_version" value="{{APP_VERSION}}">
+    <input type="hidden" name="operating_system" value="{{OS}}">
+    <input type="hidden" name="runtime" value="{{RUNTIME}}">
+    <input type="checkbox" name="botcheck" class="botcheck" tabindex="-1" autocomplete="off">
+
+    <fieldset>
+      <legend>Which SSTV software did you use before?</legend>
+      <label><input type="radio" name="previous_software" value="MMSSTV"> MMSSTV</label>
+      <label><input type="radio" name="previous_software" value="YONIQ"> YONIQ</label>
+      <label><input type="radio" name="previous_software" value="QSSTV"> QSSTV</label>
+      <label><input type="radio" name="previous_software" value="Other"> Other</label>
+      <label><input type="radio" name="previous_software" value="None"> None</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>What do you mainly use it for?</legend>
+      <label><input type="radio" name="main_use" value="Receive only"> Receive only</label>
+      <label><input type="radio" name="main_use" value="Transmit only"> Transmit only</label>
+      <label><input type="radio" name="main_use" value="Both"> Both</label>
+    </fieldset>
+
+    <fieldset class="scale">
+      <legend class="req">Do you like Scanline Studio? <span class="hint">1 = not at all, 5 = very much</span></legend>
+      <label><input type="radio" name="like_application" value="1" required> 1</label>
+      <label><input type="radio" name="like_application" value="2"> 2</label>
+      <label><input type="radio" name="like_application" value="3"> 3</label>
+      <label><input type="radio" name="like_application" value="4"> 4</label>
+      <label><input type="radio" name="like_application" value="5"> 5</label>
+    </fieldset>
+
+    <fieldset>
+      <legend class="req">Will you keep using Scanline Studio?</legend>
+      <label><input type="radio" name="keep_using" value="Yes" required> Yes</label>
+      <label><input type="radio" name="keep_using" value="Maybe"> Maybe</label>
+      <label><input type="radio" name="keep_using" value="No"> No</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Would you recommend it to another ham?</legend>
+      <label><input type="radio" name="recommend" value="Yes"> Yes</label>
+      <label><input type="radio" name="recommend" value="Maybe"> Maybe</label>
+      <label><input type="radio" name="recommend" value="No"> No</label>
+    </fieldset>
+
+    <fieldset class="scale">
+      <legend>How easy was it to set up audio, radio and CAT? <span class="hint">1 = very hard, 5 = very easy</span></legend>
+      <label><input type="radio" name="setup_ease" value="1"> 1</label>
+      <label><input type="radio" name="setup_ease" value="2"> 2</label>
+      <label><input type="radio" name="setup_ease" value="3"> 3</label>
+      <label><input type="radio" name="setup_ease" value="4"> 4</label>
+      <label><input type="radio" name="setup_ease" value="5"> 5</label>
+    </fieldset>
+
+    <fieldset class="scale">
+      <legend>Do you like the workflow? <span class="hint">1 = not at all, 5 = very much</span></legend>
+      <label><input type="radio" name="like_workflow" value="1"> 1</label>
+      <label><input type="radio" name="like_workflow" value="2"> 2</label>
+      <label><input type="radio" name="like_workflow" value="3"> 3</label>
+      <label><input type="radio" name="like_workflow" value="4"> 4</label>
+      <label><input type="radio" name="like_workflow" value="5"> 5</label>
+    </fieldset>
+
+    <fieldset class="scale">
+      <legend>Do you like the look and layout? <span class="hint">1 = not at all, 5 = very much</span></legend>
+      <label><input type="radio" name="like_ui" value="1"> 1</label>
+      <label><input type="radio" name="like_ui" value="2"> 2</label>
+      <label><input type="radio" name="like_ui" value="3"> 3</label>
+      <label><input type="radio" name="like_ui" value="4"> 4</label>
+      <label><input type="radio" name="like_ui" value="5"> 5</label>
+    </fieldset>
+
+    <label for="change">If you could change one thing, what would you change?</label>
+    <textarea id="change" name="change_one_thing" maxlength="2000"></textarea>
+
+    <label for="add">If you could add one thing, what would you add?</label>
+    <textarea id="add" name="add_one_thing" maxlength="2000"></textarea>
+
+    <label for="other">Anything else?</label>
+    <textarea id="other" name="anything_else" maxlength="2000"></textarea>
+
+    <label for="name">Name or callsign <span class="hint">(optional)</span></label>
+    <input type="text" id="name" name="name" maxlength="80">
+
+    <label class="check"><input type="checkbox" id="contact" name="contact_ok" value="Yes"> Can we contact you by email about this feedback?</label>
+    <div id="emailBlock" hidden>
+      <label for="email" class="req">Email address</label>
+      <input type="email" id="email" name="email" maxlength="120" disabled>
+    </div>
+
+    <dl class="details">
+      <dt>Sent to</dt><dd>web3forms.com, which forwards your feedback to the Scanline Studio developer by email. An internet connection is required.</dd>
+      <dt>Also sent</dt><dd>App version {{APP_VERSION}} · {{OS}} · {{RUNTIME}}</dd>
+    </dl>
+
+    <button type="submit" id="submit">Send feedback</button><span id="result" role="status"
+      data-sending="Sending…"
+      data-ok="Thank you — your feedback was sent."
+      data-error="Sending failed:"
+      data-offline="Could not reach web3forms.com. Check your internet connection and try again."></span>
+  </form>
+</main>
+<script>
+  window.ScanlineFeedback = { subjectPrefix: "", subjectField: "" };
+</script>
+<script>
+{{FORM_SCRIPT}}
+</script>
+</body>
+</html>

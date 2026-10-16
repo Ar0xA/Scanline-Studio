@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Report a bug — Scanline Studio</title>
+  <style>
+{{FORM_STYLE}}
+  </style>
+</head>
+<body>
+<main>
+  <h1>Report a bug</h1>
+  <p class="lead">Tell us what went wrong in Scanline Studio. Fields marked * are required.</p>
+
+  <form id="form">
+    <input type="hidden" name="subject" value="Scanline Studio bug report">
+    <input type="hidden" name="from_name" value="Scanline Studio bug form">
+    <input type="hidden" name="form_type" value="bug">
+    <input type="hidden" name="app_version" value="{{APP_VERSION}}">
+    <input type="hidden" name="operating_system" value="{{OS}}">
+    <input type="hidden" name="runtime" value="{{RUNTIME}}">
+    <input type="checkbox" name="botcheck" class="botcheck" tabindex="-1" autocomplete="off">
+
+    <label for="summary" class="req">Short summary</label>
+    <input type="text" id="summary" name="summary" maxlength="150" required placeholder="For example: Robot 36 image is shifted to the right">
+
+    <label for="area" class="req">Which part of the application?</label>
+    <select id="area" name="area" required>
+      <option value="">Select…</option>
+      <option value="Receive / decode">Receive / decode</option>
+      <option value="Transmit">Transmit</option>
+      <option value="Template editor">Template editor</option>
+      <option value="Radio / CAT control">Radio / CAT control</option>
+      <option value="Audio devices / levels">Audio devices / levels</option>
+      <option value="Logbook">Logbook</option>
+      <option value="Options">Options</option>
+      <option value="Installation / startup">Installation / startup</option>
+      <option value="Other">Other</option>
+    </select>
+
+    <label for="mode">SSTV mode <span class="hint">(if it matters)</span></label>
+    <input type="text" id="mode" name="sstv_mode" maxlength="60" placeholder="For example: Scottie 1, PD120">
+
+    <label for="steps" class="req">What did you do? <span class="hint">Steps to make it happen again</span></label>
+    <textarea id="steps" name="steps" maxlength="4000" required placeholder="1. …&#10;2. …&#10;3. …"></textarea>
+
+    <label for="expected">What did you expect to happen?</label>
+    <textarea id="expected" name="expected" maxlength="2000"></textarea>
+
+    <label for="actual" class="req">What happened instead?</label>
+    <textarea id="actual" name="actual" maxlength="4000" required></textarea>
+
+    <fieldset>
+      <legend>How often does it happen?</legend>
+      <label><input type="radio" name="frequency" value="Every time"> Every time</label>
+      <label><input type="radio" name="frequency" value="Sometimes"> Sometimes</label>
+      <label><input type="radio" name="frequency" value="Once"> Once</label>
+    </fieldset>
+
+    <label for="log">Log excerpt <span class="hint">(optional — Help → Open application log. Review it first: it can contain paths, callsigns and host names.)</span></label>
+    <textarea id="log" name="log_excerpt" class="log" maxlength="8000"></textarea>
+
+    <label for="other">Anything else?</label>
+    <textarea id="other" name="anything_else" maxlength="2000"></textarea>
+
+    <label for="name">Name or callsign <span class="hint">(optional)</span></label>
+    <input type="text" id="name" name="name" maxlength="80">
+
+    <label class="check"><input type="checkbox" id="contact" name="contact_ok" value="Yes"> Can we contact you by email about this report?</label>
+    <div id="emailBlock" hidden>
+      <label for="email" class="req">Email address</label>
+      <input type="email" id="email" name="email" maxlength="120" disabled>
+    </div>
+
+    <dl class="details">
+      <dt>Sent to</dt><dd>web3forms.com, which forwards your report to the Scanline Studio developer by email. An internet connection is required.</dd>
+      <dt>Also sent</dt><dd>App version {{APP_VERSION}} · {{OS}} · {{RUNTIME}}</dd>
+    </dl>
+
+    <button type="submit" id="submit">Send report</button><span id="result" role="status"
+      data-sending="Sending…"
+      data-ok="Thank you — your report was sent."
+      data-error="Sending failed:"
+      data-offline="Could not reach web3forms.com. Check your internet connection and try again."></span>
+  </form>
+</main>
+<script>
+  window.ScanlineFeedback = { subjectPrefix: "Scanline Studio bug: ", subjectField: "summary" };
+</script>
+<script>
+{{FORM_SCRIPT}}
+</script>
+</body>
+</html>

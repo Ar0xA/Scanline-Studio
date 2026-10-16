@@ -34,7 +34,7 @@ public sealed class AboutWindowViewModelTests
         var vm = new AboutWindowViewModel(typeof(AboutWindowViewModel).Assembly, new FakeUrlLauncher());
 
         Assert.Equal("Scanline Studio", vm.ApplicationName);
-        Assert.StartsWith("0.9.0", vm.VersionDisplay);
+        Assert.StartsWith("0.9.2-beta", vm.VersionDisplay);
         Assert.False(string.IsNullOrWhiteSpace(vm.Copyright));
     }
 

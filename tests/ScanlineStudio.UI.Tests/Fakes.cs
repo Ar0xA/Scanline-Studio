@@ -158,6 +158,12 @@ internal sealed class FakeLocalizationService : ILocalizationService
         Calls.Add((key, args));
         return key;
     }
+
+    /// <summary>Values <see cref="TryGetString"/> finds; every other key is "absent".</summary>
+    public Dictionary<string, string> OptionalStrings { get; } = [];
+
+    public bool TryGetString(string key, out string value) =>
+        OptionalStrings.TryGetValue(key, out value!);
 }
 
 /// <summary>Configurations-preset backlog, Phase 4 (2026-08-28). In-memory, not the real filesystem-
@@ -1653,6 +1659,42 @@ internal sealed class FakeUrlLauncher : IUrlLauncher
     public List<string> OpenedUrls { get; } = [];
 
     public void Open(string url) => OpenedUrls.Add(url);
+}
+
+internal sealed class FakeVersionNoticeService : IVersionNoticeService
+{
+    public string CurrentVersion { get; set; } = "1.0.0-beta";
+
+    public bool IsPrerelease { get; set; } = true;
+
+    public bool ShouldShow { get; set; }
+
+    public int ShouldShowCalls { get; private set; }
+
+    public int DismissCalls { get; private set; }
+
+    public Task<bool> ShouldShowAsync(CancellationToken ct = default)
+    {
+        ShouldShowCalls++;
+        return Task.FromResult(ShouldShow);
+    }
+
+    public Task DismissCurrentVersionAsync(CancellationToken ct = default)
+    {
+        DismissCalls++;
+        return Task.CompletedTask;
+    }
+}
+
+internal sealed class FakeFeedbackFormLauncher : IFeedbackFormLauncher
+{
+    public List<FeedbackForm> OpenedForms { get; } = [];
+
+    public Task OpenAsync(FeedbackForm form, CancellationToken cancellationToken = default)
+    {
+        OpenedForms.Add(form);
+        return Task.CompletedTask;
+    }
 }
 
 internal sealed class FakeAppearanceSettingsService : IAppearanceSettingsService

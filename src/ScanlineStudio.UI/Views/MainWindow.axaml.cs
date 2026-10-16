@@ -665,6 +665,38 @@ public partial class MainWindow : Window
                     }
                 };
 
+                vm.VersionNoticeRequested = async noticeViewModel =>
+                {
+                    try
+                    {
+                        await new VersionNoticeDialogView { DataContext = noticeViewModel }.ShowDialog(this);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.VersionNoticeWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
+                // Subscribed here, after the constructor's own Opened handlers (geometry re-clamp),
+                // so CenterOwner centres on the final window position.
+                Opened += async (_, _) =>
+                {
+                    try
+                    {
+                        await vm.ShowVersionNoticeIfNeededAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.VersionNoticeWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 // Same synchronous, unawaited shape as OptionsRequested above (spec/18-path-to-1.0.md
                 // High item 5) -- a static-content dialog with no async work.
                 vm.AboutRequested += aboutViewModel =>
@@ -1384,6 +1416,11 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "AboutWindowView failed to open or show")]
         public static partial void AboutWindowFailed(ILogger logger, Exception ex);
+
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Version notice window failed")]
+
+        public static partial void VersionNoticeWindowFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing RadioConnectionGaveUpWindowView")]
         public static partial void ConstructingConnectionGaveUpWindow(ILogger logger);

@@ -140,6 +140,30 @@ public sealed partial class JsonLocalizationService : ILocalizationService
         return key;
     }
 
+    public bool TryGetString(string key, out string value)
+    {
+        Dictionary<string, string>? map;
+        lock (_loadedCulturesLock)
+        {
+            _loadedCultures.TryGetValue(CurrentCulture.TwoLetterISOLanguageName, out map);
+        }
+
+        if (map is not null && map.TryGetValue(key, out var localized) && !string.IsNullOrEmpty(localized))
+        {
+            value = localized;
+            return true;
+        }
+
+        if (_fallbackMap.TryGetValue(key, out var fallback) && !string.IsNullOrEmpty(fallback))
+        {
+            value = fallback;
+            return true;
+        }
+
+        value = string.Empty;
+        return false;
+    }
+
     private bool TryFormat(string key, string culture, string? template, object[] args, out string formatted)
     {
         formatted = string.Empty;

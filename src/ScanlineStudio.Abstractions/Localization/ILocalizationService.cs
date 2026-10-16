@@ -39,5 +39,10 @@ public interface ILocalizationService
     /// shows a blank string.</summary>
     string GetString(string key, params object[] args);
 
+    /// <summary>Optional-text lookup: unlike <see cref="GetString"/>, returns false (and logs
+    /// nothing) when neither the current culture nor <c>en</c> has a non-empty value, so the
+    /// caller can hide the text instead of showing the raw key.</summary>
+    bool TryGetString(string key, out string value);
+
     event Action? CultureChanged;
 }

@@ -79,6 +79,12 @@ public sealed class CultureChangedBindingRefreshTests
 
         public string GetString(string key, params object[] args) => _greeting;
 
+        public bool TryGetString(string key, out string value)
+        {
+            value = _greeting;
+            return true;
+        }
+
         public void SwitchTo(string greeting)
         {
             _greeting = greeting;

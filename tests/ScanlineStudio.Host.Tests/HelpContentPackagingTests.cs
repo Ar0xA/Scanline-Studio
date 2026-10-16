@@ -21,4 +21,16 @@ public sealed class HelpContentPackagingTests
         Assert.Contains("src=\"help.js\"", index, StringComparison.Ordinal);
         Assert.Contains("href=\"styles.css\"", index, StringComparison.Ordinal);
     }
+
+    [Fact]
+    public void FeedbackForms_ArePackagedWithSharedAssets()
+    {
+        var feedbackDirectory = Path.Combine(AppContext.BaseDirectory, "feedback");
+        foreach (var fileName in new[] { "bug.html", "feedback.html", "form.css", "form.js" })
+        {
+            Assert.True(
+                File.Exists(Path.Combine(feedbackDirectory, fileName)),
+                $"Packaged feedback asset is missing: feedback/{fileName}");
+        }
+    }
 }

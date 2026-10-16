@@ -173,6 +173,9 @@
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenWebsite}" Command="{Binding OpenWebsiteCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenOnGitHub}" Command="{Binding OpenOnGitHubCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.OpenApplicationLog}" Command="{Binding OpenApplicationLogCommand}" />
+                <Separator />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.ReportBug}" Command="{Binding ReportBugCommand}" />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.SendFeedback}" Command="{Binding SendFeedbackCommand}" />
                 <!-- About stays the last item, per direct user request (2026-08-26). -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.About}" Command="{Binding OpenAboutCommand}" />
             </MenuItem>

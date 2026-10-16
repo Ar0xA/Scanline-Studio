@@ -141,6 +141,10 @@
 
     <x:Double x:Key="IndustryDialogTitleFontSize">18</x:Double>
 
+    <!-- Version notice: the feedback request, one step above body text. -->
+
+    <x:Double x:Key="IndustryNoticeLeadFontSize">15</x:Double>
+
     <x:Double x:Key="IndustryTxSelectionReadoutFontSize">12</x:Double>
 
     <!-- Round-2 real-window-verification fix: IndustryMiniHeight's own Large value dropped from 20

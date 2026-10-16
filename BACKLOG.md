@@ -320,6 +320,14 @@ Gain: binding typos fail the build instead of blanking the UI; enables trimming/
 and runtime-typed bindings change behavior silently. Do it per file (`x:CompileBindings="True"`) when a file
 is touched anyway, not as one big change. Not started until AV12 ships.
 
+### FB-SNAP. OPEN, before the 0.9.2-beta release tag — feedback forms in a snap browser
+
+`FeedbackFormLauncher` writes the filled form to `LocalApplicationData/ScanlineStudio/feedback/` (`~/.local/share/...`
+on Linux) and opens it as a `file://` page. Snap-confined browsers (Ubuntu's default Firefox and Chromium) may not
+read hidden `$HOME` directories, so Help → Report a bug / Send feedback could show a browser "access denied" page with
+nothing in `app.log`. Check once with Ubuntu's stock snap Firefox as the default browser; if it fails, use a
+non-hidden output directory on Linux. Found by the 2026-10-16 code review; not reproducible on this machine.
+
 ---
 
 ## 6. Blocked on a human
@@ -507,3 +515,14 @@ Listed with evidence in the area reports. Pick them up only when already working
   OptionsWindowViewModel, `32ebb5ed` TxImageEditorPaneViewModel, `f7d34d62` SstvSessionService, `092ce7a7`
   AnalogFmSstvDecoder (golden vectors green). Line citations into those five files predate these commits; use
   `git blame -C`.
+
+## 8. Verified done — 0.9.2-beta features (2026-10-16)
+
+- **FB-FORMS.** DONE — Help → Report a bug… / Send feedback… open bundled `assets/feedback/` pages in the browser, which
+  post to web3forms (its free plan rejects non-browser posts with HTTP 403). Access key stored XOR-masked in `form.js`;
+  tests check only its SHA-256 (`check-feedback.mjs` runs the real JS decoder). User submitted one real form of each
+  kind successfully. Auditor plan review + code review: go. Open follow-up: FB-SNAP.
+- **VERSION-NOTICE.** DONE — startup "What's new" notice shown for every version until "Don't show this again for
+  version X" is ticked (key = version without `+sha`); beta box only for prerelease versions. Each `<Version>` needs a
+  `VersionNotice.ReleaseSummary.<version>` key in `en.json`, enforced by `BundledLocale_HasReleaseSummaryForTheBuiltVersion`.
+  Adds `ILocalizationService.TryGetString`. Presets exclude the `VersionNotice` section. Auditor plan review + code review: go.

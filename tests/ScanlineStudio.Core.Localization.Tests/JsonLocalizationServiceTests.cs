@@ -256,6 +256,27 @@ public sealed class JsonLocalizationServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task TryGetString_FindsCurrentCultureThenEnglish_AndReportsAbsentOrEmptyWithoutLogging()
+    {
+        WriteLocaleFile("en", """{ "Both": "Hello", "EnglishOnly": "English only", "Empty": "" }""");
+        WriteLocaleFile("de", """{ "Both": "Hallo", "Empty": "" }""");
+        var logger = new FakeLogger<JsonLocalizationService>();
+        var service = new JsonLocalizationService(_localeDirectory, logger);
+        await service.SetCultureAsync(CultureInfo.GetCultureInfo("de"));
+        logger.Entries.Clear();
+
+        Assert.True(service.TryGetString("Both", out var both));
+        Assert.Equal("Hallo", both);
+        Assert.True(service.TryGetString("EnglishOnly", out var englishOnly));
+        Assert.Equal("English only", englishOnly);
+        Assert.False(service.TryGetString("Empty", out var empty));
+        Assert.Equal(string.Empty, empty);
+        Assert.False(service.TryGetString("Missing", out var missing));
+        Assert.Equal(string.Empty, missing);
+        Assert.Empty(logger.Entries);
+    }
+
+    [Fact]
     public void Constructor_NonAsciiLocaleFileWithUtf8Bom_LoadsCorrectly()
     {
         // Tier C audit finding: this class's entire purpose is non-English text, but nothing in this

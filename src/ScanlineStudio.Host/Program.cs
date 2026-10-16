@@ -1020,6 +1020,8 @@ internal static partial class Program
 
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
+        services.AddSingleton<IFeedbackFormLauncher, FeedbackFormLauncher>();
+        services.AddSingleton<IVersionNoticeService, VersionNoticeService>();
         services.AddSingleton<IClipboardImageService, ClipboardImageService>();
         // Singleton, not transient: OptionsWindowViewModel (writer) and RadioStatusViewModel
         // (reader) must share the SAME instance for DecodingIndicatorBlinksChanged to actually

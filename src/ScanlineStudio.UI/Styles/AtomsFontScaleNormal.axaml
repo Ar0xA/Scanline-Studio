@@ -135,6 +135,8 @@
          override, distinct from IndustryGbTitle's shared 9.5px (a real coupled site found during
          implementation, not in the original inventory; folded in here). -->
     <x:Double x:Key="IndustryDialogTitleFontSize">16</x:Double>
+    <!-- Version notice: the feedback request, one step above body text. -->
+    <x:Double x:Key="IndustryNoticeLeadFontSize">13</x:Double>
 
     <!-- TxImageEditorPaneView.axaml's selection-readout badge (mono text on an IndustryAccent
          background, over the canvas). -->

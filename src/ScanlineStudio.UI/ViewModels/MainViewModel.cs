@@ -38,6 +38,9 @@ public partial class MainViewModel : ViewModelBase
     private readonly ISettingsStore _settingsStore;
     private readonly ILocalizationService _localization;
     private readonly IUrlLauncher _urlLauncher;
+    private readonly IFeedbackFormLauncher _feedbackForms;
+    private readonly IVersionNoticeService _versionNotice;
+    private bool _versionNoticeChecked;
     private readonly ILogger<MainViewModel> _logger;
 
     /// <summary>User-requested (2026-08-28): the OS window title now shows the app name, version, and
@@ -134,6 +137,8 @@ public partial class MainViewModel : ViewModelBase
         OptionsSettingsService optionsSettingsService,
         ISettingsStore settingsStore,
         IUrlLauncher urlLauncher,
+        IFeedbackFormLauncher feedbackForms,
+        IVersionNoticeService versionNotice,
         IAppearanceSettingsService appearanceSettings,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
@@ -144,6 +149,8 @@ public partial class MainViewModel : ViewModelBase
         _settingsStore = settingsStore;
         _localization = localization;
         _urlLauncher = urlLauncher;
+        _feedbackForms = feedbackForms;
+        _versionNotice = versionNotice;
         _logger = logger;
 
         // Same Assembly.GetEntryAssembly() + attribute fallback chain AboutWindowViewModel already
@@ -361,6 +368,48 @@ public partial class MainViewModel : ViewModelBase
         _urlLauncher.Open(AppLogPaths.LogDirectory);
     }
 
+    /// <summary>Single-subscriber request/response hook, same shape as
+    /// <c>RxHistory.ConfirmRequested</c>: MainWindow shows the dialog and completes the task when it closes.</summary>
+    public Func<VersionNoticeDialogViewModel, Task>? VersionNoticeRequested { get; set; }
+
+    /// <summary>Called once from MainWindow.Opened. No ConfigureAwait(false): the handler creates a Window,
+    /// so the continuation must stay on the UI thread.</summary>
+    public async Task ShowVersionNoticeIfNeededAsync()
+    {
+        if (_versionNoticeChecked || VersionNoticeRequested is not { } showDialog)
+        {
+            return;
+        }
+
+        _versionNoticeChecked = true;
+        if (!await _versionNotice.ShouldShowAsync())
+        {
+            return;
+        }
+
+        Log.VersionNoticeShowing(_logger, _versionNotice.CurrentVersion);
+        var dialog = new VersionNoticeDialogViewModel(_localization, _versionNotice.CurrentVersion, _versionNotice.IsPrerelease);
+        await showDialog(dialog);
+        if (dialog.DontShowAgain)
+        {
+            await _versionNotice.DismissCurrentVersionAsync();
+        }
+    }
+
+    [RelayCommand]
+    private Task ReportBugAsync()
+    {
+        Log.ReportBugInvoked(_logger);
+        return _feedbackForms.OpenAsync(FeedbackForm.Bug);
+    }
+
+    [RelayCommand]
+    private Task SendFeedbackAsync()
+    {
+        Log.SendFeedbackInvoked(_logger);
+        return _feedbackForms.OpenAsync(FeedbackForm.Feedback);
+    }
+
     [RelayCommand]
     private void Exit()
     {
@@ -490,6 +539,15 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "OpenApplicationLog command invoked")]
         public static partial void OpenApplicationLogInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Showing the version notice for {Version}")]
+        public static partial void VersionNoticeShowing(ILogger logger, string version);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "ReportBug command invoked")]
+        public static partial void ReportBugInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "SendFeedback command invoked")]
+        public static partial void SendFeedbackInvoked(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit command invoked")]
         public static partial void ExitInvoked(ILogger logger);
