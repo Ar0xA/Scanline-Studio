@@ -97,6 +97,21 @@ public sealed class FeedbackFormLauncherTests : IDisposable
     }
 
     [Fact]
+    public void DefaultOutputDirectory_OnLinux_HasNoHiddenFolder()
+    {
+        var path = FeedbackFormLauncher.DefaultOutputDirectory();
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+
+        Assert.True(Path.IsPathFullyQualified(path));
+        if (OperatingSystem.IsLinux() && path.StartsWith(home, StringComparison.Ordinal))
+        {
+            Assert.DoesNotContain(
+                Path.GetRelativePath(home, path).Split(Path.DirectorySeparatorChar),
+                segment => segment.StartsWith('.'));
+        }
+    }
+
+    [Fact]
     public async Task OpenAsync_CancelledToken_Throws()
     {
         WriteAssets();
