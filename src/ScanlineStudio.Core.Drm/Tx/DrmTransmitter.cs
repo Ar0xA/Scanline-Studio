@@ -194,7 +194,11 @@ internal sealed class DrmTransmission : IDrmTransmission
         try
         {
             await foreach (float[] frame in frames.Reader.ReadAllAsync(ct).ConfigureAwait(false))
+            {
+                // ReadAllAsync drains already-buffered frames without checking the token.
+                ct.ThrowIfCancellationRequested();
                 yield return frame;
+            }
         }
         finally
         {

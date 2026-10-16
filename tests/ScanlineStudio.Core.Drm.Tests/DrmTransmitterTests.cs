@@ -156,6 +156,23 @@ public class DrmTransmitterTests
         Assert.InRange(source.Produced, 1, 1 + DrmTransmission.BufferedFrames + 1);
     }
 
+    [Fact]
+    public async Task Cancel_DoesNotYieldFramesAlreadyBuffered()
+    {
+        var source = new FrameSource(frames: 1000, throwAt: -1);
+        var tx = new DrmTransmission(source.Frames, 4, 1000, 1000, voxTone: false, "x"u8);
+        using var cts = new CancellationTokenSource();
+
+        await using IAsyncEnumerator<ReadOnlyMemory<float>> e = tx.ReadSamplesAsync(cts.Token).GetAsyncEnumerator();
+        Assert.True(await e.MoveNextAsync());
+        // Frame 1 read, the channel full, and one more frame waiting to be written.
+        Assert.True(SpinWait.SpinUntil(() => source.Produced >= DrmTransmission.BufferedFrames + 2, TimeSpan.FromSeconds(10)));
+
+        await cts.CancelAsync();
+
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(async () => await e.MoveNextAsync());
+    }
+
     [Theory]
     [InlineData(64, 48, 400, 23)]
     [InlineData(320, 256, 15_000, 16)]
