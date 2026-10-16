@@ -37,7 +37,7 @@ public sealed class MainViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
 
     private static (MainViewModel ViewModel, FakeSstvSessionService SstvSession, FakeReceivedImageBuffer ReceivedImage, FakeReceiveHistoryStore ReceiveHistoryStore, FakeFilePickerService FilePicker, FakeUrlLauncher UrlLauncher)
-        CreateMainViewModel(FakeFeedbackFormLauncher? feedbackForms = null, FakeVersionNoticeService? versionNotice = null, FakeUpdateChecker? updateChecker = null, FakeUpdatePreferencesService? updatePreferences = null)
+        CreateMainViewModel(FakeFeedbackFormLauncher? feedbackForms = null, FakeVersionNoticeService? versionNotice = null, FakeUpdateChecker? updateChecker = null, FakeUpdatePreferencesService? updatePreferences = null, IServiceProvider? services = null)
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var receiveHistoryStore = new FakeReceiveHistoryStore();
@@ -124,7 +124,7 @@ public sealed class MainViewModelTests
             updateChecker ?? new FakeUpdateChecker(),
             updatePreferences ?? new FakeUpdatePreferencesService(),
             new FakeAppearanceSettingsService(),
-            new FakeServiceProvider(),
+            services ?? new FakeServiceProvider(),
             NullLogger<MainViewModel>.Instance,
             NullLogger<RadioStatusViewModel>.Instance);
 
@@ -471,5 +471,51 @@ public sealed class MainViewModelTests
     private sealed class FakeServiceProvider : IServiceProvider
     {
         public object? GetService(Type serviceType) => null;
+    }
+
+    private sealed class FakeSettingsRecoveryNotice(SettingsRecoveryNotice? notice) : ISettingsRecoveryNotice, IServiceProvider
+    {
+        private SettingsRecoveryNotice? _notice = notice;
+
+        public SettingsRecoveryNotice? TakeNotice() => Interlocked.Exchange(ref _notice, null);
+
+        public object? GetService(Type serviceType) => serviceType == typeof(ISettingsRecoveryNotice) ? this : null;
+    }
+
+    [AvaloniaFact]
+    public async Task SettingsRecoveryNotice_ShownOnceWithTheNoticesKindAndPath()
+    {
+        var services = new FakeSettingsRecoveryNotice(new SettingsRecoveryNotice(SettingsRecoveryKind.Restored, "/cfg/settings.json"));
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(services: services);
+        var shown = new List<SettingsRecoveryDialogViewModel>();
+        viewModel.SettingsRecoveryNoticeRequested = dialog =>
+        {
+            shown.Add(dialog);
+            return Task.CompletedTask;
+        };
+
+        await viewModel.ShowSettingsRecoveryNoticeIfAnyAsync();
+        await viewModel.ShowSettingsRecoveryNoticeIfAnyAsync();
+
+        var dialog = Assert.Single(shown);
+        Assert.Equal(SettingsRecoveryKind.Restored, dialog.Kind);
+        Assert.Equal("/cfg/settings.json", dialog.FilePath);
+        Assert.False(string.IsNullOrEmpty(dialog.Message));
+    }
+
+    [AvaloniaFact]
+    public async Task SettingsRecoveryNotice_NoNotice_ShowsNothing()
+    {
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(services: new FakeSettingsRecoveryNotice(null));
+        var shown = 0;
+        viewModel.SettingsRecoveryNoticeRequested = _ =>
+        {
+            shown++;
+            return Task.CompletedTask;
+        };
+
+        await viewModel.ShowSettingsRecoveryNoticeIfAnyAsync();
+
+        Assert.Equal(0, shown);
     }
 }

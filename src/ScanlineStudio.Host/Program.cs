@@ -974,6 +974,7 @@ internal static partial class Program
         services.AddSingleton(sp => new JsonSettingsStore(sp.GetRequiredService<ILogger<JsonSettingsStore>>()));
         services.AddSingleton<ISettingsStore>(sp => sp.GetRequiredService<JsonSettingsStore>());
         services.AddSingleton<ISettingsFileRelocator>(sp => sp.GetRequiredService<JsonSettingsStore>());
+        services.AddSingleton<ISettingsRecoveryNotice>(sp => sp.GetRequiredService<JsonSettingsStore>());
 
         // Configurations-preset backlog, Phase 2 (2026-08-28): a genuinely separate store, own fixed
         // (non-relocating) location and own lock -- see ConfigurationPresetStore's own doc comment

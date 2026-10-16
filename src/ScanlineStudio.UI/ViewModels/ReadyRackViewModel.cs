@@ -472,11 +472,23 @@ public sealed partial class ReadyRackViewModel : ObservableObject
 
             var metadataList = await _templateStore.ListAsync();
             var metadataById = metadataList.ToDictionary(m => m.Id);
-            var (validPinnedIds, _) = await UpdatePinnedIdsAsync(current =>
+            IReadOnlyList<string> validPinnedIds;
+            try
             {
-                var valid = current.Where(metadataById.ContainsKey).ToList();
-                return valid.Count == current.Count ? current : valid;
-            });
+                (validPinnedIds, _) = await UpdatePinnedIdsAsync(current =>
+                {
+                    var valid = current.Where(metadataById.ContainsKey).ToList();
+                    return valid.Count == current.Count ? current : valid;
+                });
+            }
+            catch (SettingsUnavailableException ex)
+            {
+                // Settings cannot be saved right now: still fill the rack, just leave the prune unsaved.
+                Log.PinnedPruneNotSaved(_logger, ex);
+                var settings = await _settingsStore.LoadAsync();
+                var pinned = settings.GetSection(ReadyRackSettings.SectionKey, ReadyRackSettingsJsonContext.Default.ReadyRackSettings)?.PinnedTemplateIds ?? [];
+                validPinnedIds = pinned.Where(metadataById.ContainsKey).ToList();
+            }
 
             // Expanded template selector: captured BEFORE AllTemplates is rebuilt below -- unlike
             // Slots (a stable wrapper), AllTemplates/FilteredTemplates get entirely FRESH row
@@ -590,24 +602,35 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             return;
         }
 
-        var (_, changed) = await UpdatePinnedIdsAsync(current =>
+        bool changed;
+        try
         {
-            var pinnedIds = current.ToList();
-            if (pinnedIds.Contains(row.Id))
+            (_, changed) = await UpdatePinnedIdsAsync(current =>
             {
-                pinnedIds.Remove(row.Id);
-            }
-            else if (pinnedIds.Count < SlotCount)
-            {
-                pinnedIds.Add(row.Id);
-            }
-            else
-            {
-                return current; // full rack, no eviction policy -- no-op
-            }
+                var pinnedIds = current.ToList();
+                if (pinnedIds.Contains(row.Id))
+                {
+                    pinnedIds.Remove(row.Id);
+                }
+                else if (pinnedIds.Count < SlotCount)
+                {
+                    pinnedIds.Add(row.Id);
+                }
+                else
+                {
+                    return current; // full rack, no eviction policy -- no-op
+                }
 
-            return pinnedIds;
-        });
+                return pinnedIds;
+            });
+        }
+        catch (Exception ex)
+        {
+            // A [RelayCommand] fault would otherwise reach the UI thread unhandled.
+            Log.TogglePinFailed(_logger, ex);
+            StatusMessage = _localization.GetString("Panes.TxImageEditor.TogglePinFailed");
+            return;
+        }
 
         if (changed)
         {
@@ -916,7 +939,7 @@ public sealed partial class ReadyRackViewModel : ObservableObject
             // null` -- an explicit JSON null overrides the `= []` initializer on an init property, so
             // PinnedTemplateIds can be null even when currentSection itself is not. Both guarded
             // separately -- ?? new ReadyRackSettings() alone would still let the second case NRE
-            // inside mutate (TogglePinAsync has no try/catch around this call, unlike RefreshAsync).
+            // inside mutate.
             var currentSection = appSettings.GetSection(ReadyRackSettings.SectionKey, ReadyRackSettingsJsonContext.Default.ReadyRackSettings);
             var current = currentSection?.PinnedTemplateIds ?? [];
             var updated = mutate(current);
@@ -941,6 +964,12 @@ public sealed partial class ReadyRackViewModel : ObservableObject
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack refresh failed")]
         public static partial void RefreshFailed(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack pinned-template prune not saved: settings are unavailable")]
+        public static partial void PinnedPruneNotSaved(ILogger logger, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "ReadyRack pin toggle failed")]
+        public static partial void TogglePinFailed(ILogger logger, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Template Library UI settings load failed")]
         public static partial void LoadTemplateLibraryUiSettingsFailed(ILogger logger, Exception exception);

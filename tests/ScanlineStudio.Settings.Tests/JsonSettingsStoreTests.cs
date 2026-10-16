@@ -190,7 +190,9 @@ public sealed partial class JsonSettingsStoreTests : IDisposable
         Assert.Empty(loaded.Sections);
         Assert.Null(loaded.GetSection(SampleSection.SectionKey, SampleSectionJsonContext.Default.SampleSection));
         Assert.Contains(logger.Entries, e => e.Level == LogLevel.Warning || e.Level == LogLevel.Error);
-        Assert.Equal(json, await File.ReadAllTextAsync(_settingsFilePath));
+        // Moved aside, never overwritten by the defaults written below.
+        Assert.False(File.Exists(_settingsFilePath));
+        Assert.Equal(json, await File.ReadAllTextAsync(Assert.Single(CorruptCopies(_settingsFilePath))));
 
         var sample = new SampleSection("recovered", 42);
         await store.UpdateAsync(s => s.WithSection(SampleSection.SectionKey, sample, SampleSectionJsonContext.Default.SampleSection));

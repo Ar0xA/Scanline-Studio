@@ -322,6 +322,8 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
             // expected case (that's the whole point of this fix), unlike a LOAD finding one
             // already baked into an on-disk file (see Sanitize's own doc comment).
             await JsonSerializer.SerializeAsync(stream, Sanitize(content, logRedactions: false), AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+            // On disk before the rename, so a power loss cannot leave an empty file behind.
+            stream.Flush(flushToDisk: true);
         }
 
         File.Move(tempPath, path, overwrite: true);

@@ -1,0 +1,43 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.SettingsRecoveryDialogView"
+        x:DataType="vm:SettingsRecoveryDialogViewModel"
+        Title="{loc:Translate SettingsRecovery.Title}"
+        Width="460" SizeToContent="Height"
+        MinWidth="360"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- OK-only acknowledgement, same layout as RestartRequiredDialogView. Left-aligned prose, so a local
+         style instead of IndustryRowValue (right-aligned, mono), same as VersionNoticeDialogView. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.NoticeBody">
+            <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+            <Setter Property="FontSize" Value="{DynamicResource IndustryRowValueFontSize}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+        <Style Selector="TextBlock.NoticePath">
+            <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryMutedText}" />
+        </Style>
+    </Window.Styles>
+
+    <Border Background="{DynamicResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Classes="NoticeBody" Text="{Binding Message}" />
+
+            <TextBlock Grid.Row="1" Classes="NoticeBody NoticePath" Text="{Binding FilePath}" />
+
+            <Grid Grid.Row="2" ColumnDefinitions="*,Auto">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate SettingsRecovery.OkButton}" Command="{Binding CloseCommand}"
+                        IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

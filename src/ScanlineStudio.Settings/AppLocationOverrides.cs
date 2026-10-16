@@ -75,6 +75,8 @@ public sealed record AppLocationOverrides(
             await using (var stream = new FileStream(tempFilePath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
                 await JsonSerializer.SerializeAsync(stream, overrides, AppLocationOverridesJsonContext.Default.AppLocationOverrides, ct);
+                // On disk before the rename, so a power loss cannot leave an empty file behind.
+                stream.Flush(flushToDisk: true);
             }
 
             File.Move(tempFilePath, path, overwrite: true);

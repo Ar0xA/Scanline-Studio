@@ -835,4 +835,44 @@ public sealed class ReadyRackViewModelTests
 
         Assert.Same(row, readyRack.SelectedLibraryItem);
     }
+
+    [Fact]
+    public async Task TogglePinAsync_SettingsWriteFails_ShowsStatusInsteadOfThrowing()
+    {
+        var templateStore = new FakeTemplateStore();
+        var settingsStore = new FakeSettingsStore();
+        var readyRack = CreateReadyRack(templateStore, settingsStore);
+        await SaveTemplateAsync(templateStore, "Contest");
+        await readyRack.RefreshAsync();
+        var row = Assert.Single(readyRack.AllTemplates);
+        settingsStore.SaveAsyncException = new SettingsUnavailableException("cannot be read");
+
+        await readyRack.TogglePinCommand.ExecuteAsync(row);
+
+        Assert.NotNull(readyRack.StatusMessage);
+        Assert.Null(readyRack.Slots[0].Template);
+    }
+
+    [Fact]
+    public async Task RefreshAsync_SettingsUnavailable_StillFillsRackWithValidPins()
+    {
+        var templateStore = new FakeTemplateStore();
+        var keptId = await SaveTemplateAsync(templateStore, "Kept");
+        var settingsStore = new FakeSettingsStore
+        {
+            Settings = new AppSettings().WithSection(
+                ReadyRackSettings.SectionKey,
+                new ReadyRackSettings { PinnedTemplateIds = [keptId, "deleted-template"] },
+                ReadyRackSettingsJsonContext.Default.ReadyRackSettings),
+            SaveAsyncException = new SettingsUnavailableException("cannot be read"),
+        };
+        var readyRack = CreateReadyRack(templateStore, settingsStore);
+
+        await readyRack.RefreshAsync();
+
+        Assert.Single(readyRack.AllTemplates);
+        Assert.Equal(keptId, readyRack.Slots[0].Template?.Id);
+        Assert.Null(readyRack.Slots[1].Template);
+        Assert.Null(readyRack.StatusMessage);
+    }
 }

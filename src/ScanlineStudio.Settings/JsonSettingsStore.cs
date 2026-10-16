@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Principal;
 using System.Security.AccessControl;
 using System.Runtime.Versioning;
@@ -35,9 +36,17 @@ namespace ScanlineStudio.Settings;
 /// state. Every real caller either passes no token (the synchronous bootstrap/shutdown paths above)
 /// or already wraps this store's calls in its own timeout (<c>SstvSessionService</c>'s
 /// <c>WaitAsync(_cleanupTimeout, ct)</c>).</summary>
-public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRelocator, IDisposable
+public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRelocator, ISettingsRecoveryNotice, IDisposable
 {
     private readonly SemaphoreSlim _fileLock = new(1, 1);
+
+    /// <summary>Guarded by <see cref="_fileLock"/>. Set when the last load could not read a settings file;
+    /// while set, any write is refused so defaults never replace the user's real settings. Store-wide: the
+    /// next successful load by any caller clears it.</summary>
+    private string? _unavailableReason;
+
+    /// <summary>Written under <see cref="_fileLock"/> on a pool thread, taken on the UI thread: Interlocked only.</summary>
+    private SettingsRecoveryNotice? _notice;
     private readonly ILogger<JsonSettingsStore> _logger;
     private readonly Subject<AppSettings> _changes = new();
     private string _settingsFilePath;
@@ -69,6 +78,10 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         await _fileLock.WaitAsync(ct).ConfigureAwait(false);
         try
         {
+            // Validates (and if needed recovers) the file about to become the backup, and sets the flag.
+            await LoadCoreAsync(ct).ConfigureAwait(false);
+            // The caller's data was built on whatever the last load returned: defaults, if it failed.
+            ThrowIfUnavailable();
             savedPath = await SaveCoreAsync(settings, ct).ConfigureAwait(false);
         }
         finally
@@ -102,6 +115,8 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
             updated = mutate(current);
             if (!ReferenceEquals(updated, current))
             {
+                // A no-op mutate still succeeds while unavailable, so read-and-maybe-write callers keep working.
+                ThrowIfUnavailable();
                 savedPath = await SaveCoreAsync(updated, ct).ConfigureAwait(false);
             }
         }
@@ -120,34 +135,234 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         return updated;
     }
 
-    private async Task<AppSettings> LoadCoreAsync(CancellationToken ct)
+    public SettingsRecoveryNotice? TakeNotice() => Interlocked.Exchange(ref _notice, null);
+
+    private string BackupPath => _settingsFilePath + ".bak";
+
+    private void ThrowIfUnavailable()
     {
-        if (!File.Exists(_settingsFilePath))
+        if (_unavailableReason is { } reason)
         {
-            Log.NoSettingsFile(_logger, _settingsFilePath);
-            return new AppSettings();
+            throw new SettingsUnavailableException(reason);
+        }
+    }
+
+    private enum ReadOutcome
+    {
+        Ok,
+        Missing,
+        Corrupt,
+        Unreadable,
+    }
+
+    /// <summary>Corrupt covers bad JSON, an empty or NUL-filled file (power loss before a flush), a null
+    /// <c>Sections</c> and a literal <c>null</c>. Cancellation propagates.</summary>
+    private static async Task<(ReadOutcome Outcome, AppSettings? Settings, Exception? Error)> TryReadAsync(string path, CancellationToken ct)
+    {
+        if (!File.Exists(path))
+        {
+            return (ReadOutcome.Missing, null, null);
         }
 
-        // A corrupt/truncated settings.json (partial write from an old build predating the atomic
-        // temp-file+rename below, manual editing, disk corruption) used to throw JsonException out
-        // of every caller with no log trace at all -- a single bad byte bricked startup. Falls back
-        // to defaults instead, now visibly logged so "why did my settings reset" is answerable.
-        // Tier C audit finding: a permission-denied file (Linux: owned by root after a stray sudo
-        // run; Windows: ACL/EFS) bricked startup the same way -- UnauthorizedAccessException does
-        // NOT derive from IOException, so it slipped past this exact guard.
         try
         {
-            var stream = File.OpenRead(_settingsFilePath);
+            var stream = File.OpenRead(path);
             await using (stream.ConfigureAwait(false))
             {
                 var settings = await JsonSerializer.DeserializeAsync(stream, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
-                return settings ?? new AppSettings();
+                return settings is null
+                    ? (ReadOutcome.Corrupt, null, new JsonException("The settings file contains a JSON null."))
+                    : (ReadOutcome.Ok, settings, null);
             }
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException)
+        catch (JsonException ex)
         {
-            Log.LoadFailed(_logger, _settingsFilePath, ex);
-            return new AppSettings();
+            return (ReadOutcome.Corrupt, null, ex);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return (ReadOutcome.Unreadable, null, ex);
+        }
+    }
+
+    /// <summary>Never throws for a bad file: startup must keep working. A damaged settings.json is moved
+    /// aside and replaced by the previous save's copy (<c>settings.json.bak</c>) when that parses; an
+    /// unreadable file serves defaults and blocks writes (see <see cref="_unavailableReason"/>).</summary>
+    private async Task<AppSettings> LoadCoreAsync(CancellationToken ct)
+    {
+        var (outcome, settings, error) = await TryReadAsync(_settingsFilePath, ct).ConfigureAwait(false);
+        switch (outcome)
+        {
+            case ReadOutcome.Ok:
+                _unavailableReason = null;
+                return settings!;
+
+            case ReadOutcome.Unreadable:
+                Log.LoadFailed(_logger, _settingsFilePath, error!);
+                return MarkUnavailable(_settingsFilePath, $"The settings file '{_settingsFilePath}' cannot be read.", new AppSettings());
+
+            case ReadOutcome.Missing when !File.Exists(BackupPath):
+                Log.NoSettingsFile(_logger, _settingsFilePath);
+                _unavailableReason = null;
+                return new AppSettings();
+
+            case ReadOutcome.Missing:
+                // Left by an interrupted recovery: the backup is the newest good copy, never let a save rotate it away.
+                Log.SettingsMissingBackupPresent(_logger, _settingsFilePath);
+                return await RecoverFromBackupAsync(corruptOriginalInPlace: false, ct).ConfigureAwait(false);
+
+            default:
+                Log.SettingsCorrupt(_logger, _settingsFilePath, error!);
+                return await RecoverFromBackupAsync(corruptOriginalInPlace: true, ct).ConfigureAwait(false);
+        }
+    }
+
+    private async Task<AppSettings> RecoverFromBackupAsync(bool corruptOriginalInPlace, CancellationToken ct)
+    {
+        var (backupOutcome, backupSettings, backupError) = await TryReadAsync(BackupPath, ct).ConfigureAwait(false);
+
+        // Staged before the original is touched, so a cancellation or I/O failure leaves it in place.
+        string? stagedRestore = null;
+        if (backupOutcome == ReadOutcome.Ok)
+        {
+            stagedRestore = _settingsFilePath + ".restore.tmp";
+            try
+            {
+                await CopyOwnerOnlyAsync(BackupPath, stagedRestore, ct).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // A partial copy can hold the QRZ password.
+                TryDelete(stagedRestore);
+                throw;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                Log.RestoreFailed(_logger, _settingsFilePath, ex);
+                TryDelete(stagedRestore);
+                stagedRestore = null;
+            }
+        }
+
+        if (corruptOriginalInPlace && !TryQuarantine(_settingsFilePath))
+        {
+            if (stagedRestore is not null)
+            {
+                TryDelete(stagedRestore);
+            }
+
+            return MarkUnavailable(
+                _settingsFilePath,
+                $"The damaged settings file '{_settingsFilePath}' could not be moved aside.",
+                backupSettings ?? new AppSettings());
+        }
+
+        switch (backupOutcome)
+        {
+            case ReadOutcome.Ok when stagedRestore is not null:
+                try
+                {
+                    File.Move(stagedRestore, _settingsFilePath, overwrite: false);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Log.RestoreFailed(_logger, _settingsFilePath, ex);
+                    TryDelete(stagedRestore);
+                    return MarkUnavailable(_settingsFilePath, $"The settings file '{_settingsFilePath}' could not be restored from its backup.", backupSettings!);
+                }
+
+                TrySetOwnerOnlyPermissions(_settingsFilePath);
+                Log.RestoredFromBackup(_logger, _settingsFilePath);
+                _unavailableReason = null;
+                Interlocked.Exchange(ref _notice, new SettingsRecoveryNotice(SettingsRecoveryKind.Restored, _settingsFilePath));
+                return backupSettings!;
+
+            case ReadOutcome.Ok:
+                return MarkUnavailable(_settingsFilePath, $"The settings file '{_settingsFilePath}' could not be restored from its backup.", backupSettings!);
+
+            case ReadOutcome.Unreadable:
+                Log.LoadFailed(_logger, BackupPath, backupError!);
+                return MarkUnavailable(BackupPath, $"The settings backup '{BackupPath}' cannot be read.", new AppSettings());
+
+            case ReadOutcome.Corrupt:
+                Log.SettingsCorrupt(_logger, BackupPath, backupError!);
+                TryQuarantine(BackupPath);
+                break;
+        }
+
+        Log.ResetToDefaults(_logger, _settingsFilePath);
+        _unavailableReason = null;
+        Interlocked.Exchange(ref _notice, new SettingsRecoveryNotice(SettingsRecoveryKind.ResetToDefaults, _settingsFilePath));
+        return new AppSettings();
+    }
+
+    private AppSettings MarkUnavailable(string path, string reason, AppSettings served)
+    {
+        _unavailableReason = reason;
+        Interlocked.Exchange(ref _notice, new SettingsRecoveryNotice(SettingsRecoveryKind.Unavailable, path));
+        return served;
+    }
+
+    /// <summary>Moves a damaged file to <c>&lt;name&gt;.corrupt-&lt;UTC&gt;</c> (never overwriting) and keeps it
+    /// owner-only: it can hold a QRZ password.</summary>
+    private bool TryQuarantine(string path)
+    {
+        try
+        {
+            var stem = $"{path}.corrupt-" + DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
+            var target = stem;
+            for (var suffix = 1; File.Exists(target); suffix++)
+            {
+                target = $"{stem}-{suffix}";
+            }
+
+            File.Move(path, target, overwrite: false);
+            TrySetOwnerOnlyPermissions(target);
+            Log.Quarantined(_logger, path, target);
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.QuarantineFailed(_logger, path, ex);
+            return false;
+        }
+    }
+
+    private void TryDelete(string path)
+    {
+        try
+        {
+            File.Delete(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.TempCleanupFailed(_logger, path, ex);
+        }
+    }
+
+    /// <summary>T0-8: created owner-only from the start on Unix, not a 0644 file chmod-ed later; it can
+    /// hold a QRZ password.</summary>
+    private static FileStream CreateOwnerOnly(string path) => OperatingSystem.IsWindows()
+        ? File.Create(path)
+        : File.Open(path, new FileStreamOptions
+        {
+            Mode = FileMode.Create,
+            Access = FileAccess.Write,
+            UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
+        });
+
+    /// <summary>A stream copy, not File.Copy: File.Copy keeps the source's mode and cannot flush to disk.</summary>
+    private static async Task CopyOwnerOnlyAsync(string source, string destination, CancellationToken ct)
+    {
+        var input = File.OpenRead(source);
+        await using (input.ConfigureAwait(false))
+        {
+            var output = CreateOwnerOnly(destination);
+            await using (output.ConfigureAwait(false))
+            {
+                await input.CopyToAsync(output, ct).ConfigureAwait(false);
+                output.Flush(flushToDisk: true);
+            }
         }
     }
 
@@ -162,27 +377,47 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         // Atomic write (temp file + rename) so a crash mid-write never leaves settings.json
         // truncated or corrupted — see spec/12-settings.md.
         var tempFilePath = _settingsFilePath + ".tmp";
-        // T0-8: created with owner-only mode from the start on Unix, not File.Create's default
-        // 0644 followed by a later chmod -- settings.json can carry a real QRZ.com password/API
-        // key (see TrySetOwnerOnlyPermissions' own doc comment), and writing a secret into a
-        // briefly-world-readable file, or crashing mid-write and leaving a 0644 .tmp file
-        // containing one, is exactly the exposure this fix exists to close.
-        var stream = OperatingSystem.IsWindows()
-            ? File.Create(tempFilePath)
-            : File.Open(tempFilePath, new FileStreamOptions
-            {
-                Mode = FileMode.Create,
-                Access = FileAccess.Write,
-                UnixCreateMode = UnixFileMode.UserRead | UnixFileMode.UserWrite,
-            });
+        var stream = CreateOwnerOnly(tempFilePath);
         await using (stream.ConfigureAwait(false))
         {
             await JsonSerializer.SerializeAsync(stream, settings, AppSettingsJsonContext.Default.AppSettings, ct).ConfigureAwait(false);
+            // Without this a power loss after the rename can leave an empty or NUL-filled settings.json.
+            stream.Flush(flushToDisk: true);
+        }
+
+        // After the new content is safely on disk, so a failed serialize costs no backup generation.
+        if (File.Exists(_settingsFilePath))
+        {
+            await TryRotateBackupAsync(ct).ConfigureAwait(false);
         }
 
         File.Move(tempFilePath, _settingsFilePath, overwrite: true);
         TrySetOwnerOnlyPermissions(_settingsFilePath);
         return _settingsFilePath; // captured under the lock -- logged by the caller, after Release
+    }
+
+    /// <summary>Keeps the file about to be replaced as <c>settings.json.bak</c> (one generation). A failure
+    /// only logs: the older backup stays and the save goes ahead.</summary>
+    private async Task TryRotateBackupAsync(CancellationToken ct)
+    {
+        var stagedBackup = BackupPath + ".tmp";
+        try
+        {
+            await CopyOwnerOnlyAsync(_settingsFilePath, stagedBackup, ct).ConfigureAwait(false);
+            File.Move(stagedBackup, BackupPath, overwrite: true);
+            TrySetOwnerOnlyPermissions(BackupPath);
+        }
+        catch (OperationCanceledException)
+        {
+            // A partial copy can hold the QRZ password.
+            TryDelete(stagedBackup);
+            throw;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            Log.BackupFailed(_logger, BackupPath, ex);
+            TryDelete(stagedBackup);
+        }
     }
 
     // T0-8: settings.json can carry a real QRZ.com account password/API key in plaintext (no
@@ -326,6 +561,22 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
                 TrySetOwnerOnlyPermissions(newPath);
             }
 
+            // Best effort and after settings.json moved: from here on this method must not fail.
+            // Moved even when settings.json is absent, since it may be the only good copy.
+            var newBackupPath = newPath + ".bak";
+            if (File.Exists(BackupPath))
+            {
+                try
+                {
+                    File.Move(BackupPath, newBackupPath, overwrite: true);
+                    TrySetOwnerOnlyPermissions(newBackupPath);
+                }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+                {
+                    Log.BackupRelocateFailed(_logger, BackupPath, ex);
+                }
+            }
+
             // Only ever updated here, on a physically-confirmed move (or the no-op return above) --
             // never on a `false` return, so this field always points at where the file actually is.
             _settingsFilePath = newPath;
@@ -337,8 +588,8 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         }
     }
 
-    /// <summary>Registered under 2 interfaces resolving to this same singleton instance
-    /// (<see cref="ISettingsStore"/>, <see cref="ISettingsFileRelocator"/>) -- MS.DI disposes each
+    /// <summary>Registered under 3 interfaces resolving to this same singleton instance
+    /// (<see cref="ISettingsStore"/>, <see cref="ISettingsFileRelocator"/>, <see cref="ISettingsRecoveryNotice"/>) -- MS.DI disposes each
     /// resolved service instance once per call site with no dedup, so this can run more than once.
     /// Both <see cref="Subject{T}.Dispose"/> and <see cref="SemaphoreSlim.Dispose"/> are safe to call
     /// repeatedly; any FUTURE teardown added here must keep that same idempotence.</summary>
@@ -355,7 +606,7 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
         [LoggerMessage(Level = LogLevel.Information, Message = "No settings file at {Path}; using defaults")]
         public static partial void NoSettingsFile(ILogger logger, string path);
 
-        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to load settings from {Path}; falling back to defaults")]
+        [LoggerMessage(Level = LogLevel.Error, Message = "Cannot read settings file {Path}; showing defaults and refusing changes until it can be read")]
         public static partial void LoadFailed(ILogger logger, string path, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Settings saved to {Path}")]
@@ -363,6 +614,36 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Could not restrict permissions on {Path}")]
         public static partial void PermissionRestrictionFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Settings file {Path} is damaged")]
+        public static partial void SettingsCorrupt(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Settings file {Path} is missing but its backup exists; recovering from the backup")]
+        public static partial void SettingsMissingBackupPresent(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Moved damaged settings file {Path} to {QuarantinedPath}")]
+        public static partial void Quarantined(ILogger logger, string path, string quarantinedPath);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Could not move damaged settings file {Path} aside; settings changes are refused")]
+        public static partial void QuarantineFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Restored settings file {Path} from its backup; the last saved change may be lost")]
+        public static partial void RestoredFromBackup(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Could not restore settings file {Path} from its backup")]
+        public static partial void RestoreFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "No usable settings backup for {Path}; using defaults")]
+        public static partial void ResetToDefaults(ILogger logger, string path);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not update settings backup {Path}; the older backup is kept")]
+        public static partial void BackupFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not move settings backup {Path} with the settings file")]
+        public static partial void BackupRelocateFailed(ILogger logger, string path, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not delete temporary file {Path}")]
+        public static partial void TempCleanupFailed(ILogger logger, string path, Exception ex);
     }
 }
 

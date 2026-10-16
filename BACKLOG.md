@@ -380,14 +380,8 @@ The quality pass follows `docs/plans/cq-README.md`: 9 reviewed plans, in this or
 cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass picks up later from
 `docs/code-quality-audit/auditor-top10.md` and the parked plans cq-09, cq-05, cq-06, cq-10 and cq-11.
 
-### CQ-P1. OPEN — five fix-soon items
+### CQ-P1. OPEN — one fix-soon item left (the others are in §9)
 
-- **CQ-09-F1. A failed settings load erases `settings.json`.** `LoadCoreAsync` returns defaults on
-  JsonException, IOException or UnauthorizedAccessException. The next `UpdateAsync` then saves over the
-  file with no backup (`JsonSettingsStore.cs:101,105,146-150`). The test at `JsonSettingsStoreTests.cs:181-198`
-  asserts this. Fix: a failed load must block the write. Rename the file aside on JsonException only, and
-  rethrow I/O and permission errors. A rename on a transient IOException would move a good file aside.
-  Add CQ-09-F4's flush in the same change.
 - **CQ-08-F1. Two PTT features with no production caller** — `SetPttLockAsync`, and
   `TuneAsync(leaveKeyedAfterTune: true)` (never passed `true`). ~54% of ~2,000 PTT lines. Removal also
   closes 08-F7's races. Needs the removal-rule check and the full review cadence.
@@ -402,8 +396,6 @@ User data, safety and error paths:
 - **CQ-11-F14.** `release-windows.yml` runs the unpinned `ilammy/msvc-dev-cmd@v1` in a `contents: write`
   job, with checkout credentials persisted. Pin actions to commit SHAs and set `persist-credentials: false`.
   P3 in the report, but auditor top-10 #8 (supply-chain risk to shipped binaries).
-- **CQ-09-F4.** Settings writes do not flush before `File.Move` (`JsonSettingsStore.cs:170-183` and two
-  other stores). Exposure: NTFS and XFS.
 - **CQ-09-F8.** Preset exclude/redact lists are string literals; new sections are included by default
   (`ConfigurationPresetStore.cs:26-27,45-47`). New secret fields are not pinned by tests.
 - **CQ-10-F2.** QRZ password is in the GET query string; only `Program.cs:1161` keeps it out of `app.log`
@@ -540,3 +532,18 @@ Listed with evidence in the area reports. Pick them up only when already working
   to the end of its Task) and applies the newest version when that ends. Live gain writes, including the TX-start
   seed, are version-guarded. Auditor: 2 plan-review + 2 code-review rounds, go. Known gap kept: if a header write
   fails, the header keeps the unsaved value (pre-existing).
+- **CQ-09-F1 + CQ-09-F4.** DONE — a damaged `settings.json` (bad JSON, empty, NUL-filled, `null`) is moved aside as
+  `settings.json.corrupt-<UTC>` and the previous save's copy `settings.json.bak` is restored on disk (staged before the
+  original is touched); with no usable backup, defaults. An unreadable file (or backup) serves defaults or the backup's
+  data and refuses every changing write (`SettingsUnavailableException : IOException`; a same-reference no-op
+  `UpdateAsync` still succeeds). Every save keeps the replaced file as `.bak` (copy → flush → rename, after the new
+  temp is flushed). `Flush(true)` before the rename in JsonSettingsStore, AppLocationOverrides and
+  ConfigurationPresetStore. Startup dialog via `ISettingsRecoveryNotice` (before the version notice). ReadyRack
+  TogglePin guarded; Refresh keeps working when settings are unavailable. Help en/de. Auditor: 2 plan-review rounds +
+  plan text fixes, 1 code-review round, go.
+- **CQ-09-F1-GAP.** OPEN — the Options dialog opened during a transient settings-read failure shows defaults, and its
+  Save writes them once the file is readable again (`OptionsWindowViewModel.LoadSave.cs:40-104`).
+- **CQ-09-F1-RELOC.** OPEN, minor — `Program.cs` `ApplyPendingRelocations` (legacy bridge) moves only `settings.json`,
+  not `settings.json.bak`; `RelocateAsync`'s destination check ignores a stale foreign `.bak` there.
+- **CQ-09-F4-OTHERS.** OPEN — `TemplateStore`, `ReceiveHistoryRecorder` and `LogbookSessionService` also `File.Move` a
+  temp file; check whether they need the same flush.

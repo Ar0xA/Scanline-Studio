@@ -1111,5 +1111,11 @@
   "Panes.Logbook.Status.LoggedFormat": "QSO logged. {0}. {1}.",
   "Panes.Logbook.Status.LoggedWithPostPersistError": "QSO logged, but forwarding/upload status could not be determined ({0}).",
   "Panes.Logbook.Status.Imported": "Imported {0} QSO(s).",
-  "Panes.Logbook.Status.Exported": "Exported {0} QSO(s)."
+  "Panes.Logbook.Status.Exported": "Exported {0} QSO(s).",
+  "SettingsRecovery.Title": "Settings file problem",
+  "SettingsRecovery.Message.Restored": "Your settings file was damaged or missing, so Scanline Studio restored the copy saved before your last settings change. That last change may be lost: please check Options, especially TX power (Pwr), the SWR cut-off and your QRZ login. The damaged file was kept in the same folder, named settings.json.corrupt-<date>.",
+  "SettingsRecovery.Message.ResetToDefaults": "Your settings file was damaged or missing and no usable backup was found, so Scanline Studio started with default settings. Any damaged file was kept in the same folder, named settings.json.corrupt-<date> or settings.json.bak.corrupt-<date>.",
+  "SettingsRecovery.Message.Unavailable": "Scanline Studio cannot read or repair a settings file, so it is using default or backed-up settings and does not save setting changes until this is fixed. Check the permissions of the file and its folder, then restart Scanline Studio.",
+  "SettingsRecovery.OkButton": "OK",
+  "Panes.TxImageEditor.TogglePinFailed": "Couldn't pin or unpin the template. Check the log for details."
 }

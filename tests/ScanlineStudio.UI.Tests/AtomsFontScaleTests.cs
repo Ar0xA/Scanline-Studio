@@ -210,6 +210,7 @@ public sealed partial class AtomsFontScaleTests
         ["TextPromptWindowView.axaml"] = 3,
         ["ToneGeneratorWindowView.axaml"] = 4,
         ["UpdateCheckDialogView.axaml"] = 2,
+        ["SettingsRecoveryDialogView.axaml"] = 2,
         // 2026-09-19: -4 for the removed Power/ALC fill-bar meters (each had a literal Height="8"),
         // per direct user request ("show numbers, not bars") -- see TxControlsPaneView.axaml's own
         // comment at the Output card's numeric Power/ALC rows.

@@ -667,6 +667,21 @@ public partial class MainWindow : Window
                     }
                 };
 
+                vm.SettingsRecoveryNoticeRequested = async recoveryViewModel =>
+                {
+                    try
+                    {
+                        await new SettingsRecoveryDialogView { DataContext = recoveryViewModel }.ShowDialog(this);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.SettingsRecoveryWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
                 vm.VersionNoticeRequested = async noticeViewModel =>
                 {
                     try
@@ -706,6 +721,18 @@ public partial class MainWindow : Window
 
                 Opened += async (_, _) =>
                 {
+                    try
+                    {
+                        await vm.ShowSettingsRecoveryNoticeIfAnyAsync();
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.SettingsRecoveryWindowFailed(logger, ex);
+                        }
+                    }
+
                     try
                     {
                         await vm.ShowVersionNoticeIfNeededAsync();
@@ -1458,6 +1485,9 @@ public partial class MainWindow : Window
         [LoggerMessage(Level = LogLevel.Error, Message = "Version notice window failed")]
 
         public static partial void VersionNoticeWindowFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Settings recovery notice window failed")]
+        public static partial void SettingsRecoveryWindowFailed(ILogger logger, Exception ex);
 
 
 

@@ -1111,5 +1111,11 @@
   "Panes.Logbook.Status.LoggedFormat": "QSO geloggt. {0}. {1}.",
   "Panes.Logbook.Status.LoggedWithPostPersistError": "QSO geloggt, aber der Weiterleitungs-/Upload-Status konnte nicht ermittelt werden ({0}).",
   "Panes.Logbook.Status.Imported": "{0} QSO(s) importiert.",
-  "Panes.Logbook.Status.Exported": "{0} QSO(s) exportiert."
+  "Panes.Logbook.Status.Exported": "{0} QSO(s) exportiert.",
+  "SettingsRecovery.Title": "Problem mit der Einstellungsdatei",
+  "SettingsRecovery.Message.Restored": "Ihre Einstellungsdatei war beschädigt oder fehlte. Scanline Studio hat deshalb die Kopie wiederhergestellt, die vor Ihrer letzten Einstellungsänderung gespeichert wurde. Diese letzte Änderung kann verloren sein: Bitte prüfen Sie die Optionen, besonders die Sendeleistung (Pwr), die SWR-Abschaltung und Ihre QRZ-Anmeldung. Die beschädigte Datei liegt im selben Ordner als settings.json.corrupt-<Datum>.",
+  "SettingsRecovery.Message.ResetToDefaults": "Ihre Einstellungsdatei war beschädigt oder fehlte, und es gab keine brauchbare Sicherung. Scanline Studio wurde deshalb mit Standardeinstellungen gestartet. Eine beschädigte Datei liegt im selben Ordner als settings.json.corrupt-<Datum> oder settings.json.bak.corrupt-<Datum>.",
+  "SettingsRecovery.Message.Unavailable": "Scanline Studio kann eine Einstellungsdatei nicht lesen oder reparieren. Es verwendet deshalb Standard- oder gesicherte Einstellungen und speichert keine Einstellungsänderungen, bis das behoben ist. Prüfen Sie die Zugriffsrechte der Datei und ihres Ordners und starten Sie Scanline Studio dann neu.",
+  "SettingsRecovery.OkButton": "OK",
+  "Panes.TxImageEditor.TogglePinFailed": "Die Vorlage konnte nicht angeheftet oder gelöst werden. Details stehen im Protokoll."
 }

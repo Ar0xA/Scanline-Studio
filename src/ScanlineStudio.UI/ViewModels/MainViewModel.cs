@@ -395,6 +395,23 @@ public partial class MainViewModel : ViewModelBase
     /// <c>RxHistory.ConfirmRequested</c>: MainWindow shows the dialog and completes the task when it closes.</summary>
     public Func<VersionNoticeDialogViewModel, Task>? VersionNoticeRequested { get; set; }
 
+    /// <summary>Single-subscriber hook, same shape as <see cref="VersionNoticeRequested"/>.</summary>
+    public Func<SettingsRecoveryDialogViewModel, Task>? SettingsRecoveryNoticeRequested { get; set; }
+
+    /// <summary>Called from MainWindow.Opened, before the version notice: tells the user their settings file
+    /// was restored, reset or cannot be read. The notice is taken once, so it shows at most once.</summary>
+    public async Task ShowSettingsRecoveryNoticeIfAnyAsync()
+    {
+        if (SettingsRecoveryNoticeRequested is not { } showDialog
+            || _services.GetService<ISettingsRecoveryNotice>()?.TakeNotice() is not { } notice)
+        {
+            return;
+        }
+
+        Log.SettingsRecoveryNoticeShowing(_logger, notice.Kind, notice.Path);
+        await showDialog(new SettingsRecoveryDialogViewModel(_localization, notice));
+    }
+
     /// <summary>Called once from MainWindow.Opened. No ConfigureAwait(false): the handler creates a Window,
     /// so the continuation must stay on the UI thread.</summary>
     public async Task ShowVersionNoticeIfNeededAsync()
@@ -641,6 +658,9 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Showing the version notice for {Version}")]
         public static partial void VersionNoticeShowing(ILogger logger, string version);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Showing settings recovery notice: {Kind} for {Path}")]
+        public static partial void SettingsRecoveryNoticeShowing(ILogger logger, SettingsRecoveryKind kind, string path);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "CheckForUpdates command invoked")]
         public static partial void CheckForUpdatesInvoked(ILogger logger);
