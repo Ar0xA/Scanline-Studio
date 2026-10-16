@@ -336,10 +336,10 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr">
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr drm easypal">
         <p class="topic-category">Transmitting</p>
         <h2>Transmit a picture</h2>
-        <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode.</p>
+        <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode. To send digitally with DRM (EasyPal) instead, see <a href="#transmit-drm">Send a picture with DRM (EasyPal)</a>.</p>
 
         <ol class="workflow">
           <li>On <strong>Transmit</strong>, select a mode (see <a href="#sstv-modes">Supported SSTV modes</a> for the full list) or leave mode following on Auto to reply in the last received mode.</li>
@@ -359,6 +359,39 @@
 
         <h3>Sent frames</h3>
         <p>A "Sent frames" list on the Transmit tab keeps a short history of this session's transmissions. Each entry shows its outcome (Sent, Stopped, or Failed). Right-click a frame for <strong>Resend</strong> (transmit the same frame again) or <strong>Save…</strong> (export a copy of it). This history is session-only. It does not persist between application restarts the way the Gallery's receive history does.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone level offset papr callsign">
+        <p class="topic-category">Transmitting</p>
+        <h2>Send a picture with DRM (EasyPal)</h2>
+        <p><a class="term" href="#glossary-drm">DRM</a> sends the picture as a compressed JPEG 2000 file instead of as analogue SSTV tones. It is compatible with EasyPal and QSSTV. A DRM picture arrives without noise or slant, or not at all, so it suits good paths and higher resolutions. Scanline Studio sends DRM only; receiving DRM is not available yet.</p>
+
+        <ol class="workflow">
+          <li>On <strong>Transmit</strong>, select <strong>DRM (EasyPal)</strong> at the end of the mode list.</li>
+          <li>Pick a <strong>Profile</strong>: <strong>Robust</strong> for weak or fading signals, <strong>Normal</strong> for typical HF paths, or <strong>Fast</strong> for a strong, clean channel.</li>
+          <li>Pick a <strong>Size</strong> (320 × 240, 640 × 480 or 800 × 600) and a <strong>File size</strong> (4–100 KB). The editor composes at the chosen size, exactly as it does for an SSTV mode.</li>
+          <li>Prepare the picture in the editor, check the <strong>Estimated</strong> row, and select <strong>TRANSMIT</strong>.</li>
+        </ol>
+
+        <h3>File size and airtime</h3>
+        <p>The picture is compressed to roughly the chosen file size. A larger file looks better but takes longer to send. The <strong>Estimated</strong> row shows the real compressed size and the airtime for the current picture and settings; it updates a moment after you change something. Each transmission gets a new time-stamped file name, so receivers never mistake a repeat for a picture they already have. The name is taken from the background picture's file, or "image" for a blank canvas.</p>
+
+        <h3>Transmission settings</h3>
+        <p>Open <strong>Transmission settings</strong> to see what the profile sends. Changing any field switches the profile to <strong>Custom</strong>, which keeps your values.</p>
+        <dl>
+          <dt>Mode</dt><dd>A is the most stable, B is the standard choice, E is the fastest.</dd>
+          <dt>Bandwidth</dt><dd>2.2 kHz or 2.5 kHz occupied bandwidth. Use 2.2 kHz if your transmitter filter is narrow.</dd>
+          <dt>Modulation</dt><dd>4-QAM is the most robust, 64-QAM the fastest.</dd>
+          <dt>Protection</dt><dd>High adds more error protection than Normal.</dd>
+          <dt>Interleave</dt><dd>Long spreads errors over more time and is recommended. The labels describe what is actually sent.</dd>
+          <dt>Error correction</dt><dd>Extra Reed-Solomon data (RS 1 to RS 4) lets a receiver rebuild the file when some segments are lost. Higher values send more data.</dd>
+        </dl>
+
+        <h3>Callsign, VOX tone and level</h3>
+        <p>DRM sends your callsign from <a href="#station-options">Station options</a> in a short 9-character label using plain Latin letters. The <strong>Callsign</strong> row shows what goes on air; it turns red, with a hint, when that differs from what you entered. The <strong>VOX tone</strong> (a 1 s tone before the signal, for VOX keying) and the <strong>DRM level</strong> are set in <a href="#station-options">Station options</a>.</p>
+        <div class="safety"><strong>Drive level.</strong> DRM has a high <a class="term" href="#glossary-papr">PAPR</a>. Set Pwr so the radio shows little or no <a class="term" href="#glossary-alc">ALC</a> action; overdriving a DRM signal ruins it for every receiver. Use the DRM level to lower DRM without moving Pwr for SSTV.</div>
+        <div class="note"><strong>What DRM does not use.</strong> Auto mode following picks SSTV modes only, so it never switches away from DRM. The loopback self-test, VIS header, leader tone and tone map apply to SSTV only. Stop TX, SWR cutoff, Sent frames and Resend work as for SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
@@ -772,16 +805,19 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log">
+      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log drm profile robust normal fast vox tone level offset">
         <p class="topic-category">Options reference</p>
         <h2>Station options</h2>
         <p>The Station tab holds the identity values other features quietly rely on: template macros, identification, and the logbook all read from here rather than asking you to retype them.</p>
 
         <dl>
-          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, and every QSO you log. Leaving this blank breaks all four at once, so it's worth setting before anything else. An empty field shows <strong>N0CALL</strong> as grey placeholder text — a template's "MY CALL" field or CW-ID falls back to that placeholder too if you transmit without setting a real callsign, but FSK identification and your logged QSOs still record it as blank.</dd>
+          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, the DRM station label, and every QSO you log. Leaving this blank breaks all five at once, so it's worth setting before anything else. An empty field shows <strong>N0CALL</strong> as grey placeholder text — a template's "MY CALL" field or CW-ID falls back to that placeholder too if you transmit without setting a real callsign, but FSK identification, DRM transmissions and your logged QSOs still send or record it as blank.</dd>
           <dt>Your name</dt><dd>Available to template overlays as a "MY NAME" insert-field. Purely cosmetic. Nothing else in the application reads it. An empty field shows <strong>NONAME</strong> as grey placeholder text, and a template's "MY NAME" field falls back to it the same way.</dd>
           <dt>Your grid square</dt><dd>Your <a class="term" href="#glossary-maidenhead-grid">Maidenhead grid</a> locator. The field is not validated, so any free-text location you prefer also works. Used for a "MY GRID" overlay field and, together with a contact's grid, to calculate distance and bearing for template fields. An empty field shows <strong>XX00</strong> as grey placeholder text, and a template's "MY GRID" field falls back to it — but <strong>XX00</strong> is not a real grid square, so distance/bearing calculation still needs a real one set here.</dd>
           <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>, shown as grey placeholder text until you type your own. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
+          <dt>DRM transmit profiles</dt><dd>The three profiles the Transmit tab offers for <a href="#transmit-drm">DRM (EasyPal)</a>: a name and the six transmission fields each. Leave a name empty to use the default (Robust, Normal, Fast). The Transmit tab's own Custom profile is kept separately.</dd>
+          <dt>Send a VOX tone before DRM</dt><dd>Sends a 1 s, 1700 Hz tone before each DRM transmission so a <a class="term" href="#glossary-vox">VOX</a>-keyed transmitter is already on when the signal starts. Off by default.</dd>
+          <dt>DRM level (dB)</dt><dd>Lowers DRM relative to SSTV, from 0 to −20 dB, without moving Pwr. Pwr still applies on top. Use it to keep <a class="term" href="#glossary-alc">ALC</a> quiet on DRM.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -845,6 +881,7 @@
           </table>
         </div>
         <p>The MODE card's quick-mode buttons on the Receive tab (see <a href="#receive-first-picture">Receive your first picture</a>) hold a working subset of these. Right-click a slot to reassign it to any mode from the full list above.</p>
+        <p>The Transmit tab's mode selector also offers <strong>DRM (EasyPal)</strong>, a digital mode that is not SSTV: transmit only for now, and not on the quick-mode buttons. See <a href="#transmit-drm">Send a picture with DRM (EasyPal)</a>.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
@@ -1015,7 +1052,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossary terms afc agc cat dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead grid nr utc wpm">
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossary terms afc agc cat drm papr dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead grid nr utc wpm">
         <p class="topic-category">Support</p>
         <h2>Glossary</h2>
         <p>Hover or focus a dotted-underlined term anywhere in this guide to see its definition without leaving the page. Each term links to the single definition here.</p>
@@ -1027,6 +1064,7 @@
           <dt id="glossary-avt-training">AVT training</dt><dd>A decoder state for the AVT SSTV mode family, which needs to measure the incoming signal before it can lock onto and decode the picture. This is distinct from the normal searching/locked states other modes use.</dd>
           <dt id="glossary-bpf">BPF</dt><dd>Band-pass filter; passes a chosen frequency range and rejects everything outside it.</dd>
           <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver control: frequency, mode, PTT, and telemetry communication with a radio.</dd>
+          <dt id="glossary-drm">DRM</dt><dd>Digital Radio Mondiale; here the amateur HamDRM variant EasyPal and QSSTV use to send a picture as a compressed file over a voice channel. A picture either arrives complete and clean, or not at all.</dd>
           <dt id="glossary-dsp">DSP</dt><dd>Digital signal processing.</dd>
           <dt id="glossary-fir">FIR</dt><dd>Finite impulse response; one of two common digital filter designs (see also IIR). Always stable, at the cost of needing more computation for the same sharpness.</dd>
           <dt id="glossary-fsk-id">FSK ID</dt><dd>Frequency-shift keyed station identification data sent around an SSTV transmission.</dd>
@@ -1038,6 +1076,7 @@
           <dt id="glossary-nr">NR</dt><dd>A serial/reference number, here the optional numeric sub-packet FSK identification can carry alongside your callsign.</dd>
           <dt id="glossary-pll">PLL</dt><dd>Phase-locked loop; one of the demodulator methods Scanline Studio can use to track the incoming picture tone and recover brightness from it.</dd>
           <dt id="glossary-ppm">PPM</dt><dd>Parts per million; here, a small audio-clock error that can produce image slant.</dd>
+          <dt id="glossary-papr">PAPR</dt><dd>Peak-to-average power ratio; how far a signal's peaks rise above its average power. DRM's is high, so its peaks reach full output long before the average does.</dd>
           <dt id="glossary-ptt">PTT</dt><dd>Push to talk; the control that keys the transmitter.</dd>
           <dt id="glossary-qso">QSO</dt><dd>A radio contact between stations.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Confirmation of a radio contact; often represented by a designed card or SSTV picture.</dd>

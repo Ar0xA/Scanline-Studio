@@ -241,7 +241,13 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default) => throw NotExercised();
 
-    public Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => throw NotExercised();
+    public Task<DrmTxResult> TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => throw NotExercised();
+
+    public Task<DrmEstimate> EstimateDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => throw NotExercised();
+
+    public Task<TimeSpan> EstimateDrmDurationAsync(byte[] jp2, string fileName, DrmTxSettings settings, CancellationToken ct = default) => throw NotExercised();
+
+    public Task<bool> GetDrmTransmitAvailabilityAsync() => throw NotExercised();
 
     public void ForgetDrmTxFileName() => throw NotExercised();
 

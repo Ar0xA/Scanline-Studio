@@ -135,7 +135,7 @@
                      docs/removed-features.md). Same binding-path reasoning as Macros/Storage above
                      (TxControls, not RadioStatus) — this needs the currently loaded TX image/mode,
                      which lives on TxControlsPaneViewModel. -->
-                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" Command="{Binding TxControls.RunLoopbackSelfTestCommand}" />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Calibration.LoopbackSelfTest}" Command="{Binding TxControls.RunLoopbackSelfTestCommand}" IsEnabled="{Binding TxControls.IsSstvSelected, FallbackValue=False}" />
                 <!-- Stub survey Tier 2 (2026-08-26): opens the new general-purpose Tone Generator
                      dialog, reusing RadioStatusViewModel.TuneCommand (already real, previously
                      unexposed) — see FavouritesEditorWindowView/ToneGeneratorWindowView's own

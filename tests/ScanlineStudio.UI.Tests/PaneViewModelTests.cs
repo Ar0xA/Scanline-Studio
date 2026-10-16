@@ -4265,7 +4265,7 @@ public sealed class PaneViewModelTests
         // Code-review finding: NOT entry.SourceFileName's own extension (a Browse-sourced photo's
         // real filename, e.g. "vacation.jpg") -- always a fresh ".png" name, matching
         // RxImagePaneViewModel.SaveFrameAsync's own "{timestamp}_{mode}.png" shape.
-        Assert.EndsWith($"_{entry.Mode.Id}.png", filePicker.LastSuggestedPngFileName);
+        Assert.EndsWith($"_{entry.ModeToken}.png", filePicker.LastSuggestedPngFileName);
     }
 
     [AvaloniaFact]

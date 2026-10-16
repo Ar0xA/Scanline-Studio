@@ -360,7 +360,7 @@ public sealed partial class TxImageEditorPaneViewModel
         CropRect = CropRect with { Width = newWidth, Height = newHeight };
     }
 
-    /// <summary>Inner-fit to <see cref="_targetMode"/>'s own aspect ratio -- the largest
+    /// <summary>Inner-fit to <see cref="_target"/>'s own aspect ratio -- the largest
     /// target-aspect box that fits within the raw (unconstrained) dragged box. Monotonic and stable
     /// regardless of how a drag gesture is split across pointer-move events, unlike a "which axis
     /// moved more this event" heuristic (frame-rate/event-granularity dependent for the same
@@ -375,7 +375,7 @@ public sealed partial class TxImageEditorPaneViewModel
     /// X- and Y-overflow halves).</summary>
     private void ApplyCropResizeAspectLocked(double dx, double dy)
     {
-        var targetAspect = (double)_targetMode.ImageWidth / _targetMode.ImageHeight;
+        var targetAspect = (double)_target.Width / _target.Height;
         var minWidthPixels = MinNormalizedCropSize * WorkingCopyWidth;
         var minHeightPixels = MinNormalizedCropSize * WorkingCopyHeight;
         var maxWidthPixels = (1 - CropRect.X) * WorkingCopyWidth;

@@ -349,7 +349,26 @@ real QSSTV/EasyPal WAVs for P8.
 - **DRM-REL.** OPEN — release checklist: (1) per OS, confirm `libopenjp2` sits beside the published exe and the
   "OpenJPEG 2.5.4 loaded" log appears on first DRM use (release workflows run no tests); (2) state "macOS 14+,
   glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34).
-- **DRM-P4b.** OPEN — TX UI (own plan review). Includes the DRM drive level: DRM is 12-14 dB below SSTV at the same Pwr.
+- **DRM-P4b.** DONE — TX UI: "DRM (EasyPal)" target in the TX mode list (TargetGeometry refactor of the editor,
+  SSTV unchanged), DRM block (profile, size, file size, live airtime estimate while editing, on-air callsign), Options ›
+  Station profiles (Robust/Normal/Fast defaults) and VOX, sent-frames/resend, help en/de. Live check: QSSTV harness
+  RX decoded a UI-sent JP2; PTT via rigctld dummy rig; estimate 80.4 s = airtime. Auditor: 2 plan-review + 2
+  code-review rounds, go. The interim DRM level offset is replaced by DRM-PWR.
+- **DRM-PWR.** OPEN — separate Pwr per mode type (SSTV/DRM), user decision; plan Addendum A in the P4b plan
+  (auditor 2 rounds + principal review, ready to build).
+- **DRM-SRC.** OPEN — the "Source (max 1024)" DRM size option, cut from P4b: its geometry, re-load and ratio rules
+  need their own design (QSSTV sends the source size capped at 1024).
+- **DRM-QGRID.** OPEN — a DRM slot on the TX quick-mode grid, cut from P4b: the grid types are shared with RX
+  (`QuickModeGridViewModels.cs`, `RxImagePaneViewModel.cs` quick-grid), so DRM is selectable from the mode ComboBox only.
+- **TX-BLANKNAME.** OPEN — pre-existing: after a Browse into the default blank editor (in-place background load),
+  `SelectedFileName` still shows "Blank" after Apply, because the editor keeps the blank editor's file name
+  (`TxControlsPaneViewModel.OpenEditorForSourceAsync` in-place branch). Not caused by DRM; the DRM on-air name
+  uses its own tracked source path.
+- **DRM-JP2TIME.** OPEN (record) — JP2 encode time on this machine (Ryzen 7 5800X, OpenJPEG 2.5.4, median of 5):
+  640×480 20 KB 17 ms / 100 KB 19 ms; 800×600 20 KB 27 ms / 100 KB 28 ms (photo-like source; a flat card
+  9-15 ms). Frame count for the recount: 12-46 ms. The 400 ms debounce, not the encode, dominates the estimate
+  latency; revisit only if a slower machine shows > 250 ms. Estimate compose from a 24 MP original at 800×600: 96 ms
+  median (Release), so about 125 ms per estimate with the encode.
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
   and the lost-frame attribution (fixture README).
 - **DRM-P7a / P7b.** OPEN — RX source + Application integration / RX UI (own plan review).

@@ -882,7 +882,69 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     /// field is untouched so existing callers keep working unchanged.</summary>
     public TaskCompletionSource? TransmitGate { get; set; }
 
-    public Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default) => Task.CompletedTask;
+    public List<(IImageSource Image, string FileName, DrmTxSettings Settings)> TransmitDrmCalls { get; } = [];
+
+    public DrmTxResult DrmResultToReturn { get; set; } = new(42_000, "20260101000000-image.jp2");
+
+    /// <summary>Shares <see cref="TransmitGate"/>/<see cref="BlockUntilCancelled"/> with <see cref="TransmitAsync"/>.</summary>
+    public async Task<DrmTxResult> TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default)
+    {
+        TransmitDrmCalls.Add((image, fileName, settings));
+        if (TransmitGate is not null)
+        {
+            await TransmitGate.Task;
+            return DrmResultToReturn;
+        }
+
+        if (BlockUntilCancelled)
+        {
+            var tcs = new TaskCompletionSource();
+            ct.Register(() => tcs.TrySetCanceled(ct));
+            await tcs.Task;
+        }
+
+        return DrmResultToReturn;
+    }
+
+    public bool DrmTransmitAvailable { get; set; } = true;
+
+    public Task<bool> GetDrmTransmitAvailabilityAsync() => Task.FromResult(DrmTransmitAvailable);
+
+    public List<(IImageSource Image, string FileName, DrmTxSettings Settings)> EstimateDrmCalls { get; } = [];
+
+    public List<(byte[] Jp2, string FileName, DrmTxSettings Settings)> EstimateDrmDurationCalls { get; } = [];
+
+    /// <summary>When set, each <see cref="EstimateDrmAsync"/> call takes the next gate from the queue and waits on it.</summary>
+    public Queue<TaskCompletionSource<DrmEstimate>> EstimateGates { get; } = new();
+
+    public int EstimatesInFlight { get; private set; }
+
+    public int MaxEstimatesInFlight { get; private set; }
+
+    public DrmEstimate EstimateToReturn { get; set; } = new(new byte[20_000], TimeSpan.FromSeconds(75));
+
+    public TimeSpan EstimateDurationToReturn { get; set; } = TimeSpan.FromSeconds(60);
+
+    public async Task<DrmEstimate> EstimateDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default)
+    {
+        EstimateDrmCalls.Add((image, fileName, settings));
+        EstimatesInFlight++;
+        MaxEstimatesInFlight = Math.Max(MaxEstimatesInFlight, EstimatesInFlight);
+        try
+        {
+            return EstimateGates.TryDequeue(out var gate) ? await gate.Task : EstimateToReturn;
+        }
+        finally
+        {
+            EstimatesInFlight--;
+        }
+    }
+
+    public Task<TimeSpan> EstimateDrmDurationAsync(byte[] jp2, string fileName, DrmTxSettings settings, CancellationToken ct = default)
+    {
+        EstimateDrmDurationCalls.Add((jp2, fileName, settings));
+        return Task.FromResult(EstimateDurationToReturn);
+    }
 
     public void ForgetDrmTxFileName()
     {

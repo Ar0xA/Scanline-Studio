@@ -166,6 +166,102 @@ public sealed class SstvSessionServiceTransmitDrmTests
         Assert.Empty(h.Radio.PttCalls);
     }
 
+    private static readonly float[] SstvSamples = Enumerable.Range(0, 9000).Select(i => MathF.Sin(i * 0.05f) * 0.5f).ToArray();
+
+    [Theory]
+    [InlineData(-6.0, -6.0)]
+    [InlineData(-30.0, -20.0)]
+    [InlineData(5.0, 0.0)]
+    [InlineData(double.NaN, 0.0)]
+    [InlineData(double.PositiveInfinity, 0.0)]
+    [InlineData(double.NegativeInfinity, 0.0)]
+    public async Task TransmitDrm_LevelOffset_ScalesTheDrmAudioOnly_ClampedAtTheServiceBoundary(double requestedDb, double appliedDb)
+    {
+        var h = new Harness(sstvSamples: SstvSamples);
+
+        DrmTxResult result = await h.Service.TransmitDrmAsync(Image, "photo.png", Settings with { LevelOffsetDb = requestedDb });
+
+        float factor = (float)Math.Pow(10, appliedDb / 20);
+        float[] expected = (await ExpectedSamplesAsync()).Select(x => x * factor).ToArray();
+        float[] drm = [.. h.Audio.PlaybackSamples];
+        Assert.True(expected.AsSpan().SequenceEqual(drm), "DRM samples are not the Core output times the offset");
+        Assert.Equal(FakeJp2.Length, result.Jp2Bytes);
+        Assert.Equal("20260101120000-photo.rs1", result.OnAirName);
+
+        // The offset is per transmission: SSTV and Tune afterwards play at the plain Pwr gain.
+        await h.Service.TransmitAsync(SstvMode, Image);
+        Assert.True(SstvSamples.AsSpan().SequenceEqual(h.Audio.PlaybackSamples.Skip(drm.Length).ToArray()), "SSTV samples changed after a DRM send");
+        int beforeTune = h.Audio.PlaybackSamples.Count;
+        await h.Service.TuneAsync(1750, TimeSpan.FromMilliseconds(200));
+        Assert.InRange(h.Audio.PlaybackSamples.Skip(beforeTune).Max(Math.Abs), 0.999f, 1.001f);
+    }
+
+    [Fact]
+    public async Task TransmitDrm_PwrChangedMidTransmission_StillAppliesOnTopOfTheLevelOffset()
+    {
+        var h = new Harness();
+        bool changed = false;
+        h.Audio.OnPlaybackChunkEnqueued = async () =>
+        {
+            if (!changed)
+            {
+                changed = true;
+                await h.Service.SetTxVolumePercentAsync(50);
+            }
+        };
+
+        await h.Service.TransmitDrmAsync(Image, "photo.png", Settings with { LevelOffsetDb = -6 });
+
+        float factor = (float)Math.Pow(10, -6.0 / 20);
+        float[] core = await ExpectedSamplesAsync();
+        float[] played = [.. h.Audio.PlaybackSamples];
+        for (int i = 0; i < 4096; i++)
+            Assert.Equal(core[i] * factor, played[i]);
+        for (int i = 4096; i < 3 * 4096; i++)
+            Assert.Equal(core[i] * factor * 0.5f, played[i]);
+    }
+
+    [Fact]
+    public async Task EstimateDrm_EncodesLikeTheSend_CountsItsLength_WithoutKeyingOrStamping()
+    {
+        var h = new Harness();
+
+        DrmEstimate estimate = await h.Service.EstimateDrmAsync(Image, "photo.png", Settings);
+        TimeSpan recount = await h.Service.EstimateDrmDurationAsync(estimate.Jp2, "photo.png", Settings);
+
+        float[] sent = await ExpectedSamplesAsync();
+        Assert.Equal(FakeJp2, estimate.Jp2);
+        Assert.Equal(23, h.Codec.LastRatio);
+        Assert.Equal(sent.Length / 48_000.0, estimate.Duration.TotalSeconds, 9);
+        Assert.Equal(estimate.Duration, recount);
+        Assert.Empty(h.Radio.PttCalls);
+        Assert.Empty(h.Transmitter.OnAirNames);
+        Assert.Null(h.Audio.LastRequestedPlaybackSampleRate);
+    }
+
+    [Fact]
+    public async Task EstimateDrmDuration_ProfileChange_RecountsWithoutAnotherEncode()
+    {
+        var h = new Harness();
+        DrmEstimate estimate = await h.Service.EstimateDrmAsync(Image, "photo.png", Settings);
+
+        TimeSpan fast = await h.Service.EstimateDrmDurationAsync(estimate.Jp2, "photo.png", Settings with { Mode = DrmRobustnessMode.E, Qam = DrmQamOrder.Qam64, VoxTone = false });
+
+        Assert.Equal(1, h.Codec.EncodeCalls);
+        Assert.True(fast < estimate.Duration);
+    }
+
+    [Theory]
+    [InlineData(true, true, true)]
+    [InlineData(false, true, false)]
+    [InlineData(true, false, false)]
+    public async Task GetDrmTransmitAvailability_NeedsATransmitterAndALoadableCodec(bool codecAvailable, bool withDrm, bool expected)
+    {
+        var h = new Harness(codecAvailable, withDrm);
+
+        Assert.Equal(expected, await h.Service.GetDrmTransmitAvailabilityAsync());
+    }
+
     private static async Task<float[]> ExpectedSamplesAsync()
     {
         var transmitter = new DrmTransmitter(new DrmTxNaming(new FixedClock(Stamp)), new BsrTransportIdCounter());
@@ -241,6 +337,8 @@ public sealed class SstvSessionServiceTransmitDrmTests
             OnAirNames.Add(tx.OnAirName);
             return Override ?? tx;
         }
+
+        public DrmFrameCount CountFrames(ReadOnlySpan<byte> jp2, string fileName, DrmTxSettings settings) => inner.CountFrames(jp2, fileName, settings);
 
         public void ForgetTxFileName() => inner.ForgetTxFileName();
     }

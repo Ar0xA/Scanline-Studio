@@ -51,6 +51,7 @@ public sealed partial class OptionsWindowViewModel
             AppTheme = appearanceSettings?.Theme ?? AppTheme.Light;
             FontScale = appearanceSettings?.FontScale ?? AppFontScale.Normal;
             DecodingIndicatorBlinks = appearanceSettings?.DecodingIndicatorBlinks ?? AppearanceSettings.DefaultDecodingIndicatorBlinks;
+            LoadDrmOptions(appSettings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings));
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -707,8 +708,11 @@ public sealed partial class OptionsWindowViewModel
             var appTheme = AppTheme;
             var fontScale = FontScale;
             var decodingIndicatorBlinks = DecodingIndicatorBlinks;
+            var drmUpdate = CaptureDrmOptionsUpdate();
             await _settingsStore.UpdateAsync(appSettings =>
             {
+                var currentDrm = appSettings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings) ?? new DrmSettings();
+                appSettings = appSettings.WithSection(DrmSettings.SectionKey, drmUpdate(currentDrm), DrmSettingsJsonContext.Default.DrmSettings);
                 var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();
                 var updatedAppSettings = appSettings.WithSection(
                     WindowGeometrySettings.SectionKey, currentGeometry with { RememberWindowPosition = rememberWindowPosition }, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);

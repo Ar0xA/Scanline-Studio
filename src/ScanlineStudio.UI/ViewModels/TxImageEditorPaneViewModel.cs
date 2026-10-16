@@ -69,7 +69,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     // VM is UI-thread-only, same as every other mutable field here).
     private IImageSource _originalSource;
     private IImageSource _workingCopy;
-    private readonly SstvModeDefinition _targetMode;
+    private readonly TargetGeometry _target;
     /// <summary>See <see cref="HasUnsavedEdits"/>'s own doc comment.</summary>
     private readonly bool _carriedOverUnsavedEdits;
     /// <summary>yoniq-auditor finding (2026-09-19, Blocker 1): a SEPARATE, mutable field from
@@ -249,7 +249,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     /// <summary>Constrains the crop-rectangle drag-resize handle (NOT the keyboard Shift+arrow
     /// nudge, which stays free-form -- see <see cref="NudgeCropResize"/>'s own doc comment) to
-    /// always maintain <see cref="_targetMode"/>'s own aspect ratio (spec/18-path-to-1.0.md High
+    /// always maintain <see cref="_target"/>'s own aspect ratio (spec/18-path-to-1.0.md High
     /// item 4). Orthogonal to <see cref="PreserveAspect"/>, which governs the separate Resize step
     /// (letterbox vs. stretch) -- this one constrains crop SHAPE. Default OFF so existing free-form
     /// behavior is unchanged unless a user opts in.</summary>
@@ -406,9 +406,41 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [ObservableProperty]
     private double _denoise;
 
+    /// <summary>SSTV convenience overload: the editor composes for <paramref name="targetMode"/>'s own frame.</summary>
     public TxImageEditorPaneViewModel(
         IImageSource originalSource,
         SstvModeDefinition targetMode,
+        ITransmitImagePreparer preparer,
+        IMacroTextResolver macroTextResolver,
+        OperatorSettings operatorSettings,
+        IRadioSessionService radioSessionService,
+        ILocalizationService localization,
+        ILogger<TxImageEditorPaneViewModel> logger,
+        IFilePickerService filePickerService,
+        IImageFileLoader imageFileLoader,
+        IReceivedImageBuffer receivedImageBuffer,
+        IReceiveHistoryStore receiveHistoryStore,
+        ITemplateStore templateStore,
+        IImageSourceWriter imageSourceWriter,
+        ReadyRackViewModel readyRack,
+        EditorInitialState? initialState = null,
+        Func<bool>? canTransmitNow = null,
+        IReadOnlyDictionary<string, string>? currentContactVariables = null,
+        Action? macrosReferenceRequested = null,
+        Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null,
+        bool carriedOverUnsavedEdits = false,
+        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null)
+        : this(
+            originalSource, targetMode.ToGeometry(), preparer, macroTextResolver, operatorSettings, radioSessionService,
+            localization, logger, filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore,
+            templateStore, imageSourceWriter, readyRack, initialState, canTransmitNow, currentContactVariables,
+            macrosReferenceRequested, currentContactProvider, carriedOverUnsavedEdits, transmitStatusNow)
+    {
+    }
+
+    public TxImageEditorPaneViewModel(
+        IImageSource originalSource,
+        TargetGeometry target,
         ITransmitImagePreparer preparer,
         IMacroTextResolver macroTextResolver,
         OperatorSettings operatorSettings,
@@ -462,7 +494,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
         _sourceBaselineRotation = 0;
-        _targetMode = targetMode;
+        _target = target;
         _carriedOverUnsavedEdits = carriedOverUnsavedEdits;
         _carriedOverDirtySinceCheckpoint = carriedOverUnsavedEdits;
         _preparer = preparer;
@@ -491,7 +523,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // here covers all of them instead of patching each call site individually.
         OverlayElements.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasNoBackgroundOrOverlayElements));
 
-        _workingCopy = BuildWorkingCopy(originalSource, targetMode, preparer);
+        _workingCopy = BuildWorkingCopy(originalSource, target, preparer);
         WorkingCopyBitmap = _workingCopyPool.Blit(_workingCopy);
 
         if (initialState is { } initial)
@@ -744,31 +776,31 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
 
     /// <summary>spec/18-path-to-1.0.md Medium item: the card header used to be a static locale
     /// string ("EDITOR — OUTGOING FRAME · 640×496 · PD120") regardless of the actual mode/image
-    /// being edited. <see cref="_targetMode"/> is fixed for this editor instance's whole lifetime
+    /// being edited. <see cref="_target"/> is fixed for this editor instance's whole lifetime
     /// (frozen at construction, spec/18-path-to-1.0.md High item 2's own stale-mode-transmit-crash
     /// fix), so this never needs to react to a mode change mid-edit -- a plain computed property,
     /// not an <see cref="ObservableProperty"/>.</summary>
     public string HeaderText => _localization.GetString(
-        "Panes.TxImageEditor.CardHeaderFormat", _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName);
+        "Panes.TxImageEditor.CardHeaderFormat", _target.Width, _target.Height, _target.DisplayName);
 
     /// <summary>Design-fidelity Phase H (final confirming pass finding #6) -- the PREVIEW panel's
     /// own MaxHeight, bound to the real target mode height rather than a hardcoded 200 (which
     /// downscaled every 256-line mode's "mode-exact" preview to 78%, defeating its own point --
     /// the mock renders this panel at literal 1:1). Same frozen-for-the-editor's-lifetime reasoning
     /// as <see cref="HeaderText"/> -- a plain computed property, not observable.</summary>
-    public double PreviewMaxHeight => _targetMode.ImageHeight;
+    public double PreviewMaxHeight => _target.Height;
 
     /// <summary>Same real-dimensions fix as <see cref="HeaderText"/>, for the separate dimensions
     /// chip lower in the tool strip (mock2's own layout keeps both -- the chip is a compact
     /// at-a-glance readout next to the aspect/text/apply controls, not a duplicate of the header).</summary>
     public string DimensionsChipText => _localization.GetString(
-        "Panes.TxImageEditor.DimensionsChipFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
+        "Panes.TxImageEditor.DimensionsChipFormat", _target.Width, _target.Height);
 
     /// <summary>Mode-switch-mid-edit feature -- lets a host (<see cref="TxControlsPaneViewModel"/>)
     /// log which mode a replaced editor instance was targeting, without needing its own copy of
-    /// <see cref="_targetMode"/>. No other reader existed before this feature; every other
-    /// <see cref="_targetMode"/> use stays internal.</summary>
-    public string TargetModeId => _targetMode.Id;
+    /// <see cref="_target"/>. No other reader existed before this feature; every other
+    /// <see cref="_target"/> use stays internal.</summary>
+    public string TargetModeId => _target.Id;
 
     /// <summary>Mode-switch-mid-edit feature -- lets <see cref="TxControlsPaneViewModel.ReplaceEditorForModeSwitch"/>
     /// reuse the OLD editor instance's already-loaded <see cref="OperatorSettings"/> when
@@ -805,15 +837,18 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>EditWindow redesign, design-fidelity Phase B (mockups/Editwindow) -- the new context
     /// bar's mono frame readout ("OUTGOING FRAME 320×256 · MARTIN M1 · 114.3 s"). Duration reuses
     /// <see cref="TxControlsPaneViewModel.GetFrameSeconds"/>, not a new computation, just applied to
-    /// THIS editor's own fixed <see cref="_targetMode"/> -- a naive <c>LineDurationMs * ImageHeight
+    /// THIS editor's own fixed <see cref="_target"/> -- a naive <c>LineDurationMs * ImageHeight
     /// / 1000.0</c> here would double-count for <see cref="ColorEncoding.YCbCrLinePaired"/>/
     /// <see cref="ColorEncoding.MonoAveragedPaired"/> modes (the exact PD90-family bug that method's
     /// own doc comment documents fixing on the TX Controls card; this editor was left using the
     /// naive formula when that fix landed, a real bug caught and fixed later the same day).</summary>
-    public string FrameReadoutText => _localization.GetString(
-        "Panes.TxImageEditor.FrameReadoutFormat",
-        _targetMode.ImageWidth, _targetMode.ImageHeight, _targetMode.DisplayName.ToUpperInvariant(),
-        TxControlsPaneViewModel.GetFrameSeconds(_targetMode));
+    public string FrameReadoutText => (_target.FrameSeconds ?? _estimatedFrameSeconds) is { } seconds
+        ? _localization.GetString(
+            "Panes.TxImageEditor.FrameReadoutFormat",
+            _target.Width, _target.Height, _target.DisplayName.ToUpperInvariant(), seconds)
+        : _localization.GetString(
+            "Panes.TxImageEditor.FrameReadoutFormatNoDuration",
+            _target.Width, _target.Height, _target.DisplayName.ToUpperInvariant());
 
     /// <summary>Design-fidelity Phase C (mockups/Editwindow line 130) -- canvas footer, bottom-left:
     /// crop dims (always the target mode's own fixed render size, same numbers as
@@ -821,13 +856,13 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <see cref="LockAspectToMode"/>-gated chip in the View, not baked into this string, so its
     /// IsVisible binding stays a plain bool instead of parsing this text.</summary>
     public string CropFooterText => _localization.GetString(
-        "Panes.TxImageEditor.CropFooterFormat", _targetMode.ImageWidth, _targetMode.ImageHeight);
+        "Panes.TxImageEditor.CropFooterFormat", _target.Width, _target.Height);
 
     /// <summary>Design-fidelity Phase C (mockups/Editwindow line 131) -- canvas footer, bottom-right:
     /// the live working-copy pixel size (which changes with zoom-independent factors like rotation)
     /// alongside the fixed render target size.</summary>
     public string WorkingCopyFooterText => _localization.GetString(
-        "Panes.TxImageEditor.WorkingCopyFooterFormat", WorkingCopyWidth, WorkingCopyHeight, _targetMode.ImageWidth, _targetMode.ImageHeight);
+        "Panes.TxImageEditor.WorkingCopyFooterFormat", WorkingCopyWidth, WorkingCopyHeight, _target.Width, _target.Height);
 
     /// <summary>Design-fidelity Phase E (#15, mockups/Editwindow line 108) -- a small mono readout
     /// above the selected element on the interactive canvas: type/z-order + pixel geometry, plus
@@ -1097,7 +1132,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [RelayCommand]
     private void Apply()
     {
-        Log.ApplyInvoked(_logger, _targetMode.Id);
+        Log.ApplyInvoked(_logger, _target.Id);
         Applied?.Invoke(BuildFinalOutput());
     }
 
@@ -1110,7 +1145,7 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     [RelayCommand(CanExecute = nameof(CanApplyAndTransmit))]
     private void ApplyAndTransmit()
     {
-        Log.ApplyAndTransmitInvoked(_logger, _targetMode.Id);
+        Log.ApplyAndTransmitInvoked(_logger, _target.Id);
         AppliedAndTransmitRequested?.Invoke(BuildFinalOutput());
     }
 
@@ -1142,10 +1177,40 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         OnPropertyChanged(nameof(TransmitProgressText));
     }
 
+    /// <summary>Captures the inputs of <see cref="BuildFinalOutput"/> on the UI thread and returns a composer that
+    /// renders the same frame through the fused <see cref="ITransmitImagePreparer.ComposePreview"/>, safe to run off
+    /// the UI thread. Used by the DRM size estimate.</summary>
+    public Func<IImageSource> CaptureFinalOutputComposer()
+    {
+        var preparer = _preparer;
+        var source = _originalSource;
+        var crop = CropRect;
+        var (width, height) = (_target.Width, _target.Height);
+        var preserveAspect = PreserveAspect;
+        var adjustments = BuildAdjustments();
+        var template = BuildTemplateDocument();
+        return () => preparer.ComposePreview(source, crop, width, height, preserveAspect, adjustments, template);
+    }
+
+    /// <summary>Airtime for targets with no fixed frame time (DRM), shown in the header and SEND readouts.</summary>
+    public void SetEstimatedFrameSeconds(double? seconds)
+    {
+        if (_estimatedFrameSeconds == seconds)
+        {
+            return;
+        }
+
+        _estimatedFrameSeconds = seconds;
+        OnPropertyChanged(nameof(FrameReadoutText));
+        OnPropertyChanged(nameof(SendMetaText));
+    }
+
+    private double? _estimatedFrameSeconds;
+
     private IImageSource BuildFinalOutput()
     {
         var cropped = _preparer.Crop(_originalSource, CropRect);
-        var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
+        var resized = _preparer.Resize(cropped, _target.Width, _target.Height, PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, BuildAdjustments());
         return _preparer.ApplyTemplate(adjusted, BuildTemplateDocument());
     }

@@ -86,9 +86,9 @@ public sealed partial class TxImageEditorPaneViewModel
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
             // Quick Style Flyout (TX workflow modernization plan, Phase 1) -- see its own doc
-            // comment; _targetMode is ctor-only/never reassigned, so this constant stays correct
+            // comment; _target is ctor-only/never reassigned, so this constant stays correct
             // for the element's whole lifetime.
-            TargetModeHeightPx = _targetMode.ImageHeight,
+            TargetModeHeightPx = _target.Height,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -178,7 +178,7 @@ public sealed partial class TxImageEditorPaneViewModel
             Locked = s.Locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
-            TargetModeHeightPx = _targetMode.ImageHeight,
+            TargetModeHeightPx = _target.Height,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -255,7 +255,7 @@ public sealed partial class TxImageEditorPaneViewModel
         var scaleY = ComputeTargetToCanvasScaleY();
         var displayHeight = element.Height * CanvasDisplayHeight;
         var styleHeight = scaleY > 0 && displayHeight > 0
-            ? (_targetMode.ImageHeight / scaleY) * (targetHeightPx / displayHeight)
+            ? (_target.Height / scaleY) * (targetHeightPx / displayHeight)
             : targetHeightPx;
         return _preparer.RenderWarpedElementPreview(templateElement, targetWidthPx, targetHeightPx, styleHeight);
     }
@@ -288,7 +288,7 @@ public sealed partial class TxImageEditorPaneViewModel
             Locked = s.Locked,
             ImageWidth = CanvasDisplayWidth,
             ImageHeight = CanvasDisplayHeight,
-            TargetModeHeightPx = _targetMode.ImageHeight,
+            TargetModeHeightPx = _target.Height,
             RemoveCommand = RemoveOverlayElementCommand,
             MoveUpCommand = MoveElementUpCommand,
             MoveDownCommand = MoveElementDownCommand,
@@ -504,7 +504,7 @@ public sealed partial class TxImageEditorPaneViewModel
         var p2 = ProjectRectToCropRelative(line.X2, line.Y2, 0, 0);
         var lineBounds = TemplateLineGeometry.ComputeInflatedBounds(
             p1.X, p1.Y, p2.X, p2.Y, line.StrokeThickness,
-            imageWidthPx: _targetMode.ImageWidth, imageHeightPx: _targetMode.ImageHeight);
+            imageWidthPx: _target.Width, imageHeightPx: _target.Height);
         return new TemplateLineElement(lineBounds, line.Z, p1.X, p1.Y, p2.X, p2.Y, line.StrokeColor, line.StrokeThickness, line.Opacity);
     }
 }

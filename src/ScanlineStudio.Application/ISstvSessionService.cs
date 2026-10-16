@@ -623,7 +623,22 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <see cref="InvalidOperationException"/> before touching PTT when the JPEG 2000 codec is unavailable.</summary>
     /// <param name="fileName">Source name; QSSTV sends <c>stamp-name.jp2</c> (drmtx.cpp:50-78,114) with a new
     /// UTC stamp on every transmission, so a repeated image gets a new transport ID.</param>
-    Task TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default);
+    /// <returns>The JPEG 2000 size and the stamped on-air name. <see cref="DrmTxSettings.LevelOffsetDb"/> is clamped
+    /// to −20..0 dB (NaN/infinity → 0) and scales only this transmission; Pwr still applies live on top.</returns>
+    Task<DrmTxResult> TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default);
+
+    /// <summary>Encodes <paramref name="image"/> exactly as <see cref="TransmitDrmAsync"/> would and counts the
+    /// resulting on-air length, without keying, without touching the TX stamp or the BSR counter. The encode
+    /// runs on the thread pool and cannot be cancelled once started; <paramref name="ct"/> is checked before it.</summary>
+    Task<DrmEstimate> EstimateDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default);
+
+    /// <summary>The on-air length of an already encoded JPEG 2000 file under <paramref name="settings"/>: the
+    /// recount after a profile change, which does not need a new encode. Side-effect free, thread pool.</summary>
+    Task<TimeSpan> EstimateDrmDurationAsync(byte[] jp2, string fileName, DrmTxSettings settings, CancellationToken ct = default);
+
+    /// <summary>Whether DRM transmit can run: a DRM transmitter is configured and the JPEG 2000 library loads. The
+    /// first call loads the native library on the thread pool.</summary>
+    Task<bool> GetDrmTransmitAvailabilityAsync();
 
     /// <summary>Clears the DRM TX file-name stamp, as QSSTV does when a DRM parameter changes
     /// (txwidget.cpp:201-218). <see cref="TransmitDrmAsync"/> already takes a new stamp on every call.</summary>

@@ -46,9 +46,21 @@ public sealed class DrmTxNaming
     internal DrmTxFileName GetTxFileName(string fileName, bool binary)
     {
         if (_stamp.Length == 0)
-            _stamp = _timeProvider.GetUtcNow().ToString("yyyyMMddHHmmss", CultureInfo.InvariantCulture);
+            _stamp = _timeProvider.GetUtcNow().ToString(StampFormat, CultureInfo.InvariantCulture);
 
-        var name = new DrmTxFileName(_stamp + "-" + DrmTxFileName.StripPath(fileName));
+        return Build(_stamp, fileName, binary);
+    }
+
+    /// <summary>The name <see cref="GetTxFileName"/> would give, with a same-length placeholder stamp: the MOT
+    /// header, and so the frame count, depend on the name's length only. Reads and changes no state.</summary>
+    internal static DrmTxFileName PlaceholderTxFileName(string fileName, bool binary) =>
+        Build(new string('0', StampFormat.Length), fileName, binary);
+
+    private const string StampFormat = "yyyyMMddHHmmss";
+
+    private static DrmTxFileName Build(string stamp, string fileName, bool binary)
+    {
+        var name = new DrmTxFileName(stamp + "-" + DrmTxFileName.StripPath(fileName));
         return binary ? name : new DrmTxFileName(name.CompleteBaseName + ".jp2");
     }
 }

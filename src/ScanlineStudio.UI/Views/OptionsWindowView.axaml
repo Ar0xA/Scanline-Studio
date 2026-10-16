@@ -762,6 +762,54 @@
                                  different "QRZ lookup" toggles in two different tabs, one real and
                                  one a dead stub, which reads as a bug, not a feature. -->
 
+                            <!-- DRM transmit: the three profiles the TX pane offers, the VOX tone and the DRM level
+                                 offset. The TX pane owns the active profile, size, file size and Custom values. -->
+                            <ContentControl Classes="Industry" Theme="{StaticResource IndustryBlueprintBorderTheme}" Padding="{StaticResource IndustryGbPadding}">
+                                <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Drm.Header}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Drm.Header.Help}" />
+                                    </StackPanel>
+                                    <ItemsControl ItemsSource="{Binding DrmProfiles}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate x:DataType="vm:DrmProfileEditorViewModel">
+                                                <StackPanel Spacing="4" Margin="0,0,0,10">
+                                                    <TextBlock Classes="IndustryRowLabel" FontWeight="SemiBold" Text="{Binding Heading, FallbackValue=''}" />
+                                                <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+                                                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Drm.ProfileName}" />
+                                                    <TextBox Grid.Column="1" Classes="Industry IndustryInput" Text="{Binding Name}" PlaceholderText="{Binding DefaultName, FallbackValue=''}" />
+                                                    <TextBlock Grid.Row="1" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Mode}" />
+                                                    <ComboBox Grid.Row="1" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding ModeOptions}" SelectedIndex="{Binding ModeIndex}" />
+                                                    <TextBlock Grid.Row="2" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Bandwidth}" />
+                                                    <ComboBox Grid.Row="2" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding BandwidthOptions}" SelectedIndex="{Binding BandwidthIndex}" />
+                                                    <TextBlock Grid.Row="3" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Qam}" />
+                                                    <ComboBox Grid.Row="3" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding QamOptions}" SelectedIndex="{Binding QamIndex}" />
+                                                    <TextBlock Grid.Row="4" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Protection}" />
+                                                    <ComboBox Grid.Row="4" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding ProtectionOptions}" SelectedIndex="{Binding ProtectionIndex}" />
+                                                    <TextBlock Grid.Row="5" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Interleave}" />
+                                                    <ComboBox Grid.Row="5" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding InterleaveOptions}" SelectedIndex="{Binding InterleaveIndex}" />
+                                                    <TextBlock Grid.Row="6" Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.ReedSolomon}" />
+                                                    <ComboBox Grid.Row="6" Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding ReedSolomonOptions}" SelectedIndex="{Binding ReedSolomonIndex}" />
+                                                </Grid>
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}"
+                                              Content="{loc:Translate Options.Drm.VoxTone}"
+                                              IsChecked="{Binding DrmVoxTone}"
+                                              ToolTip.Tip="{loc:Translate Panes.TxControls.Drm.VoxTone.Help}" />
+                                    <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="6">
+                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
+                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Drm.LevelOffset}" />
+                                            <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Drm.LevelOffset.Help}" />
+                                        </StackPanel>
+                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
+                                                       Value="{Binding DrmLevelOffsetDb}" Increment="1" Minimum="-20" Maximum="0" FormatString="0" />
+                                    </Grid>
+                                </StackPanel>
+                            </ContentControl>
+
                             <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetTxToDefaultCommand}" />
                         </StackPanel>
                     </ScrollViewer>

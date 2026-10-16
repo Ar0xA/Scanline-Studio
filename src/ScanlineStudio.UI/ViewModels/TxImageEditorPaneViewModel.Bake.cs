@@ -294,7 +294,7 @@ public sealed partial class TxImageEditorPaneViewModel
 
         var request = new FlattenBakeRequest(
             _originalSource, CropRect, PreserveAspect, BuildTemplateElement(element),
-            _targetMode.ImageWidth, _targetMode.ImageHeight, padX, padY, contentWidth, contentHeight);
+            _target.Width, _target.Height, padX, padY, contentWidth, contentHeight);
         var preparer = _preparer;
 
         IImageSource? baked;

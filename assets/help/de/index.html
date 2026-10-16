@@ -328,10 +328,10 @@
         <p>Einen Modus über eine Schnellmodus-Schaltfläche nur dann erzwingen, wenn der gesendete Modus bekannt ist und die Wiedergabe ihn nicht automatisch erkennt. War das Signal in der ursprünglichen Aufnahme übersteuert oder fehlt es ganz, kann die erneute Decodierung das fehlende Audio nicht wiederherstellen.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Senden" data-keywords="tx senden erstes bild aussendung durchsuchen beispielbild stock modus auto manuell wechseln ändern größe anpassen umfließen dauer geometrie abmessungen vis ausgabegerät ptt abbrechen stoppen leistung alc swr">
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Senden" data-keywords="tx senden erstes bild aussendung durchsuchen beispielbild stock modus auto manuell wechseln ändern größe anpassen umfließen dauer geometrie abmessungen vis ausgabegerät ptt abbrechen stoppen leistung alc swr drm easypal">
         <p class="topic-category">Senden</p>
         <h2>Ein Bild senden</h2>
-        <p>Bild und Transceiver vor dem Tasten vorbereiten. Der Editor erzeugt genau die Pixelmaße, die der gewählte SSTV-Modus verlangt.</p>
+        <p>Bild und Transceiver vor dem Tasten vorbereiten. Der Editor erzeugt genau die Pixelmaße, die der gewählte SSTV-Modus verlangt. Zum digitalen Senden mit DRM (EasyPal) siehe <a href="#transmit-drm">Ein Bild mit DRM (EasyPal) senden</a>.</p>
 
         <ol class="workflow">
           <li>Unter <strong>Senden</strong> einen Modus wählen (die vollständige Liste steht unter <a href="#sstv-modes">Unterstützte SSTV-Modi</a>) oder die Modusfolge auf Auto belassen, um im zuletzt empfangenen Modus zu antworten.</li>
@@ -351,6 +351,38 @@
 
         <h3>Gesendete Bilder</h3>
         <p>Die Liste „Gesendete Bilder“ auf der Registerkarte Senden führt eine kurze Historie der Aussendungen dieser Sitzung. Jeder Eintrag zeigt sein Ergebnis (Gesendet, Gestoppt oder Fehlgeschlagen). Ein Rechtsklick auf ein Bild bietet <strong>Erneut senden</strong> (dasselbe Bild noch einmal aussenden) oder <strong>Speichern…</strong> (eine Kopie exportieren). Diese Historie gilt nur für die laufende Sitzung. Anders als der Empfangsverlauf der Galerie bleibt sie über einen Neustart der Anwendung hinweg nicht erhalten.</p>
+        <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
+      </article>
+      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Senden" data-keywords="drm easypal digitales sstv hamdrm qsstv jpeg 2000 jp2 profil robust normal schnell benutzerdefiniert dateigröße kb schätzung modus a b e qam bandbreite schutz interleaver reed solomon rs vox ton pegel papr rufzeichen">
+        <p class="topic-category">Senden</p>
+        <h2>Ein Bild mit DRM (EasyPal) senden</h2>
+        <p><a class="term" href="#glossary-drm">DRM</a> sendet das Bild als komprimierte JPEG-2000-Datei statt als analoge SSTV-Töne. Es ist kompatibel mit EasyPal und QSSTV. Ein DRM-Bild kommt ohne Rauschen und ohne Schräglage an oder gar nicht; es eignet sich daher für gute Verbindungen und höhere Auflösungen. Scanline Studio sendet DRM nur; der DRM-Empfang ist noch nicht verfügbar.</p>
+
+        <ol class="workflow">
+          <li>Unter <strong>Senden</strong> am Ende der Modusliste <strong>DRM (EasyPal)</strong> wählen.</li>
+          <li>Ein <strong>Profil</strong> wählen: <strong>Robust</strong> für schwache oder schwundbehaftete Signale, <strong>Normal</strong> für übliche KW-Verbindungen oder <strong>Schnell</strong> für einen starken, sauberen Kanal.</li>
+          <li>Eine <strong>Größe</strong> (320 × 240, 640 × 480 oder 800 × 600) und eine <strong>Dateigröße</strong> (4–100 KB) wählen. Der Editor erstellt das Bild in der gewählten Größe, genau wie bei einem SSTV-Modus.</li>
+          <li>Das Bild im Editor vorbereiten, die Zeile <strong>Geschätzt</strong> prüfen und <strong>SENDEN</strong> wählen.</li>
+        </ol>
+
+        <h3>Dateigröße und Sendedauer</h3>
+        <p>Das Bild wird ungefähr auf die gewählte Dateigröße komprimiert. Eine größere Datei sieht besser aus, braucht aber länger. Die Zeile <strong>Geschätzt</strong> zeigt die tatsächliche komprimierte Größe und die Sendedauer für das aktuelle Bild und die aktuellen Einstellungen; sie aktualisiert sich kurz nach jeder Änderung. Jede Aussendung erhält einen neuen Dateinamen mit Zeitstempel, damit Empfänger eine Wiederholung nie für ein bereits empfangenes Bild halten. Der Name stammt von der Datei des Hintergrundfotos, bei einer leeren Fläche lautet er „image“.</p>
+
+        <h3>Übertragungseinstellungen</h3>
+        <p>Unter <strong>Übertragungseinstellungen</strong> ist zu sehen, was das Profil sendet. Jede Änderung eines Feldes schaltet das Profil auf <strong>Benutzerdefiniert</strong>, das die eigenen Werte behält.</p>
+        <dl>
+          <dt>Modus</dt><dd>A ist am stabilsten, B die Standardwahl, E am schnellsten.</dd>
+          <dt>Bandbreite</dt><dd>2,2 kHz oder 2,5 kHz belegte Bandbreite. Bei schmalem Senderfilter 2,2 kHz verwenden.</dd>
+          <dt>Modulation</dt><dd>4-QAM ist am robustesten, 64-QAM am schnellsten.</dd>
+          <dt>Schutz</dt><dd>Hoch fügt mehr Fehlerschutz hinzu als Normal.</dd>
+          <dt>Interleaver</dt><dd>Lang verteilt Fehler über mehr Zeit und wird empfohlen. Die Bezeichnungen beschreiben, was tatsächlich gesendet wird.</dd>
+          <dt>Fehlerkorrektur</dt><dd>Zusätzliche Reed-Solomon-Daten (RS 1 bis RS 4) erlauben dem Empfänger, die Datei auch bei verlorenen Segmenten wiederherzustellen. Höhere Werte senden mehr Daten.</dd>
+        </dl>
+
+        <h3>Rufzeichen, VOX-Ton und Pegel</h3>
+        <p>DRM sendet das Rufzeichen aus den <a href="#station-options">Stationsoptionen</a> in einer kurzen Kennung mit höchstens 9 einfachen lateinischen Zeichen. Die Zeile <strong>Rufzeichen</strong> zeigt, was tatsächlich gesendet wird; sie wird rot und zeigt einen Hinweis, wenn das von der Eingabe abweicht. Der <strong>VOX-Ton</strong> (ein 1 s langer Ton vor dem Signal zum Tasten per VOX) und der <strong>DRM-Pegel</strong> werden in den <a href="#station-options">Stationsoptionen</a> eingestellt.</p>
+        <div class="safety"><strong>Ansteuerpegel.</strong> DRM hat einen hohen <a class="term" href="#glossary-papr">PAPR</a>. Pwr so einstellen, dass der Transceiver wenig oder keinen <a class="term" href="#glossary-alc">ALC</a>-Eingriff zeigt; ein übersteuertes DRM-Signal ist für jeden Empfänger unbrauchbar. Mit dem DRM-Pegel lässt sich DRM absenken, ohne Pwr für SSTV zu verändern.</div>
+        <div class="note"><strong>Was DRM nicht nutzt.</strong> Die automatische Modusfolge wählt nur SSTV-Modi und wechselt daher nie von DRM weg. Loopback-Selbsttest, VIS-Header, Vorton und Tonbereich gelten nur für SSTV. TX stoppen, SWR-Abschaltung, Gesendete Bilder und Erneut senden funktionieren wie bei SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
       <article id="image-editor" class="help-topic" data-help-topic data-category="Senden" data-keywords="bildeditor bild editor zuschneiden zuschnitt verschieben skalieren drehen vorschau seitenverhältnis letterbox sicherer bereich raster ausrichten helligkeit kontrast sättigung gamma schärfen entrauschen neue vorlage abbrechen rückgängig wiederholen zoom mehrfachauswahl umschalt shift klick sperren duplizieren kopieren einfügen stil reduzieren einpassen strecken ausfüllen breite höhe hintergrundfoto hintergrund">
@@ -749,16 +781,19 @@
         <div class="tip"><strong>Nachts in einem abgedunkelten Raum im Einsatz?</strong> „Dunkel“ verhindert, dass die Oberfläche den Raum erhellt, und ist bei Dunkelheit angenehmer für die Augen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="station-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="station stationsdaten optionen rufzeichen call callsign operator name locator grid square maidenhead standard rst rapport signalrapport makros overlay cw fsk log logbuch">
+      <article id="station-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="station stationsdaten optionen rufzeichen call callsign operator name locator grid square maidenhead standard rst rapport signalrapport makros overlay cw fsk log logbuch drm profil robust normal schnell vox ton pegel">
         <p class="topic-category">Referenz der Optionen</p>
         <h2>Stationsoptionen</h2>
         <p>Die Registerkarte „Station“ enthält die Identitätsangaben, auf die andere Funktionen stillschweigend zurückgreifen: Vorlagen-Makros, Kennung und Logbuch lesen sie alle von hier, statt eine erneute Eingabe zu verlangen.</p>
 
         <dl>
-          <dt>Eigenes Rufzeichen</dt><dd>Speist das Einfügefeld „MEIN RUFZEICHEN“ des TX-Bildeditors, den CW-ID-Text, die FSK-Stationskennung und jedes geloggte QSO. Bleibt es leer, funktionieren alle vier nicht, daher lohnt es sich, es vor allem anderen einzutragen.</dd>
+          <dt>Eigenes Rufzeichen</dt><dd>Speist das Einfügefeld „MEIN RUFZEICHEN“ des TX-Bildeditors, den CW-ID-Text, die FSK-Stationskennung, die DRM-Stationskennung und jedes geloggte QSO. Bleibt es leer, funktionieren alle fünf nicht, daher lohnt es sich, es vor allem anderen einzutragen.</dd>
           <dt>Eigener Name</dt><dd>Steht Vorlagen-Overlays als Einfügefeld „MEIN NAME“ zur Verfügung. Rein kosmetisch. Nichts anderes in der Anwendung liest ihn.</dd>
           <dt>Eigener Locator</dt><dd>Der eigene <a class="term" href="#glossary-maidenhead-grid">Maidenhead-Locator</a>. Das Feld wird nicht geprüft, daher funktioniert auch jede beliebige Freitext-Ortsangabe. Wird für ein Overlay-Feld „MEIN LOCATOR“ verwendet und zusammen mit dem Locator der Gegenstation zur Berechnung von Entfernung und Richtung für Vorlagenfelder.</dd>
           <dt>Standard-RST</dt><dd>Füllt die Felder „Gesendet“ und „Empfangen“ vor, wenn ein neues QSO geloggt wird. Standardwert ist <strong>595</strong>. SSTV-Stationen tauschen Lesbarkeit/Stärke/<em>Video</em> (R-S-V) aus, nicht den sonst im Amateurfunk üblichen Rapport Lesbarkeit/Stärke/<em>Ton</em> (R-S-T), daher wäre 599 der falsche Rapport zum Vorbelegen. Das Feld leeren, wenn lieber nichts vorbelegt und der Rapport jedes Mal von Hand eingegeben werden soll.</dd>
+          <dt>DRM-Sendeprofile</dt><dd>Die drei Profile, die die Registerkarte Senden für <a href="#transmit-drm">DRM (EasyPal)</a> anbietet: je ein Name und die sechs Übertragungsfelder. Ein leerer Name verwendet den Standardnamen (Robust, Normal, Schnell). Das eigene Profil „Benutzerdefiniert“ der Registerkarte Senden wird getrennt gespeichert.</dd>
+          <dt>VOX-Ton vor DRM senden</dt><dd>Sendet vor jeder DRM-Aussendung einen 1 s langen 1700-Hz-Ton, damit ein per <a class="term" href="#glossary-vox">VOX</a> getasteter Sender schon an ist, wenn das Signal beginnt. Standardmäßig aus.</dd>
+          <dt>DRM-Pegel (dB)</dt><dd>Senkt DRM gegenüber SSTV ab, von 0 bis −20 dB, ohne Pwr zu verändern. Pwr wirkt zusätzlich. Damit bleibt die <a class="term" href="#glossary-alc">ALC</a> bei DRM ruhig.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
@@ -819,6 +854,7 @@
           </table>
         </div>
         <p>Die Schnellmodus-Schaltflächen der MODE-Karte auf der Registerkarte Empfang (siehe <a href="#receive-first-picture">Das erste Bild empfangen</a>) enthalten eine praxistaugliche Auswahl dieser Modi. Mit einem Rechtsklick auf einen Platz lässt er sich mit jedem beliebigen Modus aus der vollständigen Liste oben neu belegen.</p>
+        <p>Die Modusauswahl der Registerkarte Senden bietet außerdem <strong>DRM (EasyPal)</strong> an, eine digitale Betriebsart, die kein SSTV ist: vorerst nur zum Senden und nicht auf den Schnellmodus-Schaltflächen. Siehe <a href="#transmit-drm">Ein Bild mit DRM (EasyPal) senden</a>.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
       <article id="macros" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="makros makro tokens platzhalter vorlage variablen prozent m datum uhrzeit zeit rufzeichen name locator grid frequenz modus betriebsart entfernung richtung peilung his_grid vorschau qso fill benutzerdefiniert feld txt">
@@ -984,7 +1020,7 @@
         <div class="tip"><strong>Sinnvolles Support-Paket.</strong> Anwendungsversion aus Hilfe → Über Scanline Studio…, Betriebssystem, gewähltes Audio- und CAT-Backend, genauen Fehlertext, Schritte zur Reproduktion und den relevanten Auszug aus dem Anwendungsprotokoll notieren. Eine kurze WAV-Datei nur beilegen, wenn sie zur Reproduktion eines Decodierproblems nötig ist.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossar begriffe abkürzungen fachbegriffe afc agc cat dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead locator grid nr utc wpm hilbert pll rufzeichen rapport">
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossar begriffe abkürzungen fachbegriffe afc agc cat drm papr dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead locator grid nr utc wpm hilbert pll rufzeichen rapport">
         <p class="topic-category">Support</p>
         <h2>Glossar</h2>
         <p>Zeigen Sie an beliebiger Stelle dieses Handbuchs auf einen gepunktet unterstrichenen Begriff oder setzen Sie den Fokus darauf, um seine Definition zu sehen, ohne die Seite zu verlassen. Jeder Begriff verweist auf die eine Definition hier.</p>
@@ -996,6 +1032,7 @@
           <dt id="glossary-avt-training">AVT-Training</dt><dd>Ein Decoder-Zustand für die AVT-SSTV-Betriebsartenfamilie, die das eingehende Signal erst vermessen muss, bevor sie einrasten und das Bild decodieren kann. Er unterscheidet sich von den üblichen Zuständen „Suche“/„eingerastet“ der anderen Betriebsarten.</dd>
           <dt id="glossary-bpf">BPF</dt><dd>Bandpassfilter; lässt einen gewählten Frequenzbereich durch und unterdrückt alles außerhalb davon.</dd>
           <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver, die CAT-Steuerung: Übertragung von Frequenz, Betriebsart, PTT und Telemetrie zwischen Computer und Funkgerät.</dd>
+          <dt id="glossary-drm">DRM</dt><dd>Digital Radio Mondiale; hier die Amateurfunk-Variante HamDRM, mit der EasyPal und QSSTV ein Bild als komprimierte Datei über einen Sprachkanal senden. Ein Bild kommt entweder vollständig und sauber an oder gar nicht.</dd>
           <dt id="glossary-dsp">DSP</dt><dd>Digitale Signalverarbeitung.</dd>
           <dt id="glossary-fir">FIR</dt><dd>Finite Impulse Response (endliche Impulsantwort); eines der beiden gängigen digitalen Filterkonzepte (siehe auch IIR). Ein FIR-Filter ist immer stabil, benötigt für dieselbe Flankensteilheit aber mehr Rechenaufwand.</dd>
           <dt id="glossary-fsk-id">FSK ID</dt><dd>Per Frequenzumtastung (FSK) gesendete Stationskennung, die als FSK-ID rund um eine SSTV-Aussendung übertragen wird.</dd>
@@ -1007,6 +1044,7 @@
           <dt id="glossary-nr">NR</dt><dd>Eine Serien- bzw. Referenznummer; hier das optionale numerische Teilpaket, das die FSK-Kennung zusätzlich zum Rufzeichen mitführen kann.</dd>
           <dt id="glossary-pll">PLL</dt><dd>Phasenregelschleife (Phase-Locked Loop); eine der Demodulatormethoden, mit denen Scanline Studio den eingehenden Bildton verfolgen und daraus die Helligkeit zurückgewinnen kann.</dd>
           <dt id="glossary-ppm">PPM</dt><dd>Parts per million (Millionstel); hier ein kleiner Fehler des Audio-Taktes, der zu schrägen Bildern führen kann.</dd>
+          <dt id="glossary-papr">PAPR</dt><dd>Peak-to-Average Power Ratio (Spitzen-Mittelwert-Verhältnis); wie weit die Spitzen eines Signals über seiner mittleren Leistung liegen. Bei DRM ist es hoch, daher erreichen die Spitzen die volle Leistung lange vor dem Mittelwert.</dd>
           <dt id="glossary-ptt">PTT</dt><dd>Push to talk (Sendetaste); die Steuerung, die den Sender tastet.</dd>
           <dt id="glossary-qso">QSO</dt><dd>Eine Funkverbindung zwischen Stationen.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Bestätigung einer Funkverbindung; häufig in Form einer gestalteten Karte oder eines SSTV-Bildes.</dd>

@@ -275,15 +275,15 @@ public sealed partial class TxImageEditorPaneViewModel
     /// <c>SelectedTextElement</c>'s own null-check.</summary>
     public double SelectedTextElementFontSizePx
     {
-        get => SelectedTextElement is { } text ? text.FontSizeRelative * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.FontSizeRelative * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.FontSizeRelative = value / _targetMode.ImageHeight;
+            text.FontSizeRelative = value / _target.Height;
         }
     }
 
@@ -293,75 +293,75 @@ public sealed partial class TxImageEditorPaneViewModel
     /// same reasoning (the size this actually renders at in the TRANSMITTED image, zoom-independent).</summary>
     public double SelectedTextElementStrokeThicknessPx
     {
-        get => SelectedTextElement is { } text ? text.StrokeThickness * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.StrokeThickness * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.StrokeThickness = value / _targetMode.ImageHeight;
+            text.StrokeThickness = value / _target.Height;
         }
     }
 
     /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
     public double SelectedTextElementShadowOffsetXPx
     {
-        get => SelectedTextElement is { } text ? text.ShadowOffsetX * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.ShadowOffsetX * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.ShadowOffsetX = value / _targetMode.ImageHeight;
+            text.ShadowOffsetX = value / _target.Height;
         }
     }
 
     /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
     public double SelectedTextElementShadowOffsetYPx
     {
-        get => SelectedTextElement is { } text ? text.ShadowOffsetY * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.ShadowOffsetY * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.ShadowOffsetY = value / _targetMode.ImageHeight;
+            text.ShadowOffsetY = value / _target.Height;
         }
     }
 
     /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
     public double SelectedTextElementStackStepXPx
     {
-        get => SelectedTextElement is { } text ? text.StackStepX * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.StackStepX * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.StackStepX = value / _targetMode.ImageHeight;
+            text.StackStepX = value / _target.Height;
         }
     }
 
     /// <inheritdoc cref="SelectedTextElementStrokeThicknessPx"/>
     public double SelectedTextElementStackStepYPx
     {
-        get => SelectedTextElement is { } text ? text.StackStepY * _targetMode.ImageHeight : 0;
+        get => SelectedTextElement is { } text ? text.StackStepY * _target.Height : 0;
         set
         {
-            if (SelectedTextElement is not { } text || _targetMode.ImageHeight <= 0)
+            if (SelectedTextElement is not { } text || _target.Height <= 0)
             {
                 return;
             }
 
-            text.StackStepY = value / _targetMode.ImageHeight;
+            text.StackStepY = value / _target.Height;
         }
     }
 
@@ -474,15 +474,15 @@ public sealed partial class TxImageEditorPaneViewModel
     /// see that property's own doc comment).</summary>
     public double SelectedBoxElementBorderThicknessPx
     {
-        get => SelectedBoxElement is { } box ? box.BorderThickness * _targetMode.ImageHeight : 0;
+        get => SelectedBoxElement is { } box ? box.BorderThickness * _target.Height : 0;
         set
         {
-            if (SelectedBoxElement is not { } box || _targetMode.ImageHeight <= 0)
+            if (SelectedBoxElement is not { } box || _target.Height <= 0)
             {
                 return;
             }
 
-            box.BorderThickness = value / _targetMode.ImageHeight;
+            box.BorderThickness = value / _target.Height;
         }
     }
 
@@ -491,15 +491,15 @@ public sealed partial class TxImageEditorPaneViewModel
     /// <see cref="BoxElementViewModel.CornerRadius"/>.</summary>
     public double SelectedBoxElementCornerRadiusPx
     {
-        get => SelectedBoxElement is { } box ? box.CornerRadius * _targetMode.ImageHeight : 0;
+        get => SelectedBoxElement is { } box ? box.CornerRadius * _target.Height : 0;
         set
         {
-            if (SelectedBoxElement is not { } box || _targetMode.ImageHeight <= 0)
+            if (SelectedBoxElement is not { } box || _target.Height <= 0)
             {
                 return;
             }
 
-            box.CornerRadius = value / _targetMode.ImageHeight;
+            box.CornerRadius = value / _target.Height;
         }
     }
 
@@ -788,7 +788,7 @@ public sealed partial class TxImageEditorPaneViewModel
     /// <c>finalWidth * targetWidth</c>), so inverting that gives
     /// <c>Width = NaturalPixelWidth * CropRect.Width / contentWidth</c>. <c>contentWidth</c> is the
     /// LETTERBOXED content extent (<see cref="TryGetCropContentMetrics"/>), not
-    /// <see cref="_targetMode"/>.ImageWidth -- using the mode dimension instead is wrong by exactly
+    /// <see cref="_target"/>.ImageWidth -- using the mode dimension instead is wrong by exactly
     /// the pad factor under the default aspect-preserving resize.
     /// <para><b>Observable behavior, stated up front so it doesn't read as broken:</b> inserted
     /// image elements are capped at <see cref="WorkingCopyScaleFactor"/>x the mode's dimensions by

@@ -159,7 +159,7 @@ public sealed partial class TxImageEditorPaneViewModel
     /// switch (TxControlsPaneViewModel.ReplaceEditorForModeSwitch), which needs to seed a brand new
     /// instance from THIS one's current state rather than from a previously-Applied EditState.
     /// Deliberately mirrors the same field set as the constructor's own <c>initialState</c> seeding
-    /// (see the constructor body), all of which is normalized 0..1 against <c>_targetMode</c> and
+    /// (see the constructor body), all of which is normalized 0..1 against <c>_target</c> and
     /// therefore reflows correctly when handed to a differently-sized target mode.</summary>
     public EditorInitialState CaptureInitialState() =>
         new(CropRect, PreserveAspect, BuildAdjustments(), RawOverlayElements, TemplateVariables);

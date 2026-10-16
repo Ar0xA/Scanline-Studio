@@ -767,7 +767,14 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         localization.CultureChanged += OnCultureChanged;
     }
 
-    private void OnCultureChanged() => OnPropertyChanged(string.Empty);
+    private void OnCultureChanged()
+    {
+        OnPropertyChanged(string.Empty);
+        foreach (var profile in DrmProfiles)
+        {
+            profile.RefreshLocalizedText();
+        }
+    }
 
     private readonly IDisposable _connectionEventsSubscription;
 

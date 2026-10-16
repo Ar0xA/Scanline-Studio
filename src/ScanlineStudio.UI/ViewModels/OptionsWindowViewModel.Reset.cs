@@ -118,6 +118,7 @@ public sealed partial class OptionsWindowViewModel
         OperatorName = OptionsSettingsService.Defaults.OperatorName;
         OperatorGrid = OptionsSettingsService.Defaults.OperatorGrid;
         DefaultRst = OptionsSettingsService.Defaults.DefaultRst;
+        ResetDrmOptions();
     }
 
     [RelayCommand]

@@ -99,21 +99,25 @@
                      logic (TryClaimEditorSlotForNewSource) still discards a populated editor and
                      was deliberately left unchanged; CanChangeMode is this control's own, separate
                      gate now that a populated editor's mode can be switched instead of refused. -->
-                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableModes}"
-                          SelectedItem="{Binding SelectedMode}"
+                <!-- Every SSTV mode, then DRM; one template per target type. -->
+                <ComboBox Classes="Industry IndustryInput" ItemsSource="{Binding AvailableTargets}"
+                          SelectedItem="{Binding SelectedTarget}"
                           IsEnabled="{Binding CanChangeMode}"
                           HorizontalAlignment="Stretch">
-                    <ComboBox.ItemTemplate>
+                    <ComboBox.DataTemplates>
                         <!-- Duration column added 2026-08-27 (direct user request) — whole seconds,
                              right-aligned, via SstvModeDurationSecondsConverter (same formula the
                              card's own "Duration" row below already uses). -->
-                        <DataTemplate x:DataType="sstv:SstvModeDefinition">
+                        <DataTemplate DataType="vm:SstvTarget" x:DataType="vm:SstvTarget">
                             <Grid ColumnDefinitions="*,Auto">
-                                <TextBlock Text="{Binding DisplayName}" />
-                                <TextBlock Grid.Column="1" Text="{Binding Converter={x:Static conv:SstvModeDurationSecondsConverter.Instance}}" HorizontalAlignment="Right" Margin="12,0,0,0" />
+                                <TextBlock Text="{Binding Mode.DisplayName, FallbackValue=''}" />
+                                <TextBlock Grid.Column="1" Text="{Binding Mode, Converter={x:Static conv:SstvModeDurationSecondsConverter.Instance}, FallbackValue=''}" HorizontalAlignment="Right" Margin="12,0,0,0" />
                             </Grid>
                         </DataTemplate>
-                    </ComboBox.ItemTemplate>
+                        <DataTemplate DataType="vm:DrmTarget" x:DataType="vm:DrmTarget">
+                            <TextBlock Text="{loc:Translate Panes.TxControls.Drm.TargetName}" />
+                        </DataTemplate>
+                    </ComboBox.DataTemplates>
                 </ComboBox>
                 <StackPanel Classes="Industry IndustryRows">
                     <!-- Real (SelectedMode is the same real ComboBox-bound property above; no new
@@ -121,24 +125,96 @@
                          includes it, the port previously dropped it. -->
                     <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.SelectedLabel}" />
-                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SelectedMode.DisplayName}" />
+                        <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding SelectedTargetDisplayName}" />
                     </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <!-- Duration, Geometry, Leader tone and VIS describe an SSTV frame only. -->
+                    <Border Classes="IndustryRow" IsVisible="{Binding IsSstvSelected}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DurationLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DurationText}" />
                     </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <Border Classes="IndustryRow" IsVisible="{Binding IsSstvSelected}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.GeometryLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding GeometryText}" />
                     </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <Border Classes="IndustryRow" IsVisible="{Binding IsSstvSelected}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VoxToneLabel}" ToolTip.Tip="{loc:Translate Panes.TxControls.VoxToneLabel.Help}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VoxToneText}" />
                     </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <Border Classes="IndustryRow" IsVisible="{Binding IsSstvSelected}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.VisHeaderLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding VisHeaderText}" />
                     </Grid></Border>
+                </StackPanel>
+
+                <!-- DRM block: profile, size, file size, estimate, callsign, VOX, and the six transmission
+                     fields behind an expander. Editing one of those switches the profile to Custom. -->
+                <StackPanel Spacing="{StaticResource IndustrySpacingTight}" IsVisible="{Binding IsDrmSelected}">
+                    <TextBlock Classes="IndustryRowValue" TextWrapping="Wrap"
+                               Foreground="{DynamicResource IndustryDanger}"
+                               Text="{loc:Translate Panes.TxControls.Drm.Unavailable}"
+                               IsVisible="{Binding IsDrmUnavailableMessageVisible}" />
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Profile}" />
+                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                  ItemsSource="{Binding DrmProfileOptions}" SelectedIndex="{Binding DrmProfileIndex}" />
+                    </Grid>
+                    <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Panes.TxControls.Drm.Size}" />
+                        <ComboBox Grid.Column="1" Classes="Industry IndustryInput" HorizontalAlignment="Stretch"
+                                  ItemsSource="{Binding DrmSizeOptions}" SelectedIndex="{Binding DrmSizeIndex}"
+                                  IsEnabled="{Binding CanChangeMode}" />
+                    </Grid>
+                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
+                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" VerticalAlignment="Center">
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.FileSize}" />
+                            <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Panes.TxControls.Drm.FileSize.Help}" />
+                        </StackPanel>
+                        <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
+                                Value="{Binding DrmTargetKb}" Minimum="4" Maximum="100" SmallChange="1" LargeChange="10"
+                                TickFrequency="1" IsSnapToTickEnabled="True" VerticalAlignment="Center" />
+                        <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding DrmTargetKbText}" VerticalAlignment="Center" />
+                    </Grid></Border>
+                    <StackPanel Classes="Industry IndustryRows">
+                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Estimated}" />
+                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DrmEstimateText, FallbackValue=''}" />
+                        </Grid></Border>
+                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Callsign}" />
+                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Classes.Differs="{Binding DrmCallsignDiffers}"
+                                       Text="{Binding DrmCallsignDisplay}" ToolTip.Tip="{Binding DrmCallsignToolTip}">
+                                <TextBlock.Styles>
+                                    <Style Selector="TextBlock.Differs">
+                                        <Setter Property="Foreground" Value="{DynamicResource IndustryDanger}" />
+                                    </Style>
+                                </TextBlock.Styles>
+                            </TextBlock>
+                        </Grid></Border>
+                        <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.VoxTone}" ToolTip.Tip="{loc:Translate Panes.TxControls.Drm.VoxTone.Help}" />
+                            <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding DrmVoxToneText}" />
+                        </Grid></Border>
+                    </StackPanel>
+                    <!-- Label above a full-width ComboBox: side by side, the option text clips in the 236 px column. -->
+                    <Expander Name="DrmTransmissionSettingsExpander" IsExpanded="False" HorizontalAlignment="Stretch" Padding="4">
+                        <Expander.Header>
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.TransmissionSettings}" />
+                        </Expander.Header>
+                        <StackPanel Spacing="4">
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Mode}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmModeOptions}" SelectedIndex="{Binding DrmModeIndex}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Bandwidth}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmBandwidthOptions}" SelectedIndex="{Binding DrmBandwidthIndex}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Qam}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmQamOptions}" SelectedIndex="{Binding DrmQamIndex}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Protection}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmProtectionOptions}" SelectedIndex="{Binding DrmProtectionIndex}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.Interleave}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmInterleaveOptions}" SelectedIndex="{Binding DrmInterleaveIndex}" />
+                            <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Drm.ReedSolomon}" />
+                            <ComboBox Classes="Industry IndustryInput" HorizontalAlignment="Stretch" ItemsSource="{Binding DrmReedSolomonOptions}" SelectedIndex="{Binding DrmReedSolomonIndex}" />
+                        </StackPanel>
+                    </Expander>
                 </StackPanel>
             </StackPanel>
         </HeaderedContentControl>
@@ -252,7 +328,7 @@
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.TuneDriveLabel}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding RadioStatus.TxVolumeDisplay}" />
                     </Grid></Border>
-                    <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*">
+                    <Border Classes="IndustryRow" IsVisible="{Binding IsSstvSelected}"><Grid ColumnDefinitions="Auto,*">
                         <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.Telemetry.ToneMap}" />
                         <TextBlock Grid.Column="1" Classes="IndustryRowValue" Text="{Binding ToneMapText}" />
                     </Grid></Border>
@@ -342,7 +418,7 @@
                      the renamed Cancel button), which opens the exact same fresh blank editor from
                      inside the always-open editor itself. OpenBlankEditorCommand/OpenBlankEditorAsync
                      stay on the view model — MainViewModel's own startup auto-open
-                     (OpenBlankEditorSafelyAsync) and OnEditorCancelled/OnSelectedModeChanged's own
+                     (OpenBlankEditorSafelyAsync) and OnEditorCancelled/OnTargetGeometryChanged's own
                      auto-reopen still call it directly, only this button is gone. -->
                 <!-- User-requested (2026-09-19): "the background card 'blank'-text and preview image
                      should be removed" — both now gated on ShowBackgroundPreview, not a bare
@@ -432,7 +508,7 @@
                                     <DockPanel LastChildFill="True">
                                         <Border DockPanel.Dock="Bottom" Classes="IndustryThumbnailCaption">
                                             <Grid ColumnDefinitions="Auto,*,Auto">
-                                                <TextBlock Classes="IndustryThumbnailMeta" Text="{Binding Mode.DisplayName}" />
+                                                <TextBlock Classes="IndustryThumbnailMeta" Text="{Binding Caption}" />
                                                 <TextBlock Grid.Column="2" Classes="IndustryThumbnailMeta" Text="{Binding TransmittedAt, StringFormat=HH:mm:ss}" />
                                             </Grid>
                                         </Border>

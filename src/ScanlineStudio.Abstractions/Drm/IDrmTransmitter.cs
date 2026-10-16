@@ -19,6 +19,11 @@ public interface IDrmTransmitter
     /// the name (and its transport ID) is new. False reuses the current stamp, which only a FIX resend does.</param>
     IDrmTransmission Prepare(ReadOnlySpan<byte> payload, string fileName, bool isImage, DrmTxSettings settings, bool newTxFileName);
 
+    /// <summary>The frame and sample count <see cref="Prepare"/> would give for the same image, without touching the
+    /// time stamp or the BSR transport-ID counter: the name uses a placeholder stamp of the same length, and the
+    /// count runs on a copy of the counter. CPU-bound; run it off the UI thread.</summary>
+    DrmFrameCount CountFrames(ReadOnlySpan<byte> jp2, string fileName, DrmTxSettings settings);
+
     /// <summary>drmTx::forgetTxFileName: the next transmission takes a new time stamp. QSSTV calls it on every
     /// Start and when a DRM parameter changes (drmtx.cpp:339-342, txwidget.cpp:201-218,337-341).</summary>
     void ForgetTxFileName();
@@ -47,3 +52,7 @@ public interface IDrmTransmission
     /// stops the producer. Blocks are not reused, so a consumer may keep them.</summary>
     IAsyncEnumerable<ReadOnlyMemory<float>> ReadSamplesAsync(CancellationToken ct = default);
 }
+
+/// <summary>On-air size of one DRM transmission: <see cref="IDrmTransmission.FrameCount"/> and
+/// <see cref="IDrmTransmission.SampleCount"/> (VOX tone included).</summary>
+public readonly record struct DrmFrameCount(int FrameCount, long SampleCount);

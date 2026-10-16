@@ -78,8 +78,8 @@ public sealed partial class TxImageEditorPaneViewModel
             return new NormalizedRect(relX - (relWidth / 2), relY - (relHeight / 2), relWidth, relHeight);
         }
 
-        var targetWidth = (double)_targetMode.ImageWidth;
-        var targetHeight = (double)_targetMode.ImageHeight;
+        var targetWidth = (double)_target.Width;
+        var targetHeight = (double)_target.Height;
 
         var finalCenterX = (padX + (relX * contentWidth)) / targetWidth;
         var finalCenterY = (padY + (relY * contentHeight)) / targetHeight;
@@ -117,8 +117,8 @@ public sealed partial class TxImageEditorPaneViewModel
             return false;
         }
 
-        var targetWidth = (double)_targetMode.ImageWidth;
-        var targetHeight = (double)_targetMode.ImageHeight;
+        var targetWidth = (double)_target.Width;
+        var targetHeight = (double)_target.Height;
 
         double scaleX, scaleY;
         if (PreserveAspect)
@@ -168,8 +168,8 @@ public sealed partial class TxImageEditorPaneViewModel
             return 0;
         }
 
-        var targetWidth = (double)_targetMode.ImageWidth;
-        var targetHeight = (double)_targetMode.ImageHeight;
+        var targetWidth = (double)_target.Width;
+        var targetHeight = (double)_target.Height;
         return PreserveAspect
             ? Math.Min(targetWidth / cropWidthPixels, targetHeight / cropHeightPixels)
             : targetHeight / cropHeightPixels;
@@ -183,15 +183,15 @@ public sealed partial class TxImageEditorPaneViewModel
             return;
         }
 
-        var scaleX = PreserveAspect ? scaleY : _targetMode.ImageWidth / CropWidthPixels;
+        var scaleX = PreserveAspect ? scaleY : _target.Width / CropWidthPixels;
         var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
         // Rotated text is painted into an element-local bitmap before rotation in the final
         // renderer; its pattern phase starts there, rather than at the full image origin.
         var localPattern = element is OverlayElementViewModel textElement
             && double.IsFinite(textElement.RotationDegrees) && textElement.RotationDegrees % 360 != 0;
-        var metrics = new ElementPreviewMetrics(_targetMode.ImageHeight / scaleY,
+        var metrics = new ElementPreviewMetrics(_target.Height / scaleY,
             new Avalonia.Size(1 / scaleX, 1 / scaleY),
-            localPattern ? default : new Avalonia.Point(bounds.X * _targetMode.ImageWidth, bounds.Y * _targetMode.ImageHeight));
+            localPattern ? default : new Avalonia.Point(bounds.X * _target.Width, bounds.Y * _target.Height));
         switch (element)
         {
             case OverlayElementViewModel text: text.PreviewMetrics = metrics; break;
@@ -208,8 +208,8 @@ public sealed partial class TxImageEditorPaneViewModel
             return 0;
         }
 
-        var targetWidth = (double)_targetMode.ImageWidth;
-        var targetHeight = (double)_targetMode.ImageHeight;
+        var targetWidth = (double)_target.Width;
+        var targetHeight = (double)_target.Height;
         var bounds = ProjectRectToCropRelative(element.X, element.Y, element.Width, element.Height);
         var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * targetWidth));
         var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
@@ -243,7 +243,7 @@ public sealed partial class TxImageEditorPaneViewModel
         // above) is CropHeightPixels, which is now CanvasDisplayHeight-based (= WorkingCopyHeight *
         // ZoomFactor) per the Phase 7 rearchitecture, so scaleY is proportional to 1/ZoomFactor
         // already. fittedFinalSizePx itself is zoom-invariant (ProjectRectToCropRelative's own bounds
-        // and _targetMode's dimensions carry no Z, per that method's own doc comment). An earlier
+        // and _target's dimensions carry no Z, per that method's own doc comment). An earlier
         // version of this line multiplied by ZoomFactor AGAIN on top of that -- a real Z^2 bug, caught
         // by code-review, not by the one manual test that happened to run at exactly 1.0 zoom (where
         // Z^2 == Z == 1 hides the error completely).
@@ -361,14 +361,14 @@ public sealed partial class TxImageEditorPaneViewModel
     /// won't match.</summary>
     private double ComputeFittedFontSizeRelative(RawTextElementSnapshot text)
     {
-        var targetHeight = (double)_targetMode.ImageHeight;
+        var targetHeight = (double)_target.Height;
         if (targetHeight <= 0)
         {
             return text.FontSizeRelative;
         }
 
         var bounds = ProjectRectToCropRelative(text.X, text.Y, text.Width, text.Height);
-        var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * _targetMode.ImageWidth));
+        var boundsWidthPx = Math.Max(1, (int)Math.Round(bounds.Width * _target.Width));
         var boundsHeightPx = Math.Max(1, (int)Math.Round(bounds.Height * targetHeight));
         var strokeThicknessRelative = text.StrokeColor is { } ? text.StrokeThickness : 0;
         var shadowOffsetXRelative = text.ShadowColor is { } ? text.ShadowOffsetX : 0;
@@ -405,7 +405,7 @@ public sealed partial class TxImageEditorPaneViewModel
             return 0;
         }
 
-        return (element.StrokeThickness * _targetMode.ImageHeight) / scaleY;
+        return (element.StrokeThickness * _target.Height) / scaleY;
     }
 
     /// <summary>Refresh crop/zoom-dependent style lengths and text fitting on the canvas.</summary>

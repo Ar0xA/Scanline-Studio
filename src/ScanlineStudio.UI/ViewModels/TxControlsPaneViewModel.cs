@@ -6,6 +6,7 @@ using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Extensions.Logging;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Localization;
 using ScanlineStudio.Abstractions.Radio;
@@ -137,14 +138,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="Document"/> (Phase 1 renamed from <c>Overlay</c>/<c>ImageOverlay</c> -- spec/15-
     /// template-designer.md's polymorphic element model, spec/18-path-to-1.0.md's own re-open/
     /// re-edit sub-piece, round-1 plan-review finding) -- <see cref="Document"/> is already
-    /// crop-projected and macro-resolved (correct for <see cref="OnSelectedModeChanged"/>'s own
+    /// crop-projected and macro-resolved (correct for <see cref="OnTargetGeometryChanged"/>'s own
     /// direct pipeline call), while re-seeding a re-opened <see cref="TxImageEditorPaneViewModel"/>
     /// needs the raw, photo-anchored, un-resolved form instead -- feeding the editor from
     /// <see cref="Document"/> would silently misplace existing content and permanently bake macro
     /// templates like "DE %m" into their currently-resolved value. **Phase 1 plan-review finding,
     /// explicitly accepted rather than fixed this pass**: <see cref="Document"/>'s elements are
     /// projected against the mode/crop/PreserveAspect combination active at Apply time --
-    /// <see cref="OnSelectedModeChanged"/>'s reflow reuses those SAME already-projected coordinates
+    /// <see cref="OnTargetGeometryChanged"/>'s reflow reuses those SAME already-projected coordinates
     /// against a NEW mode's dimensions, a pre-existing, already-tracked defect (this doc comment's
     /// own history) that Phase 1 makes materially worse: with real per-element bounds and
     /// shrink-to-fit, a mode change can now visibly RESCALE text, not just nudge its position. A
@@ -175,13 +176,56 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     private bool _isEditorOpen;
 
     [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(SelectedMode))]
+    [NotifyPropertyChangedFor(nameof(SelectedTargetDisplayName))]
+    [NotifyPropertyChangedFor(nameof(IsDrmSelected))]
+    [NotifyPropertyChangedFor(nameof(IsSstvSelected))]
+    [NotifyPropertyChangedFor(nameof(IsDrmUnavailableMessageVisible))]
     [NotifyPropertyChangedFor(nameof(ToneMapText))]
     [NotifyPropertyChangedFor(nameof(GeometryText))]
     [NotifyPropertyChangedFor(nameof(AutoPicksText))]
     [NotifyPropertyChangedFor(nameof(DurationText))]
     [NotifyPropertyChangedFor(nameof(VisHeaderText))]
     [NotifyPropertyChangedFor(nameof(VoxToneText))]
-    private SstvModeDefinition? _selectedMode;
+    private TxTarget? _selectedTarget;
+
+    /// <summary>The selected SSTV mode, or null while DRM (or nothing) is selected. Setting it selects that
+    /// mode's own entry in <see cref="AvailableTargets"/>.</summary>
+    public SstvModeDefinition? SelectedMode
+    {
+        get => (SelectedTarget as SstvTarget)?.Mode;
+        set => SelectedTarget = value is null
+            ? null
+            : AvailableTargets.OfType<SstvTarget>().FirstOrDefault(t => t.Mode == value) ?? new SstvTarget(value);
+    }
+
+    public bool IsDrmSelected => SelectedTarget is DrmTarget;
+
+    public bool IsSstvSelected => SelectedTarget is SstvTarget;
+
+    /// <summary>Every SSTV mode, then DRM. Backs the mode ComboBox.</summary>
+    public IReadOnlyList<TxTarget> AvailableTargets { get; }
+
+    public string? SelectedTargetDisplayName => SelectedTarget switch
+    {
+        SstvTarget sstv => sstv.Mode.DisplayName,
+        DrmTarget => _localization.GetString("Panes.TxControls.Drm.TargetName"),
+        _ => null,
+    };
+
+    /// <summary>The DRM picture size; only drives <see cref="CurrentGeometry"/> while DRM is selected.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DrmSizeIndex))]
+    private DrmSizePreset _selectedDrmSize = DrmSettingsDefaults.SizePreset;
+
+    /// <summary>The frame the editor and the transmit path compose for: the SSTV mode's own frame, or the
+    /// DRM size preset. Null when nothing is selected.</summary>
+    public TargetGeometry? CurrentGeometry => SelectedTarget switch
+    {
+        SstvTarget sstv => sstv.Mode.ToGeometry(),
+        DrmTarget => TxTargetGeometry.ForDrm(SelectedDrmSize, _localization.GetString("Panes.TxControls.Drm.TargetName")),
+        _ => null,
+    };
 
     /// <summary>The selected mode's own baseband tone range -- backs mock2's Transmit tab "Tone
     /// map" field. A static per-mode lookup (`SstvModeDefinition.LuminanceMinHz`/`MaxHz`, e.g.
@@ -330,9 +374,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// while Auto is on, shows the mode that toggle actually picked last (<see cref="OnModeDetected"/>
     /// already assigns <see cref="SelectedMode"/>), so the row carries real information instead of
     /// duplicating the control two rows up.</summary>
-    public string AutoPicksText => AutoFollowRxMode
-        ? SelectedMode?.DisplayName ?? _localization.GetString("Panes.TxControls.AutoPicksValue.None")
-        : _localization.GetString("Panes.TxControls.AutoPicksValue.Manual");
+    public string AutoPicksText => (AutoFollowRxMode, SelectedTarget) switch
+    {
+        (true, DrmTarget) => _localization.GetString("Panes.TxControls.AutoPicksValue.SstvOnly"),
+        (true, _) => SelectedMode?.DisplayName ?? _localization.GetString("Panes.TxControls.AutoPicksValue.None"),
+        _ => _localization.GetString("Panes.TxControls.AutoPicksValue.Manual"),
+    };
 
     /// <summary>TX-only telemetry (see <see cref="RadioState"/>'s own doc comment) -- populated only
     /// while this pane's own <see cref="IsTransmitting"/> AND the rig's own PTT readback both agree
@@ -512,7 +559,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _readyRackLogger = readyRackLogger;
 
         AvailableModes = sstvSession.AvailableModes;
-        _selectedMode = AvailableModes.Count > 0 ? AvailableModes[0] : null;
+        AvailableTargets = [.. AvailableModes.Select(m => (TxTarget)new SstvTarget(m)), new DrmTarget()];
+        _selectedTarget = AvailableTargets.Count > 1 ? AvailableTargets[0] : null;
 
         sstvSession.ModeDetected += OnModeDetected;
         sstvSession.TransmitProgressChanged += OnTransmitProgressChanged;
@@ -528,6 +576,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _ = LoadSafetySettingsAsync();
         _ = LoadOutputDeviceNameAsync();
         _ = LoadIdentificationSummaryAsync();
+        ApplyDrmProfileFields(DrmSettingsDefaults.DefaultProfile(DrmSettingsDefaults.DefaultActiveProfileIndex));
+        _ = LoadDrmSettingsAsync();
+        _ = PrimeDrmAvailabilityAsync();
 
         // Live-locale-switch review (2026-09-20): every stored GetString-backed member here is
         // ErrorMessage (transient, self-heals on the next failure or accepted stale in the
@@ -807,7 +858,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // operator un-ticked auto-follow could perform an unwanted mode change). Checking again once
         // already marshalled onto the UI thread is race-free. IsTransmitting/IsRunningLoopbackSelfTest/
         // _loadedImage are the same class of UI-thread-only-written state (set from TransmitAsync/
-        // RunLoopbackSelfTestAsync/OnSelectedModeChanged, all RelayCommand/partial-property-changed
+        // RunLoopbackSelfTestAsync/OnTargetGeometryChanged, all RelayCommand/partial-property-changed
         // methods that only ever run on the UI thread) -- checked inside the Post lambda for the
         // identical reason.
         //
@@ -852,8 +903,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 return;
             }
 
+            // An RX SSTV detection never switches the operator away from DRM.
+            if (SelectedTarget is DrmTarget)
+            {
+                return;
+            }
+
             var safeToReplaceEditor = !IsEditorOpen || IsCurrentEditorBlankAndUntouched();
-            if (!safeToReplaceEditor && SelectedMode is { } current && current.ImageWidth != mode.ImageWidth)
+            if (!safeToReplaceEditor && CurrentGeometry is { } current && current.Width != mode.ImageWidth)
             {
                 return;
             }
@@ -867,7 +924,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// unreachable until the first Apply. Relaxed to also allow mode-select while the CURRENTLY
     /// open editor is the auto/manually-opened BLANK placeholder specifically
     /// (<see cref="_currentEditorIsBlank"/>) with no edits made yet -- see
-    /// <see cref="OnSelectedModeChanged"/>'s own handling, which closes that stale blank editor and
+    /// <see cref="OnTargetGeometryChanged"/>'s own handling, which closes that stale blank editor and
     /// opens a fresh one at the new mode's size. Deliberately does NOT relax for a manually-picked
     /// REAL photo (Browse/Stock) that just hasn't been edited yet, a re-edit-of-an-already-applied-
     /// image session, or a genuinely in-progress edit (<see cref="TxImageEditorPaneViewModel.HasUnsavedEdits"/>
@@ -1268,7 +1325,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// true, <see cref="_currentEditorIsBlank"/> false) and returns <see langword="true"/>.</summary>
     private bool TryClaimEditorSlotForNewSource()
     {
-        if (SelectedMode is not { })
+        if (CurrentGeometry is null)
         {
             return false;
         }
@@ -1357,6 +1414,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             }
 
             editor.LoadBackground(inPlaceSource);
+            TrackSourcePath(editor, SourcePathOf(source));
             return true;
         }
 
@@ -1388,9 +1446,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return true;
         }
 
-        await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables, seedLiveContact);
+        await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables, seedLiveContact, SourcePathOf(source));
         return true;
     }
+
+    private static string? SourcePathOf(object source) => source switch
+    {
+        string path => path,
+        StockImageEntry stockEntry => stockEntry.FileName,
+        _ => null,
+    };
 
     /// <summary><paramref name="source"/> is either a <see cref="StockImageEntry"/> or a
     /// <see cref="string"/> file path -- extracted so <see cref="OpenEditorForSourceAsync"/>'s own
@@ -1446,11 +1511,11 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // View level (IsEnabled bound to CanLoadNewSource, matching Browse/Stock's own established
         // convention, not a [RelayCommand(CanExecute=...)] gate) but this guard stays as the real
         // backstop, same reasoning as the sibling method. Also the reopen target
-        // OnSelectedModeChanged calls right after CloseBlankEditorForReplacement -- relaxed the
+        // OnTargetGeometryChanged calls right after CloseBlankEditorForReplacement -- relaxed the
         // same way (2026-08-17 auditor-found regression fix) so a direct "Open editor" click also
         // works while an already-blank editor is open (a harmless blank-replaces-blank no-op-ish
         // case), not just while fully closed.
-        if (SelectedMode is not { } mode)
+        if (CurrentGeometry is not { } geometry)
         {
             return;
         }
@@ -1467,16 +1532,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         IsEditorOpen = true;
         _currentEditorIsBlank = true;
-        var placeholder = new BlankImageSource(mode.ImageWidth, mode.ImageHeight, BlankImageSource.DefaultColor);
+        var placeholder = new BlankImageSource(geometry.Width, geometry.Height, BlankImageSource.DefaultColor);
         await OpenEditorWithLoadedSourceAsync(
             placeholder, _localization.GetString("Panes.TxControls.BlankImageName"), BuildCurrentContactVariables(), seedLiveContact: true);
     }
 
-    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables, bool seedLiveContact)
+    private async Task OpenEditorWithLoadedSourceAsync(IImageSource original, string fileName, IReadOnlyDictionary<string, string>? currentContactVariables, bool seedLiveContact, string? sourcePath = null)
     {
-        // SelectedMode may have changed while the original was loading -- always target whatever
-        // mode is current NOW, not the one in effect when the pick started.
-        if (SelectedMode is not { } mode)
+        // Target the geometry current NOW; the target may have changed while the original was loading.
+        if (CurrentGeometry is not { } geometry)
         {
             IsEditorOpen = false;
             return;
@@ -1497,10 +1561,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 ?? new OperatorSettings();
 
             var editor = new TxImageEditorPaneViewModel(
-                original, mode, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
+                original, geometry, _preparer, _macroTextResolver, operatorSettings, _radioSession, _localization, _imageEditorLogger,
                 _filePickerService, _imageFileLoader, _receivedImageBuffer, _receiveHistoryStore,
                 _templateStore, _imageSourceWriter, new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
-                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                canTransmitNow: CanTransmitNowForEditor,
                 transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText),
                 currentContactVariables: currentContactVariables,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
@@ -1519,6 +1583,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
             _currentEditorFileName = fileName;
+            TrackSourcePath(editor, sourcePath);
+            editor.SetEstimatedFrameSeconds(_drmEstimatedSeconds);
+            RequestDrmEstimate();
             // Real bug caught via real-window testing (2026-08-17): IsEditorOpen already toggled
             // true BEFORE this await-gated assignment runs (OnIsEditorOpenChanged already fired,
             // re-evaluating IsCurrentEditorBlankAndUntouched() while _currentEditor was still null
@@ -1578,21 +1645,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // editor.CurrentSource, NOT the pre-rotation IImageSource this method used to receive as
         // its own "original" parameter -- round-1 plan-review finding on spec/18-path-to-1.0.md
         // High item 3: capturing the closure's original pre-rotation reference here meant a
-        // rotate performed in the editor was silently discarded the next time OnSelectedModeChanged
+        // rotate performed in the editor was silently discarded the next time OnTargetGeometryChanged
         // re-derived _loadedImage from this EditState on a later mode change -- Apply's own
         // immediate output was correct (used the editor's own live rotated source), but the
         // re-derivation reverted to the unrotated image while still applying the ROTATED crop
         // rect/overlay coordinates to it. CurrentSource always reflects every Rotate call so far.
         _editState = new EditState(editor.CurrentSource, editor.CropRect, editor.PreserveAspect, editor.Document, editor.Adjustments, editor.RawOverlayElements, editor.TemplateVariables);
         _loadedImage = final;
+        _loadedImageSourcePath = CurrentBackgroundSourcePath(editor);
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         SelectedFileName = fileName;
         ErrorMessage = null;
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
+        RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         QuickSelectModeCommand.NotifyCanExecuteChanged();
         OnPropertyChanged(nameof(CanChangeSourceOrMode));
         OnPropertyChanged(nameof(CanLoadBackground));
+        RequestDrmEstimate();
     }
 
     /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's "Apply &amp; Transmit" chain --
@@ -1622,7 +1692,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// editor (a new mode's blank placeholder, or a real Browse/Stock pick). Going through
     /// <c>CancelCommand.Execute</c> instead would ALSO trigger <see cref="OnEditorCancelled"/>'s own
     /// auto-reopen-blank side effect, racing with the caller's own intended reopen (harmless when
-    /// the caller ALSO wants blank, per <see cref="OnSelectedModeChanged"/>'s own reentrancy-safe
+    /// the caller ALSO wants blank, per <see cref="OnTargetGeometryChanged"/>'s own reentrancy-safe
     /// double-call reasoning -- but wasteful and semantically messy when the caller wants a REAL
     /// source instead, since it would flicker the UI through an unwanted intermediate blank editor).
     /// Doesn't unsubscribe the discarded editor's own Applied/Cancelled/PropertyChanged handlers --
@@ -1659,7 +1729,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor = null;
         _currentEditorIsBlank = false;
         _currentEditorFileName = null;
+        TrackSourcePath(null, null);
         EditorClosed?.Invoke();
+        RequestDrmEstimate();
         _ = OpenBlankEditorAsync();
     }
 
@@ -1694,6 +1766,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             OnPropertyChanged(nameof(CanLoadBackground));
             OnPropertyChanged(nameof(ShowBackgroundPreview));
         }
+
+        // Every recompose swaps PreviewImage, so it is the one signal that the editor's output changed.
+        if (e.PropertyName is nameof(TxImageEditorPaneViewModel.PreviewImage)
+            or nameof(TxImageEditorPaneViewModel.HasUnsavedEdits)
+            or nameof(TxImageEditorPaneViewModel.HasNoBackgroundOrOverlayElements))
+        {
+            RequestDrmEstimate();
+        }
     }
 
     /// <summary>Mode-switch-mid-edit feature -- the populated-editor counterpart to
@@ -1720,7 +1800,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// doc comment for why carrying one without the other would let
     /// <see cref="IsCurrentEditorBlankAndUntouched"/> misread a genuinely edited canvas as safe to
     /// silently discard.</para></summary>
-    private void ReplaceEditorForModeSwitch(SstvModeDefinition newMode)
+    private void ReplaceEditorForModeSwitch(TargetGeometry newGeometry)
     {
         if (_currentEditor is not { } oldEditor)
         {
@@ -1738,6 +1818,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // non-null.
         var fileName = _currentEditorFileName!;
         var oldModeId = oldEditor.TargetModeId;
+        var sourcePath = CurrentBackgroundSourcePath(oldEditor);
 
         oldEditor.Dispose();
         _currentEditor = null;
@@ -1745,12 +1826,12 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         try
         {
             var editor = new TxImageEditorPaneViewModel(
-                originalSource, newMode, _preparer, _macroTextResolver, operatorSettings, _radioSession,
+                originalSource, newGeometry, _preparer, _macroTextResolver, operatorSettings, _radioSession,
                 _localization, _imageEditorLogger, _filePickerService, _imageFileLoader,
                 _receivedImageBuffer, _receiveHistoryStore, _templateStore, _imageSourceWriter,
                 new ReadyRackViewModel(_templateStore, _settingsStore, _localization, _filePickerService, _readyRackLogger),
                 initialState,
-                canTransmitNow: () => !IsTransmitting && !IsRunningLoopbackSelfTest,
+                canTransmitNow: CanTransmitNowForEditor,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
                 carriedOverUnsavedEdits: hadUnsavedEdits,
                 transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText));
@@ -1761,7 +1842,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor = editor;
             _currentEditorIsBlank = wasBlank;
             _currentEditorFileName = fileName;
-            Log.ModeSwitchedMidEdit(_logger, oldModeId, newMode.Id);
+            TrackSourcePath(editor, sourcePath);
+            editor.SetEstimatedFrameSeconds(_drmEstimatedSeconds);
+            RequestDrmEstimate();
+            Log.ModeSwitchedMidEdit(_logger, oldModeId, newGeometry.Id);
             QuickSelectModeCommand.NotifyCanExecuteChanged();
             OnPropertyChanged(nameof(CanChangeSourceOrMode));
             OnPropertyChanged(nameof(CanChangeMode));
@@ -1776,7 +1860,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // OLD editor is ALREADY disposed by this point
             // (no "leave the old one in place" fallback exists here), so close down fully, same as
             // any other construction failure.
-            Log.ModeSwitchReconstructionFailed(_logger, newMode.Id, ex);
+            Log.ModeSwitchReconstructionFailed(_logger, newGeometry.Id, ex);
             IsEditorOpen = false;
             _currentEditor = null;
             _currentEditorIsBlank = false;
@@ -1789,13 +1873,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <summary>Deliberately does NOT also require <c>!IsEditorOpen</c> -- confirmed sound (code
     /// review, spec/18-path-to-1.0.md High item 2), not just assumed: <see cref="_loadedImage"/> is
     /// only ever written sized to whatever <see cref="SelectedMode"/> was at that moment
-    /// (<see cref="OnEditorApplied"/> uses the editor's own target mode; <see cref="OnSelectedModeChanged"/>
+    /// (<see cref="OnEditorApplied"/> uses the editor's own target mode; <see cref="OnTargetGeometryChanged"/>
     /// re-flows to the new mode).
     /// <para>Mode-switch-mid-edit feature: <see cref="SelectedMode"/> is NO LONGER frozen for an
     /// open editor's whole lifetime -- a populated editor now handles a mode change via
     /// <see cref="ReplaceEditorForModeSwitch"/> instead of refusing it. The invariant above is now
     /// maintained by EAGER RE-DERIVATION on every <see cref="SelectedMode"/> change
-    /// (<see cref="OnSelectedModeChanged"/>'s tail runs unconditionally, in all three cases: blank
+    /// (<see cref="OnTargetGeometryChanged"/>'s tail runs unconditionally, in all three cases: blank
     /// editor reopened, populated editor replaced, or no editor open) rather than by freezing --
     /// still load-bearing, just enforced differently. <see cref="TransmitCoreAsync"/> also has a
     /// direct dimension-mismatch check as a backstop, since the structural guarantee freezing used
@@ -1815,18 +1899,30 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     // result dialog is MODAL, so letting a transmit start while one is running risked a dialog
     // popping up mid-transmission and blocking Stop TX. Mirrored on the Application-layer side too
     // (SstvSessionService.PlayWithPttAsync now cross-checks _loopbackSelfTestInFlight).
-    private bool CanTransmit() => _loadedImage is not null && !IsTransmitting && !IsRunningLoopbackSelfTest;
+    private bool CanTransmit() => _loadedImage is not null && CanTransmitNowForEditor();
+
+    /// <summary>The editor's own TRANSMIT gate: not busy, and DRM only once its codec is known to load.</summary>
+    private bool CanTransmitNowForEditor() => !IsTransmitting && !IsRunningLoopbackSelfTest && (!IsDrmSelected || IsDrmTransmitAvailable);
 
     [RelayCommand(CanExecute = nameof(CanTransmit))]
     private async Task TransmitAsync()
     {
-        if (_loadedImage is not { } image || SelectedMode is not { } mode)
+        if (_loadedImage is not { } image || SelectedTarget is not { } target || CurrentGeometry is not { } geometry)
         {
             return;
         }
 
-        await TransmitCoreAsync(image, mode, SelectedFileName, refreshMacros: true);
+        if (target is DrmTarget && !IsDrmTransmitAvailable)
+        {
+            return;
+        }
+
+        var drm = target is DrmTarget ? new DrmSend(BuildDrmTxSettings(), DrmOnAirFileName) : null;
+        await TransmitCoreAsync(image, target, geometry, SelectedFileName, refreshMacros: true, drm);
     }
+
+    /// <summary>A DRM send: the settings and the file name handed to the service (it adds the UTC stamp).</summary>
+    private sealed record DrmSend(DrmTxSettings Settings, string FileName);
 
     /// <summary>The actual encode-and-send logic, shared by the ordinary "TRANSMIT" button
     /// (<see cref="TransmitAsync"/>, which reads its `(image, mode, sourceFileName)` from this pane's
@@ -1850,14 +1946,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// Resend button's code-behind calls its command directly with no <c>CanExecute</c> re-check, and
     /// nothing calls <see cref="ResendSentFrameCommand"/>'s own <c>NotifyCanExecuteChanged</c>, so
     /// <see cref="CanResendSentFrame"/> is never actually consulted at runtime.</para></summary>
-    private async Task TransmitCoreAsync(IImageSource image, SstvModeDefinition mode, string? sourceFileName, bool refreshMacros)
+    private async Task TransmitCoreAsync(IImageSource image, TxTarget target, TargetGeometry geometry, string? sourceFileName, bool refreshMacros, DrmSend? drm)
     {
         if (IsTransmitting || IsRunningLoopbackSelfTest)
         {
             return;
         }
 
-        Log.TransmitInvoked(_logger, mode.Id);
+        if ((target is DrmTarget) != (drm is not null))
+        {
+            throw new ArgumentException("A DRM target needs DRM settings, and only a DRM target may have them.", nameof(drm));
+        }
+
+        Log.TransmitInvoked(_logger, geometry.Id);
         ErrorMessage = null;
         _cutoffTriggered = false;
         _consecutiveSwrOverThreshold = 0;
@@ -1889,6 +1990,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         // strip otherwise mirrors exactly. A UTC stamp rendered with no marker is the exact mislabel
         // class ImageViewerWindowView.axaml:91-97 was already fixed for once in this codebase.
         var sentFrameStartedAt = DateTimeOffset.Now;
+        DrmTxResult? drmResult = null;
 
         // Code-review finding: _transmitCts must exist BEFORE the (potentially awaiting) macro
         // re-resolution below, not just before the encode call -- otherwise a Stop TX click during
@@ -1901,10 +2003,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // invariant violation into a diagnosable error via the catch below instead of a raw
             // ArgumentException surfacing out of AnalogFmSstvEncoder (spec/18-path-to-1.0.md High
             // item 2's original failure mode).
-            if (image.Width != mode.ImageWidth || image.Height != mode.ImageHeight)
+            if (image.Width != geometry.Width || image.Height != geometry.Height)
             {
                 throw new InvalidOperationException(
-                    $"Loaded image ({image.Width}x{image.Height}) does not match SelectedMode {mode.Id} ({mode.ImageWidth}x{mode.ImageHeight}).");
+                    $"Loaded image ({image.Width}x{image.Height}) does not match target {geometry.Id} ({geometry.Width}x{geometry.Height}).");
             }
 
             if (refreshMacros)
@@ -1915,12 +2017,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 // contract; it never throws out of this call (its own try/catch always returns an
                 // image), so it's safe to await inside this try without a separate handler for it.
                 // MUST be skipped for a resend -- see this method's own doc comment on why.
-                image = await RefreshTransmitImageIfMacrosChangedAsync(image, mode);
+                image = await RefreshTransmitImageIfMacrosChangedAsync(image, geometry);
             }
 
             _transmitCts.Token.ThrowIfCancellationRequested();
 
-            await _sstvSession.TransmitAsync(mode, image, _transmitCts.Token);
+            if (target is SstvTarget sstv)
+            {
+                await _sstvSession.TransmitAsync(sstv.Mode, image, _transmitCts.Token);
+            }
+            else
+            {
+                drmResult = await _sstvSession.TransmitDrmAsync(image, drm!.FileName, drm.Settings, _transmitCts.Token);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1934,7 +2043,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                Log.TransmitStoppedManually(_logger, mode.Id);
+                Log.TransmitStoppedManually(_logger, geometry.Id);
                 ErrorMessage = null;
             }
 
@@ -1942,7 +2051,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            Log.TransmitFailed(_logger, mode.Id, ex);
+            Log.TransmitFailed(_logger, geometry.Id, ex);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.TransmitFailed");
             sentFrameOutcome = TxHistoryOutcome.Failed;
         }
@@ -1972,13 +2081,15 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             {
                 try
                 {
-                    RecordSentFrame(image, mode, sentFrameStartedAt, sentFrameOutcome, sentFrameFrequencyHz, sentFrameSourceFileName);
+                    RecordSentFrame(image, target, sentFrameStartedAt, sentFrameOutcome, sentFrameFrequencyHz, sentFrameSourceFileName, drm, drmResult);
                 }
                 catch (Exception ex)
                 {
-                    Log.RecordSentFrameFailed(_logger, mode.Id, ex);
+                    Log.RecordSentFrameFailed(_logger, geometry.Id, ex);
                 }
             }
+
+            OnTransmitEndedForDrmEstimate();
         }
     }
 
@@ -1992,7 +2103,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="PreviewImage"/> itself (disposed on every reassignment, see
     /// <see cref="OnPreviewImageChanged"/>). Not disposed on eviction here -- see <see cref="Dispose"/>
     /// and <c>RxImagePaneViewModel.PreviousFrames</c>' own identical non-disposing precedent.</summary>
-    private void RecordSentFrame(IImageSource image, SstvModeDefinition mode, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, long? frequencyHz, string? sourceFileName)
+    private void RecordSentFrame(IImageSource image, TxTarget target, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, long? frequencyHz, string? sourceFileName, DrmSend? drm, DrmTxResult? drmResult)
     {
         var outcomeLabel = _localization.GetString(outcome switch
         {
@@ -2001,8 +2112,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _ => "Panes.TxControls.SentFrames.Outcome.Completed",
         });
 
+        // A stopped or failed DRM send has no result, so its caption shows the target size instead.
+        var caption = target switch
+        {
+            SstvTarget sstv => sstv.Mode.DisplayName,
+            _ => FormatDrmCaption(drm!.Settings, drmResult?.Jp2Bytes ?? drm.Settings.TargetJp2Bytes),
+        };
+
         SentFrames.Insert(0, new TransmittedFrameViewModel(
-            image, ImageSourceBitmapConverter.ToBitmap(image), mode, transmittedAt, outcome, outcomeLabel, frequencyHz, sourceFileName));
+            image, ImageSourceBitmapConverter.ToBitmap(image), target, caption, transmittedAt, outcome, outcomeLabel, frequencyHz, sourceFileName,
+            drm?.Settings, drm?.FileName, drmResult?.Jp2Bytes));
         while (SentFrames.Count > SentFramesCapacity)
         {
             SentFrames.RemoveAt(SentFrames.Count - 1);
@@ -2034,8 +2153,22 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanResendSentFrame))]
     private async Task ResendSentFrameAsync(TransmittedFrameViewModel entry)
     {
-        Log.ResendSentFrameInvoked(_logger, entry.Mode.Id);
-        await TransmitCoreAsync(entry.Image, entry.Mode, entry.SourceFileName, refreshMacros: false);
+        Log.ResendSentFrameInvoked(_logger, entry.ModeToken);
+        if (entry.Target is SstvTarget sstv)
+        {
+            await TransmitCoreAsync(entry.Image, sstv, sstv.Mode.ToGeometry(), entry.SourceFileName, refreshMacros: false, drm: null);
+            return;
+        }
+
+        if (entry.DrmSettings is not { } stored || entry.DrmFileName is not { } fileName || !IsDrmTransmitAvailable)
+        {
+            return;
+        }
+
+        // The stored frame's own size; the level offset is the current Options value, not the one at first send.
+        var geometry = new TargetGeometry(entry.Image.Width, entry.Image.Height, $"drm-{entry.Image.Width}x{entry.Image.Height}", SelectedTargetDisplayNameForDrm, FrameSeconds: null);
+        var settings = stored with { LevelOffsetDb = _drmLevelOffsetDb };
+        await TransmitCoreAsync(entry.Image, entry.Target, geometry, entry.SourceFileName, refreshMacros: false, new DrmSend(settings, fileName));
     }
 
     /// <summary>TX history plan (2026-09-01): saves a <see cref="SentFrames"/> entry's exact
@@ -2050,7 +2183,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task SaveSentFrameAsync(TransmittedFrameViewModel entry)
     {
-        Log.SaveSentFrameInvoked(_logger, entry.Mode.Id);
+        Log.SaveSentFrameInvoked(_logger, entry.ModeToken);
         ErrorMessage = null;
         try
         {
@@ -2059,7 +2192,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             // rewrite an extension that's already present, so the dialog would pre-fill "vacation.jpg"
             // while WritePngAsync writes PNG bytes under it. Same "{timestamp}_{mode}.png" shape as
             // RxImagePaneViewModel.SaveFrameAsync's own suggested name.
-            var suggestedFileName = $"{DateTime.Now:yyyyMMdd-HHmmss}_{entry.Mode.Id}.png";
+            var suggestedFileName = $"{DateTime.Now:yyyyMMdd-HHmmss}_{entry.ModeToken}.png";
             if (await _filePickerService.PickSavePngFileAsync(suggestedFileName) is not { } path)
             {
                 return;
@@ -2069,7 +2202,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         }
         catch (Exception ex)
         {
-            Log.SaveSentFrameFailed(_logger, entry.Mode.Id, ex);
+            Log.SaveSentFrameFailed(_logger, entry.ModeToken, ex);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.SaveSentFrameFailed");
         }
     }
@@ -2099,7 +2232,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// actually holds. Concretely: Apply at frequency A, Transmit at frequency B (rebakes, baseline
     /// stays A), retune back to A, Transmit again -- fresh(A) would match the STILL-A baseline and
     /// skip the rebake, transmitting the stale B image. Verified safe to replace: the only other
-    /// reader of <see cref="EditState.Document"/> is <see cref="OnSelectedModeChanged"/>'s reflow,
+    /// reader of <see cref="EditState.Document"/> is <see cref="OnTargetGeometryChanged"/>'s reflow,
     /// which re-bakes from it unconditionally (never compares), so a fresher <see cref="EditState.Document"/>
     /// there changes nothing about that path's own behavior.</para>
     /// <para>Wrapped in its own try/catch, separate from <see cref="TransmitAsync"/>'s own
@@ -2110,7 +2243,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="PreviewImage"/>, on any failure -- including when <see cref="_editState"/> is
     /// somehow null despite <see cref="_loadedImage"/> being set (shouldn't happen, cheap to
     /// guard).</para></summary>
-    private async Task<IImageSource> RefreshTransmitImageIfMacrosChangedAsync(IImageSource loadedImage, SstvModeDefinition mode)
+    private async Task<IImageSource> RefreshTransmitImageIfMacrosChangedAsync(IImageSource loadedImage, TargetGeometry geometry)
     {
         if (_editState is not { } edit)
         {
@@ -2154,17 +2287,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
             var freshDocument = edit.Document with { Elements = freshElements };
             var final = _preparer.ComposePreview(
-                edit.Original, edit.CropRect, mode.ImageWidth, mode.ImageHeight, edit.PreserveAspect, edit.Adjustments, freshDocument);
+                edit.Original, edit.CropRect, geometry.Width, geometry.Height, edit.PreserveAspect, edit.Adjustments, freshDocument);
 
-            // Code-review finding: SelectedMode can change during the settings-load await above --
-            // the mode ComboBox stays enabled during a transmit (CanChangeSourceOrMode has no
-            // IsTransmitting term). If it did, OnSelectedModeChanged already reflowed
-            // _loadedImage/_editState to the NEW mode's own dimensions; overwriting that here with
-            // an image baked against the stale captured `mode` would silently break the
-            // "_loadedImage always matches SelectedMode" invariant CanTransmit's own doc comment
-            // states. `final` is still returned either way -- the in-flight transmit uses the
-            // captured `mode`/`final` pairing, which stays internally self-consistent regardless.
-            if (SelectedMode == mode)
+            // Keeps _loadedImage matching the current target even if it changed during the await; `final` is returned either way.
+            if (CurrentGeometry == geometry)
             {
                 // Computed into a local FIRST (code-review finding): if ToBitmap itself throws, the
                 // catch below must return the pre-rebake image with _editState/_loadedImage/
@@ -2173,13 +2299,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 _editState = edit with { Document = freshDocument };
                 _loadedImage = final;
                 PreviewImage = bitmap;
+                RequestDrmEstimate();
             }
 
             return final;
         }
         catch (Exception ex)
         {
-            Log.TransmitMacroRebakeFailed(_logger, mode.Id, ex);
+            Log.TransmitMacroRebakeFailed(_logger, geometry.Id, ex);
             return loadedImage;
         }
     }
@@ -2205,12 +2332,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// design unreachable from the RX pane, and must stay that way).</summary>
     public event Action<LoopbackSelfTestResultWindowViewModel>? LoopbackSelfTestCompleted;
 
-    private bool CanRunLoopbackSelfTest() => _loadedImage is not null && !IsTransmitting && !IsRunningLoopbackSelfTest;
+    /// <summary>SSTV only: the self-test decodes with the SSTV decoder, which has no DRM path.</summary>
+    private bool CanRunLoopbackSelfTest() => _loadedImage is not null && IsSstvSelected && !IsTransmitting && !IsRunningLoopbackSelfTest;
 
     [RelayCommand(CanExecute = nameof(CanRunLoopbackSelfTest))]
     private async Task RunLoopbackSelfTestAsync()
     {
-        if (_loadedImage is not { } image || SelectedMode is not { } mode)
+        if (_loadedImage is not { } image || SelectedMode is not { } mode || IsDrmSelected)
         {
             return;
         }
@@ -2257,64 +2385,65 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// async race to guard against here -- the old cancel-and-replace <c>CancellationTokenSource</c>
     /// machinery existed specifically for that I/O race and would be unused complexity now that the
     /// source is cached.</summary>
-    partial void OnSelectedModeChanged(SstvModeDefinition? value)
+    partial void OnSelectedTargetChanged(TxTarget? oldValue, TxTarget? newValue)
     {
-        Log.SelectedModeChanged(_logger, value?.Id);
+        Log.SelectedModeChanged(_logger, CurrentGeometry?.Id);
+        RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
+        TransmitCommand.NotifyCanExecuteChanged();
+        _currentEditor?.NotifyTransmitAvailabilityChanged();
+        OnTargetGeometryChanged();
+        RequestDrmEstimate();
+    }
 
-        // Backlog item (user request, 2026-08-17): "make sure to update the editor window when
-        // another mode is selected" -- a currently-open BLANK placeholder editor (nothing else,
-        // see IsCurrentEditorBlankAndUntouched's own doc comment) auto-updates to the new mode's
-        // own frame size instead of sitting stale at the old one. CloseBlankEditorForReplacement
-        // (not CancelCommand.Execute -- see its own doc comment) closes the stale editor without
-        // any auto-reopen side effect, then this unconditionally reopens blank at whatever
-        // SelectedMode is NOW (this property's own new value, already committed by the time this
-        // partial method runs).
-        //
-        // Tier B audit finding: this branch used to `return` right after reopening the blank
-        // editor, which ALSO skipped the reflow below -- a blank/untouched editor being open says
-        // nothing about whether _editState is null. _editState survives Cancel of a re-edit (Cancel
-        // doesn't clear a prior Apply's state, only the in-progress edit), and OnEditorCancelled
-        // auto-reopens a fresh blank editor right after -- so "blank editor open" + "_editState
-        // still set from an earlier Apply" is a real, reachable combination, not a hypothetical.
-        // With the early return, CanTransmit's own doc comment's invariant ("_loadedImage is only
-        // ever sized to whatever SelectedMode was at that moment") silently broke: _loadedImage
-        // kept the OLD mode's pixel dimensions while SelectedMode moved on, and Transmit had no
-        // extra gate to catch the mismatch before handing a wrong-sized image straight to
-        // AnalogFmSstvEncoder (which throws ArgumentException, surfacing only as a context-free
-        // "Transmit failed"). Falling through instead of returning lets the shared reflow/clear
-        // logic below run exactly as it would with no editor open at all -- what's shown inside the
-        // (separately reopened) blank editor is unaffected either way.
+    partial void OnSelectedDrmSizeChanged(DrmSizePreset value)
+    {
+        PersistDrmPaneSettings();
+        if (IsDrmSelected)
+        {
+            Log.SelectedModeChanged(_logger, CurrentGeometry?.Id);
+            OnTargetGeometryChanged();
+            RequestDrmEstimate();
+        }
+    }
+
+    /// <summary>Runs on every target change, and on a DRM size change while DRM is selected. Three cases, then
+    /// the shared reflow tail: a blank editor is reopened at the new geometry, a populated editor is rebuilt
+    /// at it (<see cref="ReplaceEditorForModeSwitch"/>), or no editor is open. The tail re-derives
+    /// <see cref="_loadedImage"/> from <see cref="_editState"/> at the new geometry, so a switch between SSTV
+    /// and DRM reflows the applied image instead of dropping it.</summary>
+    private void OnTargetGeometryChanged()
+    {
+        var geometry = CurrentGeometry;
+
+        // No early return after reopening a blank editor: _editState can outlive it, and the tail must still reflow.
         if (IsCurrentEditorBlankAndUntouched())
         {
             CloseBlankEditorForReplacement();
             _ = OpenBlankEditorAsync();
         }
-        // Mode-switch-mid-edit feature: mutually exclusive with the blank-editor branch above (both
-        // are pattern-matched on _currentEditor, so with no editor open neither fires). Must NOT
-        // `return` after this, same reasoning as the Tier B finding above -- falls through to the
-        // same shared reflow tail in all three cases (blank editor reopened, populated editor
-        // replaced, or no editor open).
-        else if (IsEditorOpen && value is { } newMode)
+        else if (IsEditorOpen && geometry is { } newGeometry)
         {
-            ReplaceEditorForModeSwitch(newMode);
+            ReplaceEditorForModeSwitch(newGeometry);
         }
 
-        if (value is null || _editState is not { } edit)
+        if (geometry is null || _editState is not { } edit)
         {
             _loadedImage = null;
             PreviewImage = null;
             TransmitCommand.NotifyCanExecuteChanged();
+            RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
             return;
         }
 
         var cropped = _preparer.Crop(edit.Original, edit.CropRect);
-        var resized = _preparer.Resize(cropped, value.ImageWidth, value.ImageHeight, edit.PreserveAspect);
+        var resized = _preparer.Resize(cropped, geometry.Width, geometry.Height, edit.PreserveAspect);
         var adjusted = _preparer.ApplyAdjustments(resized, edit.Adjustments);
         var final = _preparer.ApplyTemplate(adjusted, edit.Document);
 
         _loadedImage = final;
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
         TransmitCommand.NotifyCanExecuteChanged();
+        RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
     }
 
     /// <summary>Cancels and disposes an in-flight transmit's <see cref="_transmitCts"/> if the pane
@@ -2329,6 +2458,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     public void Dispose()
     {
         _localization.CultureChanged -= OnCultureChanged;
+        _drmEstimateTimer?.Stop();
+        if (_drmTargetKbPersist.IsPending)
+        {
+            // Saves the last slider value now instead of dropping it with the debounce.
+            _drmTargetKbPersist.Cancel();
+            _ = PersistDrmTargetKbAsync((int)DrmTargetKb);
+        }
         _transmitCts?.Cancel();
         foreach (var entry in SentFrames)
         {
@@ -2439,6 +2575,24 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedMode changed: {ModeId}")]
         public static partial void SelectedModeChanged(ILogger logger, string? modeId);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "DRM profile selected: index {Index}")]
+        public static partial void DrmProfileSelected(ILogger logger, int index);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "DRM transmission field edited: {Field}; profile is now Custom")]
+        public static partial void DrmFieldEdited(ILogger logger, string field);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Checking DRM transmit availability failed")]
+        public static partial void DrmAvailabilityCheckFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading DRM settings failed")]
+        public static partial void LoadDrmSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting DRM settings failed")]
+        public static partial void PersistDrmSettingsFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "DRM estimate failed")]
+        public static partial void DrmEstimateFailed(ILogger logger, Exception ex);
     }
 }
 
@@ -2487,23 +2641,38 @@ public enum TxHistoryOutcome
 /// file on disk to reload a downscaled copy from later).</para></summary>
 public sealed class TransmittedFrameViewModel
 {
-    public TransmittedFrameViewModel(IImageSource image, Bitmap thumbnail, SstvModeDefinition mode, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, string outcomeLabel, long? frequencyHz, string? sourceFileName)
+    public TransmittedFrameViewModel(
+        IImageSource image, Bitmap thumbnail, TxTarget target, string caption, DateTimeOffset transmittedAt, TxHistoryOutcome outcome,
+        string outcomeLabel, long? frequencyHz, string? sourceFileName, DrmTxSettings? drmSettings = null, string? drmFileName = null, int? jp2Bytes = null)
     {
         Image = image;
         Thumbnail = thumbnail;
-        Mode = mode;
+        Target = target;
+        Caption = caption;
         TransmittedAt = transmittedAt;
         Outcome = outcome;
         OutcomeLabel = outcomeLabel;
         FrequencyHz = frequencyHz;
         SourceFileName = sourceFileName;
+        DrmSettings = drmSettings;
+        DrmFileName = drmFileName;
+        Jp2Bytes = jp2Bytes;
     }
 
     public IImageSource Image { get; }
 
     public Bitmap Thumbnail { get; }
 
-    public SstvModeDefinition Mode { get; }
+    public TxTarget Target { get; }
+
+    /// <summary>The SSTV mode, or null for a DRM entry.</summary>
+    public SstvModeDefinition? Mode => (Target as SstvTarget)?.Mode;
+
+    /// <summary>The mode id for logs and the save-name suggestion; "DRM" for a DRM entry.</summary>
+    public string ModeToken => Mode?.Id ?? "DRM";
+
+    /// <summary>Pre-resolved at record time: the SSTV mode name, or "DRM B · 16-QAM · 42 KB".</summary>
+    public string Caption { get; }
 
     public DateTimeOffset TransmittedAt { get; }
 
@@ -2518,4 +2687,13 @@ public sealed class TransmittedFrameViewModel
     public long? FrequencyHz { get; }
 
     public string? SourceFileName { get; }
+
+    /// <summary>The DRM settings this entry was sent with; null for SSTV.</summary>
+    public DrmTxSettings? DrmSettings { get; }
+
+    /// <summary>The file name handed to the DRM transmitter (before its UTC stamp); null for SSTV.</summary>
+    public string? DrmFileName { get; }
+
+    /// <summary>The JPEG 2000 size actually sent; null for SSTV and for a stopped or failed DRM send.</summary>
+    public int? Jp2Bytes { get; }
 }

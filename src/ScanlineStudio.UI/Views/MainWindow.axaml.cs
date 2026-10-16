@@ -605,6 +605,7 @@ public partial class MainWindow : Window
                             _ = vm.LoadOperatorSettingsAsync();
                             _ = vm.TxControls.LoadOutputDeviceNameAsync();
                             _ = vm.TxControls.LoadIdentificationSummaryAsync();
+                            _ = vm.TxControls.ReloadDrmOptionsAsync();
                             // Storage section moved in from the former standalone "Configurations >
                             // Storage" dialog (2026-08-27) -- carries over that dialog's own
                             // refresh-the-Gallery-Storage-card-on-close behavior, now for General
@@ -1020,6 +1021,7 @@ public partial class MainWindow : Window
                     _ = vm.LoadOperatorSettingsAsync();
                     _ = vm.TxControls.LoadOutputDeviceNameAsync();
                     _ = vm.TxControls.LoadIdentificationSummaryAsync();
+                    _ = vm.TxControls.ReloadDrmOptionsAsync();
                     _ = vm.RxHistory.LoadImagesDirectoryAsync();
                     _ = vm.RxHistory.LoadAudioStorageInfoAsync();
                     _ = vm.RxImage.LoadQrzLookupConfiguredAsync();

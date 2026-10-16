@@ -111,7 +111,7 @@ public sealed partial class TxImageEditorPaneViewModel
             // Code-review finding on spec/18-path-to-1.0.md High item 4: rotating the crop rect
             // via the 90°-clockwise transform above swaps its width/height along with the working
             // copy's own dimension swap -- for an already-aspect-locked rect, that leaves the
-            // PIXEL aspect at the RECIPROCAL of _targetMode's own (unchanged) aspect, while
+            // PIXEL aspect at the RECIPROCAL of _target's own (unchanged) aspect, while
             // LockAspectToMode still reads true. Re-fitting immediately closes the gap the same
             // way OnLockAspectToModeChanged does when the toggle is first engaged -- safe here
             // too: X/Y are untouched by the rect transform above, so the max-bounds this re-fit
@@ -168,7 +168,7 @@ public sealed partial class TxImageEditorPaneViewModel
     private void ReplaceSourceAndWorkingCopy(IImageSource newSource)
     {
         _originalSource = newSource;
-        _workingCopy = BuildWorkingCopy(newSource, _targetMode, _preparer);
+        _workingCopy = BuildWorkingCopy(newSource, _target, _preparer);
         NotifyWorkingCopyGeometryChanged();
     }
 
@@ -728,7 +728,7 @@ public sealed partial class TxImageEditorPaneViewModel
     private void RecomputePreviewPipeline()
     {
         var composited = _preparer.ComposePreview(
-            _workingCopy, CropRect, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect,
+            _workingCopy, CropRect, _target.Width, _target.Height, PreserveAspect,
             BuildAdjustments(), BuildTemplateDocument());
         PreviewImage = _previewPool.Blit(composited);
     }
@@ -737,8 +737,8 @@ public sealed partial class TxImageEditorPaneViewModel
 
     private ImageAdjustments BuildAdjustments() => new(Brightness, Contrast, Saturation, Gamma, Sharpen, Denoise);
 
-    private static IImageSource BuildWorkingCopy(IImageSource source, SstvModeDefinition mode, ITransmitImagePreparer preparer) =>
-        DownsampleToBudget(source, mode.ImageWidth * WorkingCopyScaleFactor, mode.ImageHeight * WorkingCopyScaleFactor, preparer);
+    private static IImageSource BuildWorkingCopy(IImageSource source, TargetGeometry target, ITransmitImagePreparer preparer) =>
+        DownsampleToBudget(source, target.Width * WorkingCopyScaleFactor, target.Height * WorkingCopyScaleFactor, preparer);
 
     /// <summary>Shared aspect-preserving downsample-to-budget, factored out of
     /// <see cref="BuildWorkingCopy"/> (code-review finding, Phase 2, spec/15-template-designer.md):

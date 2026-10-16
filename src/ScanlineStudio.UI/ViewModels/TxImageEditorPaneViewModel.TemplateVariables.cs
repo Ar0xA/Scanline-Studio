@@ -45,8 +45,9 @@ public sealed partial class TxImageEditorPaneViewModel
     /// uppercased for DISPLAY only (Phase I, final confirming pass nit) -- SSTV mode display names
     /// are fixed Latin protocol abbreviations, never user data, so <c>ToUpperInvariant</c> is a safe
     /// display-side transform, not a rename of <see cref="SstvModeDefinition.DisplayName"/> itself.</summary>
-    public string SendMetaText => _localization.GetString(
-        "Panes.TxImageEditor.SendMetaFormat", _targetMode.DisplayName.ToUpperInvariant(), TxControlsPaneViewModel.GetFrameSeconds(_targetMode));
+    public string SendMetaText => (_target.FrameSeconds ?? _estimatedFrameSeconds) is { } seconds
+        ? _localization.GetString("Panes.TxImageEditor.SendMetaFormat", _target.DisplayName.ToUpperInvariant(), seconds)
+        : _localization.GetString("Panes.TxImageEditor.SendMetaFormatNoDuration", _target.DisplayName.ToUpperInvariant());
 
     /// <summary>Snapshot of the current template-variable value map, for a host
     /// (<see cref="TxControlsPaneViewModel"/>) to capture alongside <see cref="RawOverlayElements"/>

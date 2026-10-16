@@ -128,6 +128,9 @@ public sealed partial class TxImageEditorPaneViewModel
     /// reasoning.</summary>
     public bool HasRealBackground => _sourceBaseline is not BlankImageSource;
 
+    /// <summary>The background instance in use; a new instance means the background was replaced.</summary>
+    public IImageSource BackgroundBaseline => _sourceBaseline;
+
     /// <summary>User-reported bug (2026-09-15): "once i removed the background however stock browse
     /// and open editor are still greyed out." <c>TxControlsPaneViewModel.CanChangeSourceOrMode</c>
     /// gates Browse/Stock/Open Editor on <c>_currentEditorIsBlank</c> (a one-shot snapshot from
@@ -193,18 +196,18 @@ public sealed partial class TxImageEditorPaneViewModel
             }
 
             var cropped = _preparer.Crop(_originalSource, CropRect);
-            var resized = _preparer.Resize(cropped, _targetMode.ImageWidth, _targetMode.ImageHeight, PreserveAspect);
+            var resized = _preparer.Resize(cropped, _target.Width, _target.Height, PreserveAspect);
             var baked = _preparer.ApplyAdjustments(resized, Adjustments);
 
             var z = OverlayElements.Count == 0 ? 0 : OverlayElements.Min(e => e.Z) - 1;
             var element = CreateImageElement(NewImageElementDefaults(baked, new ImageSourceOrigin(ImageSourceKind.Promoted, null)) with
             {
                 X = 0.5, Y = 0.5, Width = 1, Height = 1, Z = z, Locked = true,
-                IsBackground = true, NaturalPixelWidth = _targetMode.ImageWidth, NaturalPixelHeight = _targetMode.ImageHeight,
+                IsBackground = true, NaturalPixelWidth = _target.Width, NaturalPixelHeight = _target.Height,
             });
             OverlayElements.Insert(0, element);
 
-            var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
+            var placeholder = new BlankImageSource(_target.Width, _target.Height, BlankImageSource.DefaultColor);
             // New generation, same reasoning as BakeElementIntoBackgroundAsync's own identical assignment: this
             // source can never be reached from the old baseline by rotation, so ApplyState must
             // restore it by instance.
@@ -245,7 +248,7 @@ public sealed partial class TxImageEditorPaneViewModel
         _suspendPreview = true;
         try
         {
-            var placeholder = new BlankImageSource(_targetMode.ImageWidth, _targetMode.ImageHeight, BlankImageSource.DefaultColor);
+            var placeholder = new BlankImageSource(_target.Width, _target.Height, BlankImageSource.DefaultColor);
             _sourceBaseline = placeholder;
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(placeholder);

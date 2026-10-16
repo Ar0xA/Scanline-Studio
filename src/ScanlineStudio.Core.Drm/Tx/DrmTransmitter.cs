@@ -62,6 +62,27 @@ public sealed class DrmTransmitter : IDrmTransmitter
         }
     }
 
+    public DrmFrameCount CountFrames(ReadOnlySpan<byte> jp2, string fileName, PublicSettings settings)
+    {
+        ArgumentNullException.ThrowIfNull(fileName);
+        ArgumentNullException.ThrowIfNull(settings);
+        ArgumentNullException.ThrowIfNull(settings.Callsign);
+        if (jp2.IsEmpty)
+            throw new ArgumentException("A DRM transmission needs a non-empty payload.", nameof(jp2));
+
+        CoreSettings core = ToCoreSettings(settings);
+        DrmTxObject txObject = DrmTxObject.ForFile(jp2, DrmTxNaming.PlaceholderTxFileName(fileName, binary: false), core.ReedSolomon);
+        BsrTransportIdCounter counter;
+        lock (_gate)
+            counter = _bsrCounter.Clone();
+
+        int frameCount = new DrmSourceFrameGenerator(txObject, core, counter).Frames().Count(f => f.FacBits is not null);
+        var table = new CellMappingTable(core.Mode, core.Occupancy);
+        int samplesPerFrame = table.SymbolBlockSize * table.NumSymbolsPerFrame;
+        long voxSamples = settings.VoxTone ? DrmVoxTone.SampleCount(OutputSampleRate) : 0;
+        return new DrmFrameCount(frameCount, voxSamples + ((long)frameCount * samplesPerFrame));
+    }
+
     internal static CoreSettings ToCoreSettings(PublicSettings settings) => new(
         settings.Mode switch
         {
