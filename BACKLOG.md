@@ -335,7 +335,11 @@ real QSSTV/EasyPal WAVs for P8.
 - **DRM-P1.** DONE — `ScanlineStudio.Core.Drm` + tests: HamDRM tables and the TX cell map (all 6 mode×SO maps match
   QSSTV's runtime table cell-for-cell), TX/RX CRC (QSSTV's CRC16 is GENIBUS-shaped, not X.25) and PRBS, mixed-radix
   2/3/4/5 FFT (FFTW conventions), Latin-1 per UTF-16 unit. Auditor: 1 code-review round, go.
-- **DRM-P2 / P3.** OPEN — TX source side / TX channel side, golden-checked.
+- **DRM-P2.** DONE — TX source side: Karn RS + file header/distribute, naming (Qt UTF-8 round trip of MOT names
+  reproduced), MOT object/schedule (incl. FIX branch), data groups, packets, FAC with callsign and QSSTV's in-place
+  scrambler leak in bits 31-39, EOT tail. Byte/bit-exact on all 79 goldens. Tiny RS payloads zero-padded (QSSTV is UB;
+  harness-RX gate moves to P4a). Auditor: 1 code-review round, go.
+- **DRM-P3.** OPEN — TX channel side, golden-checked.
 - **DRM-P4a / P4b.** OPEN — TX core + OpenJPEG binding / TX UI (own plan review).
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
   and the lost-frame attribution (fixture README).

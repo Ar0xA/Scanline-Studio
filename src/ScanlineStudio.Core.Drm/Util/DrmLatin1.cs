@@ -19,6 +19,15 @@ internal static class DrmLatin1
         return bytes;
     }
 
+    /// <summary><c>toLatin1().data()</c> handed to a C string: <see cref="Encode"/>, cut at the first NUL
+    /// (drmtransmitter.cpp:112, MOTSlideShow.cpp:101).</summary>
+    public static byte[] EncodeNulTerminated(string text)
+    {
+        byte[] bytes = Encode(text);
+        int nul = Array.IndexOf(bytes, (byte)0);
+        return nul < 0 ? bytes : bytes[..nul];
+    }
+
     /// <summary>Byte to char, one to one (fromLatin1).</summary>
     public static string Decode(ReadOnlySpan<byte> bytes)
     {
