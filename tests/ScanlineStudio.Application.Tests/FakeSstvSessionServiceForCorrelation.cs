@@ -134,8 +134,6 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public bool IsAutoDetectPaused => throw NotExercised();
 
-    public bool IsPttLocked => throw NotExercised();
-
     public double? SlantPpm => throw NotExercised();
 
     public SstvSyncSource SyncSource => throw NotExercised();
@@ -242,7 +240,7 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public Task TransmitAsync(SstvModeDefinition mode, IImageSource image, CancellationToken ct = default) => throw NotExercised();
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default) => throw NotExercised();
+    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default) => throw NotExercised();
 
     public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => throw NotExercised();
 
@@ -257,8 +255,6 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
     }
 
     public Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default) => throw NotExercised();
-
-    public Task SetPttLockAsync(bool locked, CancellationToken ct = default) => throw NotExercised();
 
     public Task<string?> GetConfiguredPlaybackDeviceNameAsync(CancellationToken ct = default) => throw NotExercised();
 

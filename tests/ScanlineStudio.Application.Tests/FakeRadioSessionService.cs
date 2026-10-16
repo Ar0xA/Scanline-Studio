@@ -91,29 +91,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <c>SstvSessionService.PlayWithPttAsync</c>'s cleanup path passing a fresh token from one that
     /// (incorrectly) reuses the possibly-cancelled transmit token -- see
     /// <c>SstvSessionServiceTests.TransmitAsync_TokenCancelledMidTransmit_StillUnkeysPttAndRestartsCapture</c>.</summary>
-    /// <summary>Tier B audit finding (test-fidelity gap): when true, a RigId=="none" call throws
-    /// SYNCHRONOUSLY before this method's own async state machine ever starts -- matching the
-    /// real production chain's actual shape (RadioSessionService -> RadioController ->
-    /// NoneRadioProtocol, none of which is `async`, so the throw happens before the caller's own
-    /// `pttCommand` local is ever assigned). The plain async version below always returns SOME
-    /// Task object to the caller, even for the immediate-throw case (a faulted one) -- so a test
-    /// against the default (false) shape cannot distinguish "the command was dispatched and then
-    /// failed" from "the command was never dispatched at all," the exact distinction
-    /// SstvSessionService.SetPttLockAsync's own pttCommand-is-not-null guard depends on. Defaults
-    /// to false so every EXISTING test (relying on the original async-fault shape) is unaffected.</summary>
-    public bool ThrowSynchronouslyOnNoneRig { get; set; }
-
-    public Task SetPttAsync(bool tx, CancellationToken ct = default)
-    {
-        if (ThrowSynchronouslyOnNoneRig && RigId == "none")
-        {
-            throw new InvalidOperationException("No radio is connected -- nothing to key PTT on.");
-        }
-
-        return SetPttAsyncCore(tx, ct);
-    }
-
-    private async Task SetPttAsyncCore(bool tx, CancellationToken ct)
+    public async Task SetPttAsync(bool tx, CancellationToken ct = default)
     {
         ct.ThrowIfCancellationRequested();
         var callNumber = Interlocked.Increment(ref _callCount);
@@ -137,16 +115,6 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
             // round 18's own fix) never does. A no-op for every existing test passing
             // CancellationToken.None, which never cancels.
             await Gate.WaitAsync(ct).ConfigureAwait(false);
-        }
-
-        if (Gate2 is not null && GateOnCallNumber2 == callNumber)
-        {
-            // Round-30 test hook: a SECOND, independent gate -- needed when a test must control TWO
-            // different calls' own release timing separately (e.g. an abandoned first call and a
-            // second call it indirectly triggers, both of which need to be released at DIFFERENT,
-            // deterministic points rather than simultaneously). Gate/GateOnCallNumber alone can't
-            // express this: it is one shared Task, so both calls would always release together.
-            await Gate2.WaitAsync(ct).ConfigureAwait(false);
         }
 
         BeforeSetPtt?.Invoke(tx);
@@ -176,7 +144,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 8): when set, <see cref="SetPttAsync"/>
     /// genuinely `await`s this before doing anything else -- unlike <see cref="BeforeSetPtt"/> (a
     /// synchronous callback that can't yield control back to the caller), this lets a test park a real
-    /// in-flight <c>SetPttLockAsync</c>/<c>PlayWithPttAsync</c> call mid-command without blocking the
+    /// in-flight <c>PlayWithPttAsync</c> call mid-command without blocking the
     /// calling thread, the same shape <c>FakeAudioDeviceEnumerator.Gate</c> already provides for device
     /// resolution.</summary>
     public Task? Gate { get; set; }
@@ -189,17 +157,6 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <see cref="Gate"/>'s original behavior of applying to every call.</summary>
     public int? GateOnCallNumber { get; set; }
 
-    /// <summary>Test-only hook (round 30): a SECOND, independent gate -- see <see cref="SetPttAsync"/>'s
-    /// own comment for why this exists separately from <see cref="Gate"/>. Unlike <see cref="Gate"/>,
-    /// this one requires <see cref="GateOnCallNumber2"/> to be set (no "applies to every call"
-    /// default) -- it exists specifically to target one OTHER call independently of whatever
-    /// <see cref="Gate"/>/<see cref="GateOnCallNumber"/> is already targeting.</summary>
-    public Task? Gate2 { get; set; }
-
-    /// <summary>Test-only hook (round 30): the 1-based call number <see cref="Gate2"/> applies to. See
-    /// <see cref="Gate2"/>'s own comment.</summary>
-    public int? GateOnCallNumber2 { get; set; }
-
     /// <summary>Test-only hook (Tier A Batch 3 chunk 3a round 14): 1-based call number of
     /// <see cref="SetPttAsync"/> that should hang forever instead of completing. See
     /// <see cref="SetPttAsync"/>'s own comment for why this exists separately from
@@ -209,7 +166,7 @@ internal sealed class FakeRadioSessionService : IRadioSessionService
     /// <summary>Test-only hook (round 28): invoked with the 1-based call number the INSTANT
     /// <see cref="SetPttAsync"/> is entered, before any <see cref="HangOnCallNumber"/>/<see cref="Gate"/>
     /// check. Needed because this fake has no real-time pacing -- a test racing a SECOND, independent
-    /// call (e.g. <c>SetPttLockAsync</c>) against a GATED first call cannot otherwise tell "the first
+    /// call (e.g. <c>DisposeAsync</c>'s backstop) against a GATED first call cannot otherwise tell "the first
     /// call has genuinely reached and is now parked at its own gate" from external polling alone, the
     /// same problem <c>SignalingGatedStopPlaybackAudioEngine</c> (round 25) solves for the audio engine.
     /// Gives a deterministic happens-before point to synchronize on instead.</summary>

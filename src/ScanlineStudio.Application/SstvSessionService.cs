@@ -152,9 +152,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
     public event Action<TxVolumeChange>? TxVolumePercentChanged;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
     // (which writes this) from the audio drain thread, not just from a UI-thread-initiated
-    // StartReceivingAsync/StopReceivingAsync call -- volatile for the same reason _pttLocked below
-    // already is (this field's own reads/writes now span more than one caller thread with no lock
-    // between them).
+    // StartReceivingAsync/StopReceivingAsync call -- volatile because this field's own reads/writes now
+    // span more than one caller thread with no lock between them.
     private volatile bool _isReceiving;
 
     // RX pause/resume toggle (elegant-wondering-hinton.md, port of legacy's RxAutoPush toggle,
@@ -170,18 +169,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // see _decoderHandler's own gate below). Also volatile, same reasoning as _autoDetectPaused.
     private volatile bool _autoDetectPauseDrainPending;
 
-    // Round-15 nit: every other cross-thread flag on this class (_isReceiving immediately above,
-    // _pttLocked/_rxPendingResumeAfterUnlock below) is volatile with an explicit comment justifying
-    // it -- this one is written from OnDecoderRestarted/OnDecoderRestartCriticallyOverdue (see the
+    // Volatile like _isReceiving above -- this one is written from OnDecoderRestarted/OnDecoderRestartCriticallyOverdue (see the
     // latter's own doc comment: reachable from the audio drain thread, not just a UI-thread caller)
     // and read from OnDecoderRestarted, with no lock between them.
     private volatile bool _maintenanceWarningActive;
 
-    // T1-5 (production_audit.md): the PTT keying/un-keying state machine -- _pttLocked,
-    // _rxPendingResumeAfterUnlock, _keyedTransmitCompletion, _pttLeftKeyedByCall,
-    // _pttUnkeyFailedOnRealRig, _pttKeyEpoch, _pttUnkeyEpoch, _keyedTransmitCount -- was extracted
-    // into PttSafetyCoordinator (three rounds of plan-review, see that class's own doc comment for
-    // the full field-ownership/lost-update-race reasoning). This class keeps every await/Log.* call
+    // The PTT keying/un-keying state machine -- _keyedTransmitCompletion, _pttUnkeyFailedOnRealRig,
+    // _pttKeyEpoch, _pttUnkeyEpoch, _keyedTransmitCount -- lives in PttSafetyCoordinator (see that
+    // class's own doc comment for the field-ownership/lost-update-race reasoning). This class keeps every await/Log.* call
     // (all the orchestration); the coordinator owns only the field reads/writes that decide what to
     // record. _disposed and _transmitInFlight deliberately stay here -- see the coordinator's own
     // doc comment for why.
@@ -192,14 +187,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // reached its own publish point yet (e.g. RadioStatusViewModel.TuneAsync's real production call
     // passes CancellationToken.None, so nothing can ever cancel it) could previously key PTT AFTER
     // DisposeAsync had already run its backstop and returned, with no shutdown safety net left to catch
-    // it. Read by PlayWithPttAsync's own thread, written by whatever thread calls DisposeAsync -- same
-    // threading shape as _pttLocked above.
+    // it. Read by PlayWithPttAsync's own thread, written by whatever thread calls DisposeAsync, with no
+    // lock between them.
     private volatile bool _disposed;
 
     // Round-12 finding: two overlapping PlayWithPttAsync calls (TransmitAsync racing TuneAsync --
     // RadioStatusViewModel's own Tune command has no TX-in-progress CanExecute gate, so clicking Tune
-    // during a TransmitAsync produces two live calls -- see _keyedTransmitCount's own comment for this
-    // same reachability) used to let the SECOND call unconditionally re-key and call
+    // during a TransmitAsync produces two live calls) used to let the SECOND call unconditionally re-key and call
     // StartPlaybackAsync, which throws "already started" against the FIRST call's own live playback
     // session -- that throw is caught generically, classified abnormalTermination, and its finally's
     // urgent un-key runs immediately, dropping the FIRST call's carrier mid-frame, followed by
@@ -209,9 +203,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
     // gets silently killed by an unrelated second call. A single-flight guard (CompareExchange at
     // PlayWithPttAsync's very entry, before ANYTHING else -- no RX pause, no device resolution, no PTT
     // touched) rejects the second call outright instead. Deliberately a SEPARATE field from
-    // _keyedTransmitCount: that one is also incremented by SetPttLockAsync (a different, narrower
-    // concern -- shutdown-wait visibility, not single-flight exclusivity) and is never incremented at
-    // all when RigId == "none" (the "no radio configured" case still needs the SAME playback-session
+    // _keyedTransmitCount: that one is a different, narrower concern (shutdown-wait visibility, not
+    // single-flight exclusivity) and is never incremented at all when RigId == "none" (the "no radio configured" case still needs the SAME playback-session
     // exclusivity this field protects). 0 = idle, 1 = a call owns it; plain `int` is sufficient since
     // CompareExchange is the only operation ever performed on it.
     private int _transmitInFlight;
@@ -521,19 +514,10 @@ public sealed partial class SstvSessionService : ISstvSessionService
         }
     }
 
-    public bool IsPttLocked => _pttCoordinator.IsPttLocked;
-
-    /// <summary>Serializes <see cref="SetPttLockAsync"/> so two overlapping calls can never interleave
-    /// (a real TOCTOU an earlier check-then-act version had) -- see that method's own doc comment for
-    /// the full reasoning. Round-14 nit: deliberately never disposed by <see cref="DisposeAsync"/>,
-    /// matching this class's post-dispose contract of reaching the idempotency/disposed check on a
-    /// still-usable primitive rather than throwing from the primitive itself.</summary>
-    private readonly SemaphoreSlim _pttLockGate = new(1, 1);
-
     /// <summary>Tier B audit finding (Area 3): serializes <see cref="StartReceivingAsync"/> and
     /// <see cref="StopReceivingAsync"/> against each other -- without this, both methods' own
     /// `_isReceiving` check-then-act (read at entry, published only after several awaits) had no gate
-    /// between them, unlike <see cref="_pttLockGate"/>'s identical shape for <see cref="SetPttLockAsync"/>.
+    /// between them.
     /// A real UI repro: <c>RadioStatusViewModel.SetReceivingSafeAsync</c> is a fire-and-forget command
     /// with no busy guard, and the same class's own startup maintenance-retry path is a SEPARATE
     /// caller hitting <see cref="StopReceivingAsync"/>/<see cref="StartReceivingAsync"/> concurrently
@@ -551,10 +535,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// hold this gate indefinitely, and every later Start needed its own bound to avoid hanging behind
     /// it forever -- unlike Stop's timeout, Start's THROWS <see cref="TimeoutException"/> rather than
     /// silently no-op'ing, since a caller of Start needs to know capture did not actually start.
-    /// Tier B audit finding (Area 5, nit): same non-disposal contract as <see cref="_pttLockGate"/>
-    /// above, for the same reason (deliberately never disposed by <see cref="DisposeAsync"/> -- see
-    /// that field's own round-14 note) -- <see cref="StopReceivingAsync"/> must stay callable post-
-    /// dispose on a still-usable primitive.</summary>
+    /// Deliberately never disposed by <see cref="DisposeAsync"/>: <see cref="StopReceivingAsync"/>
+    /// must stay callable post-dispose, reaching its own idempotency/disposed check on a still-usable
+    /// primitive rather than throwing from the primitive itself.</summary>
     private readonly SemaphoreSlim _rxTransitionGate = new(1, 1);
 
     public long CurrentReceptionSequence => _decoder.ReceptionSequence;
@@ -592,8 +575,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// out of a `finally` block, masking the real exception/original cancellation reason a caller like
     /// <c>TxControlsPaneViewModel</c> distinguishes on. Not rate-limited like
     /// <see cref="ReportTransmitProgress"/>'s own catch (that one is a genuine hot path, ~every 4096
-    /// samples; this fires at most twice per transmission -- or once for a stranded deferred-lock
-    /// resume, see this method's other call sites -- so a plain per-occurrence Error (matching the
+    /// samples; this fires at most twice per transmission -- so a plain per-occurrence Error (matching the
     /// sibling <c>MaintenanceHandlerFailed</c>/<c>TransmitProgressHandlerFailed</c> level) cannot
     /// flood the log).</summary>
     private void RaiseCapturePausedForTransmitChanged(bool paused)
@@ -924,29 +906,26 @@ public sealed partial class SstvSessionService : ISstvSessionService
             SafeLog(() => Log.CleanupStepFailed(_logger, "AwaitInFlightKeyedTransmit (dispose)", ex));
         }
 
-        // A rig can be physically keyed at shutdown for FOUR distinct reasons, and _pttLocked only
-        // covered one of them: an engaged PTT lock (_pttLocked), a TuneAsync(leaveKeyedAfterTune:true)
-        // that deliberately left it keyed (_pttLeftKeyedByCall), an in-flight transmit whose own
-        // un-key never completed (_keyedTransmitCount still nonzero after the bounded wait above), and
-        // a completed transmit whose own un-key attempt FAILED (_pttUnkeyFailedOnRealRig -- round-3
-        // finding: _pttLocked is already false by the time this failure is even observed, and
+        // A rig can be physically keyed at shutdown for TWO distinct reasons: an in-flight transmit
+        // whose own un-key never completed (_keyedTransmitCount still nonzero after the bounded wait
+        // above), and a completed transmit whose own un-key attempt FAILED (_pttUnkeyFailedOnRealRig --
         // _keyedTransmitCompletion is unconditionally cleared by PlayWithPttAsync's own finally
-        // regardless of whether the un-key succeeded, so without this fourth flag a rig this class
-        // already logged Critical about would be silently walked away from here). All four get the same
+        // regardless of whether the un-key succeeded, so without this flag a rig this class already
+        // logged Critical about would be silently walked away from here). Both get the same
         // best-effort, bounded, swallowed un-key -- a failed shutdown PTT-off must not prevent the rest
-        // of teardown from completing, but it is now logged at Critical (inside UnkeyForCleanupAsync),
-        // not swallowed silently.
+        // of teardown from completing, but it is logged at Critical (inside UnkeyForCleanupAsync), not
+        // swallowed silently.
         //
-        // Round-6 finding: this reads _keyedTransmitCount, NOT _keyedTransmitCompletion's nullness --
-        // see the count field's own doc comment for why nullness alone goes blind when two
-        // PlayWithPttAsync calls overlap and the newer one's publish overwrites the older one's TCS.
+        // Round-6 finding: this reads the coordinator's in-flight count, NOT _keyedTransmitCompletion's
+        // nullness -- a newer publish overwrites an older registration's TCS and its release then nulls
+        // the field while the older one is still keyed; the count survives that overwrite.
         if (_pttCoordinator.BelievesKeyedOrInFlight())
         {
-            // pttKeyedOnRealRig: true, and NOT a re-read of RigId (blocker 2's whole point). Every one
-            // of the four states above is only reachable via a SetPttAsync issued against a
-            // non-"none" RigId -- SetPttLockAsync only sets _pttLocked AFTER a successful set, the
-            // null-object backend always throws, and _pttLeftKeyedByCall/_keyedTransmitCompletion are
-            // only published when RigId was real at key time. A failure here is therefore always a
+            // pttKeyedOnRealRig: true, and NOT a re-read of RigId (blocker 2's whole point). Both
+            // states above are only reachable via a SetPttAsync issued against a non-"none" RigId --
+            // _keyedTransmitCompletion is only published when RigId was real at key time, and
+            // _pttUnkeyFailedOnRealRig is only latched by an unkey whose caller believed it had keyed a
+            // real rig. A failure here is therefore always a
             // genuinely stuck-keyed rig, never the benign no-radio case.
             //
             // Round-18 finding 6: also now guarded -- see the comment on this method's own first step
@@ -1196,14 +1175,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Debug, Message = "PTT un-key succeeded, but a newer key command completed while it was in flight -- leaving that call's own \"still keyed\" state intact instead of clearing it")]
         public static partial void PttUnkeyRaceLostToNewerKey(ILogger logger);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping \"left keyed\" state write -- a confirmed PTT un-key completed elsewhere while this call was finishing up, so the rig is already known to be off")]
-        public static partial void PttLeftKeyedSkippedConfirmedUnkeyRace(ILogger logger);
-
         [LoggerMessage(Level = LogLevel.Debug, Message = "Skipping cleanup PTT un-key attempt -- a confirmed un-key completed elsewhere while this call was finishing up, so the rig is already known to be off")]
         public static partial void PttCleanupUnkeySkippedConfirmedElsewhere(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Information, Message = "PTT lock {Locked}")]
-        public static partial void PttLockChanged(ILogger logger, bool locked);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Playback cancelled")]
         public static partial void PlaybackCancelled(ILogger logger);
@@ -1225,9 +1198,6 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY STILL BE KEYED -- the un-key command failed on a rig this session actually keyed. Check the radio and un-key it manually.")]
         public static partial void PttStillKeyedAfterFailedUnkey(ILogger logger);
-
-        [LoggerMessage(Level = LogLevel.Critical, Message = "PTT MAY HAVE BEEN KEYED -- the key command failed, but may have physically keyed the rig before failing. Check the radio and un-key it manually if needed.")]
-        public static partial void PttKeyCommandFailedMayHaveKeyed(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Shutdown is waiting for an in-flight keyed transmit to finish un-keying PTT")]
         public static partial void WaitingForKeyedTransmitAtShutdown(ILogger logger);

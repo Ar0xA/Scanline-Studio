@@ -899,7 +899,7 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         return Task.CompletedTask;
     }
 
-    public List<(double FrequencyHz, TimeSpan Duration, bool LeaveKeyedAfterTune)> TuneCalls { get; } = [];
+    public List<(double FrequencyHz, TimeSpan Duration)> TuneCalls { get; } = [];
 
     /// <summary>When set, <see cref="TuneAsync"/> suspends on this instead of completing immediately
     /// -- a dedicated gate for this one operation (this project's own "deterministic gates, not a
@@ -908,9 +908,9 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     /// <c>CanExecute</c>, not just via a direct <c>ExecuteAsync</c> call that bypasses it.</summary>
     public TaskCompletionSource? TuneGate { get; set; }
 
-    public async Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
+    public async Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
     {
-        TuneCalls.Add((frequencyHz, duration, leaveKeyedAfterTune));
+        TuneCalls.Add((frequencyHz, duration));
         if (TuneGate is not null)
         {
             using (ct.Register(() => TuneGate.TrySetCanceled(ct)))
@@ -966,17 +966,6 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public bool TxIsMuted { get; set; }
 
     public Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default) => Task.FromResult(TxIsMuted);
-
-    public bool IsPttLocked { get; private set; }
-
-    public List<bool> PttLockCalls { get; } = [];
-
-    public Task SetPttLockAsync(bool locked, CancellationToken ct = default)
-    {
-        PttLockCalls.Add(locked);
-        IsPttLocked = locked;
-        return Task.CompletedTask;
-    }
 
     public string? ConfiguredPlaybackDeviceName { get; set; }
 

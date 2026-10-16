@@ -1814,13 +1814,8 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
     /// never observe a "TX active" state from THAT source to gate against), and <c>!QSO-active</c>
     /// because this port has no "current QSO" tracker at all (confirmed absent -- see the
     /// implementation plan's RX-side note making the same call), and <c>!QSOActive || X</c> is
-    /// unconditionally true once <c>QSOActive</c> can never be true. <b>Narrower claim than an
-    /// earlier version of this comment made (auditor round-1 finding on Phase 5)</b>:
-    /// <see cref="ISstvSessionService.SetPttLockAsync"/> keys PTT WITHOUT pausing capture at all, so
-    /// this event CAN still fire while that lock is engaged -- "TX-active is impossible" is true only
-    /// for the <see cref="ISstvSessionService.TransmitAsync"/>/<see cref="ISstvSessionService.TuneAsync"/>
-    /// case, not as a blanket "PTT keyed" statement. This is NOT the same simplification for both
-    /// writes -- the underlying formulas genuinely differ (a real round-2 plan-review finding: an
+    /// unconditionally true once <c>QSOActive</c> can never be true. This is NOT the same
+    /// simplification for both writes -- the underlying formulas genuinely differ (a real round-2 plan-review finding: an
     /// earlier draft of this plan applied the callsign gate to the NR/RST write too) -- kept as two
     /// separately-cited paragraphs here for that reason, even though both currently reduce to "no
     /// gate needed."

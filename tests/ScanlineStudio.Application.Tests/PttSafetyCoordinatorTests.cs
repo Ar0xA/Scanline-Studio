@@ -1,10 +1,8 @@
 namespace ScanlineStudio.Application.Tests;
 
 /// <summary>
-/// T1-5 (production_audit.md): isolated unit tests for <see cref="PttSafetyCoordinator"/> itself --
-/// the direct benefit the extraction argues for. Race 1 and the RX-resume "raced" recheck (Risk B's
-/// own deterministic half) are now testable via ordinary sequential calls, with no thread races
-/// needed to prove the STATE logic correct; only the end-to-end regression gate
+/// Isolated unit tests for <see cref="PttSafetyCoordinator"/> itself. Race 1 is testable via ordinary
+/// sequential calls, with no thread races needed to prove the STATE logic correct; only the end-to-end regression gate
 /// (<c>SstvSessionServicePttSafetyTests.cs</c>) still needs real interleaving, and only for behavior
 /// this class doesn't own (I/O ordering, logging).
 /// </summary>
@@ -14,13 +12,15 @@ public class PttSafetyCoordinatorTests
     public void CommitConfirmedUnkey_NoConcurrentKey_ClearsAndConfirms()
     {
         var coordinator = new PttSafetyCoordinator();
-        coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
+        coordinator.RecordKeyEpochAdvance();
 
         var attempt = coordinator.BeginConfirmUnkey(pttKeyedOnRealRig: true);
+        Assert.True(coordinator.BelievesKeyed()); // pessimistic pre-set while the command is in flight
         var result = coordinator.CommitConfirmedUnkey(attempt);
 
         Assert.Equal(PttSafetyCoordinator.PttUnkeyCommitResult.Confirmed, result);
-        Assert.False(coordinator.IsPttLocked);
+        Assert.False(coordinator.BelievesKeyed());
+        Assert.Equal(1, coordinator.CurrentUnkeyEpoch);
     }
 
     [Fact]
@@ -31,21 +31,23 @@ public class PttSafetyCoordinatorTests
         // command was in flight. Directly constructible now via ordinary sequential calls -- no thread
         // race needed to prove this specific state transition correct.
         var coordinator = new PttSafetyCoordinator();
-        coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
+        coordinator.RecordKeyEpochAdvance();
 
         var attempt = coordinator.BeginConfirmUnkey(pttKeyedOnRealRig: true);
 
         // Simulate a newer key completing while this unkey attempt's own command is "in flight"
         // (between BeginConfirmUnkey's own epoch snapshot and CommitConfirmedUnkey being called):
-        // a confirmed unkey followed by a re-key, both landing after the snapshot.
+        // a confirmed unkey, then a re-key whose own unkey fails (latching "may still be keyed"),
+        // all landing after the snapshot.
         var confirmAttempt = coordinator.BeginConfirmUnkey(pttKeyedOnRealRig: true);
         coordinator.CommitConfirmedUnkey(confirmAttempt);
-        coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
+        coordinator.RecordKeyEpochAdvance();
+        coordinator.BeginConfirmUnkey(pttKeyedOnRealRig: true);
 
         var result = coordinator.CommitConfirmedUnkey(attempt);
 
         Assert.Equal(PttSafetyCoordinator.PttUnkeyCommitResult.RaceLostToNewerKey, result);
-        Assert.True(coordinator.IsPttLocked); // the re-key's own state must survive, not be wiped
+        Assert.True(coordinator.BelievesKeyed()); // the re-key's own state must survive, not be wiped
     }
 
     [Fact]
@@ -58,7 +60,7 @@ public class PttSafetyCoordinatorTests
 
         coordinator.BeginConfirmUnkey(pttKeyedOnRealRig: false);
 
-        Assert.False(coordinator.BelievesKeyed(pttLockedValue: false));
+        Assert.False(coordinator.BelievesKeyed());
     }
 
     [Fact]
@@ -71,22 +73,21 @@ public class PttSafetyCoordinatorTests
 
         coordinator.ReleaseKeyedSlot(attempt);
 
-        Assert.True(coordinator.HasSingleInFlightKeyedTransmit == false);
-        // A genuine publish afterward must still read as a clean, single in-flight registration -- a
-        // negative count from the no-op above would make this read false too.
+        Assert.False(coordinator.BelievesKeyedOrInFlight());
+        // A genuine publish afterward must still read as in flight -- a -1 count from the no-op above
+        // would leave the count at 0 here and blind DisposeAsync's shutdown backstop.
         var realAttempt = new PttSafetyCoordinator.PttKeyAttempt();
         coordinator.PublishKeyedSlot(realAttempt);
-        Assert.True(coordinator.HasSingleInFlightKeyedTransmit);
+        Assert.True(coordinator.BelievesKeyedOrInFlight());
     }
 
     [Fact]
     public void PublishKeyedSlot_CompletionResumesContinuationsAsynchronously_NotInline()
     {
         // Round-2 plan-review blocker: an earlier draft dropped TaskCreationOptions.
-        // RunContinuationsAsynchronously -- without it, ReleaseKeyedSlot's own TrySetResult can resume
-        // a waiter (DisposeAsync's own bounded wait) INLINE on the releasing thread, before that
-        // thread has released whatever lock it's about to release next (SetPttLockAsync's own
-        // _pttLockGate) -- a self-deadlock/reentrancy risk.
+        // RunContinuationsAsynchronously -- without it, ReleaseKeyedSlot's own TrySetResult would
+        // resume DisposeAsync's bounded wait INLINE on the transmit's cleanup thread, running the whole
+        // DI teardown there before that thread has released _transmitInFlight.
         //
         // Code-review finding: releasing from THIS test's own thread would flake -- TrySetResult queues
         // the continuation onto the releasing thread's own thread-pool local queue, and a later `await`
@@ -114,113 +115,5 @@ public class PttSafetyCoordinatorTests
 
         Assert.True(continuationRan.Wait(TimeSpan.FromSeconds(5)));
         Assert.NotEqual(releasingThread.ManagedThreadId, continuationThreadId);
-    }
-
-    [Fact]
-    public void DecideWasReceivingResume_ConcurrentUnlockAlreadyLanded_ConsumesImmediately()
-    {
-        // Risk B's own deterministic half (this class's own doc comment): a caller's own
-        // pttLockedAtCleanup snapshot can be stale by the time this decision runs, if a concurrent
-        // unlock landed in between -- the internal recheck must catch that and resume immediately
-        // rather than stranding a pending flag nothing will ever consume.
-        var coordinator = new PttSafetyCoordinator();
-        coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
-        coordinator.CommitLockCommandSucceeded(locked: false, epochAtUnkeyStart: coordinator.CurrentKeyEpoch);
-
-        var decision = coordinator.DecideWasReceivingResume(skipUnkeyAndRxResume: true, abnormalTermination: false, pttLockedAtCleanup: true);
-
-        Assert.Equal(PttSafetyCoordinator.PttRxResumeDecision.ResumeThenRaiseUnlockRaced, decision);
-    }
-
-    [Fact]
-    public void DecideWasReceivingResume_StillLocked_DefersPending()
-    {
-        var coordinator = new PttSafetyCoordinator();
-        coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
-
-        var decision = coordinator.DecideWasReceivingResume(skipUnkeyAndRxResume: true, abnormalTermination: false, pttLockedAtCleanup: true);
-
-        Assert.Equal(PttSafetyCoordinator.PttRxResumeDecision.DeferPending, decision);
-        Assert.True(coordinator.TryConsumeRxResumePending()); // the flag really was published, for a later unlock to find
-    }
-
-    [Fact]
-    public void DecideWasReceivingResume_NotSkipping_ResumesUnconditionally()
-    {
-        var coordinator = new PttSafetyCoordinator();
-
-        var decision = coordinator.DecideWasReceivingResume(skipUnkeyAndRxResume: false, abnormalTermination: false, pttLockedAtCleanup: false);
-
-        Assert.Equal(PttSafetyCoordinator.PttRxResumeDecision.ResumeThenRaise, decision);
-    }
-
-    [Fact]
-    public void DecideWasReceivingResume_LeaveKeyedResidual_RaisesOnlyWithNoResume()
-    {
-        var coordinator = new PttSafetyCoordinator();
-
-        var decision = coordinator.DecideWasReceivingResume(skipUnkeyAndRxResume: true, abnormalTermination: false, pttLockedAtCleanup: false);
-
-        Assert.Equal(PttSafetyCoordinator.PttRxResumeDecision.RaiseOnly, decision);
-        Assert.False(coordinator.TryConsumeRxResumePending()); // nothing was published -- no resume owed to anyone
-    }
-
-    [Theory]
-    [InlineData(200)]
-    public void DecideWasReceivingResume_RacingTryConsumeRxResumePending_NeverThrows(int iterations)
-    {
-        // Risk B's own genuine multi-threaded window (this class's own doc comment: a plain, unfenced
-        // volatile read-then-write on both sides, deliberately not Interlocked). Not asserting a strong
-        // quiescent invariant here -- the documented accepted outcome is a harmless DUPLICATE resume,
-        // which a naive "never both consume" assertion would flag as a false failure. What must hold
-        // unconditionally: no exception from either side, and the flag is always independently
-        // recoverable afterward (never corrupted into some third state).
-        for (var i = 0; i < iterations; i++)
-        {
-            var coordinator = new PttSafetyCoordinator();
-            coordinator.CommitLockCommandSucceeded(locked: true, epochAtUnkeyStart: 0);
-
-            using var barrier = new Barrier(2);
-            Exception? exceptionA = null;
-            Exception? exceptionB = null;
-
-            var threadA = new Thread(() =>
-            {
-                try
-                {
-                    barrier.SignalAndWait();
-                    coordinator.DecideWasReceivingResume(skipUnkeyAndRxResume: true, abnormalTermination: false, pttLockedAtCleanup: true);
-                }
-                catch (Exception ex)
-                {
-                    exceptionA = ex;
-                }
-            });
-            var threadB = new Thread(() =>
-            {
-                try
-                {
-                    barrier.SignalAndWait();
-                    coordinator.TryConsumeRxResumePending();
-                }
-                catch (Exception ex)
-                {
-                    exceptionB = ex;
-                }
-            });
-
-            threadA.Start();
-            threadB.Start();
-            threadA.Join();
-            threadB.Join();
-
-            Assert.Null(exceptionA);
-            Assert.Null(exceptionB);
-
-            // Settles either way -- true (still pending, a real unlock will find it) or false (already
-            // consumed by one side or the other) are both valid terminal states; TryConsumeRxResumePending
-            // must not throw or behave inconsistently regardless of which state it lands in.
-            coordinator.TryConsumeRxResumePending();
-        }
     }
 }

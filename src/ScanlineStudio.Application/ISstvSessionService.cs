@@ -53,9 +53,8 @@ public interface ISstvSessionService : IAsyncDisposable
 
     /// <summary>Configurations-preset backlog, Phase 3 (2026-08-28) -- whether a transmission is
     /// genuinely in flight right now (PTT keyed via <see cref="TransmitAsync"/>/<see cref="TuneAsync"/>,
-    /// both of which route through the same internal single-flight guard). Distinct from
-    /// <see cref="IsPttLocked"/> (a user-initiated MANUAL lock, unrelated to whether audio is
-    /// actually being transmitted right now) and from a rig-reported <c>RadioState.IsTransmitting</c>
+    /// both of which route through the same internal single-flight guard). Distinct from a
+    /// rig-reported <c>RadioState.IsTransmitting</c>
     /// (meaningless with VOX or no radio at all) -- this is the one reliable "don't tear down RX/
     /// switch a live configuration out from under an active transmission" signal. Safe to read from
     /// any thread.</summary>
@@ -134,14 +133,7 @@ public interface ISstvSessionService : IAsyncDisposable
     /// -- same synchronous, decode-thread concurrency contract as that event (see its own doc
     /// comment), NOT gated on a call to <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> being
     /// in-flight, since those calls fully pause RX capture for their own duration (no samples can
-    /// reach the decoder to raise this while one is running). <b>Narrower claim than an earlier
-    /// version of this doc comment made (auditor round-1 finding on Phase 5)</b>: this is NOT true
-    /// for the whole "PTT considered keyed" window in general -- <see cref="SetPttLockAsync"/> keys
-    /// PTT WITHOUT touching capture at all, so RX (and this event) can keep running while that lock
-    /// is engaged. No consumer needs an explicit "not transmitting" gate for the
-    /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> case specifically, but one is NOT
-    /// guaranteed redundant for a PTT-lock-engaged scenario if a future consumer ever cared about
-    /// that distinction.</summary>
+    /// reach the decoder to raise this while one is running).</summary>
     event Action<FskStationIdDecodedInfo>? StationIdDecoded;
 
     /// <summary>fsk_cwid.md §8.2/§9: raised once per reception with a non-empty CW-ID decode, from a
@@ -680,43 +672,30 @@ public interface ISstvSessionService : IAsyncDisposable
     /// deliberately NOT the same signal as "RX capture stopped for any reason" (a manual Halt-button
     /// click does not fire this; that case is already correctly reflected by the Receiving toggle's
     /// own bound state). <see langword="false"/> fires once this pause's own resume attempt has
-    /// finished (successfully or not) -- including the deferred <see cref="SetPttLockAsync"/>-
-    /// triggered resume path when a PTT lock delayed it -- NOT merely once playback itself ends. This
-    /// is <b>not</b> a guarantee that capture is actually listening again by the time it fires: a
-    /// best-effort resume attempt that itself fails still raises <see langword="false"/> (see
-    /// <see cref="IsReceiving"/> for the real state), and the residual case where a transmission
-    /// deliberately leaves capture stopped (an unwired <see cref="TuneAsync"/> "stay keyed" option,
-    /// no production caller today) also raises <see langword="false"/> once its own pause window is
-    /// over even though capture was never resumed. Treat this purely as "no longer paused FOR THIS
-    /// transmission," not as a restatement of <see cref="IsReceiving"/>.
+    /// finished (successfully or not) -- NOT merely once playback itself ends. This is <b>not</b> a
+    /// guarantee that capture is actually listening again by the time it fires: a best-effort resume
+    /// attempt that itself fails still raises <see langword="false"/> (see <see cref="IsReceiving"/>
+    /// for the real state). Treat this purely as "no longer paused FOR THIS transmission," not as a
+    /// restatement of <see cref="IsReceiving"/>.
     ///
     /// <b>Threading contract:</b> raised SYNCHRONOUSLY from whichever async call is doing the
-    /// pause/resume (<see cref="TransmitAsync"/>/<see cref="TuneAsync"/>'s shared internal helper,
-    /// or <see cref="SetPttLockAsync"/>'s own deferred-resume path) -- NOT guaranteed to be a single
-    /// consistent thread across calls, unlike <see cref="TransmitProgressChanged"/>'s dedicated
-    /// playback-pump thread. Wrapped in an internal try/catch, so a throwing subscriber cannot break
-    /// the underlying pause/resume/unlock call it was raised from. A synchronous subscriber that
-    /// re-enters <see cref="SetPttLockAsync"/> from this event will deadlock (that method's internal
-    /// gate is not reentrant) -- subscribers must marshal to their own scheduler before touching UI
-    /// state and must not block or re-enter this service. Fires at most twice per transmission (not a
-    /// hot path, no rate-limiting).</summary>
+    /// pause/resume (<see cref="TransmitAsync"/>/<see cref="TuneAsync"/>'s shared internal helper)
+    /// -- NOT guaranteed to be a single consistent thread across calls, unlike
+    /// <see cref="TransmitProgressChanged"/>'s dedicated playback-pump thread. Wrapped in an internal
+    /// try/catch, so a throwing subscriber cannot break the underlying pause/resume call it was raised
+    /// from. Slow-subscriber behavior: BLOCK, both directions -- a slow <see langword="true"/> handler
+    /// delays this transmission's PTT key command (it is raised before keying); a slow <see langword="false"/> handler delays the transmit's
+    /// keyed-slot release and single-flight guard release. A delayed release can make
+    /// <c>DisposeAsync</c>'s bounded wait expire and send a redundant (harmless) backstop un-key. So
+    /// subscribers must marshal to their own scheduler before touching UI state and must not block or
+    /// re-enter this service. Fires at most
+    /// twice per transmission (not a hot path, no rate-limiting).</summary>
     event Action<bool>? CapturePausedForTransmitChanged;
 
     /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
     /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
     /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>
-    /// <param name="leaveKeyedAfterTune"><b>Unverified against legacy YONIQ source</b> -- a direct
-    /// citation for the exact post-tune-tone transition (e.g. legacy's own Tune button/`CtrBtn.cpp`)
-    /// was not found; this parameter name deliberately does not claim legacy parity. When
-    /// <see langword="true"/>, PTT is left keyed once the tone finishes (skipping the normal
-    /// un-key/resume-RX step) instead of returning to RX -- intended for a "tune into satellite
-    /// pass-through" workflow where the operator wants to go straight from a tune tone into
-    /// transmitting. A subsequent <see cref="TransmitAsync"/> or <see cref="TuneAsync"/> call still
-    /// keys PTT itself as normal (this flag only affects what happens at the END of THIS call, not
-    /// any later one) -- callers wanting PTT held across multiple calls should use
-    /// <see cref="SetPttLockAsync"/> instead, which is a distinct, independently-toggled
-    /// mechanism.</param>
-    Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default);
+    Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default);
 
     /// <summary>"Pwr" -- post-encode TX playback gain (0-100), applied as a linear multiplier on
     /// encoded PCM samples right before playback (same shape WSJT-X's/fldigi's own Pwr-style
@@ -778,9 +757,6 @@ public interface ISstvSessionService : IAsyncDisposable
     /// already-running capture resolved earlier) -- see that method's own doc comment for the full
     /// reasoning, not repeated here.</summary>
     Task<string?> GetConfiguredCaptureDeviceNameAsync(CancellationToken ct = default);
-
-    /// <summary>Whether <see cref="SetPttLockAsync"/>'s lock is currently engaged.</summary>
-    bool IsPttLocked { get; }
 
     /// <summary>Pass-throughs of the underlying decoder's own read-only telemetry -- see
     /// <see cref="ScanlineStudio.Abstractions.Sstv.ISstvDecoder"/>'s matching members for the full
@@ -887,12 +863,4 @@ public interface ISstvSessionService : IAsyncDisposable
     /// not just observe a caught exception. See <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.CaptureOverrunCount"/>'s
     /// own doc comment for the full mechanism.</summary>
     int CaptureOverrunCount { get; }
-
-    /// <summary>Manual-keying diagnostic aid: holds PTT keyed independent of any
-    /// <see cref="TransmitAsync"/>/<see cref="TuneAsync"/> call, until unlocked. Idempotent both
-    /// ways. See the implementation's own doc comment for the exact failure-handling and
-    /// concurrency contract -- in short: a failure here is NOT swallowed (unlike this service's
-    /// internal best-effort cleanup paths), and <see cref="IsPttLocked"/> only changes after
-    /// <c>IRadioSessionService.SetPttAsync</c> actually confirms the requested state.</summary>
-    Task SetPttLockAsync(bool locked, CancellationToken ct = default);
 }

@@ -693,7 +693,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// itself is gone. NOT the same thing as <c>TxControlsPaneViewModel.IsTransmitting</c> (this
     /// app's own "a TransmitAsync call is currently in flight" flag) -- this one is the RIG'S OWN
     /// readback of whether it's actually keyed, true regardless of the reason (a real transmit, a
-    /// manual <see cref="ISstvSessionService.SetPttLockAsync"/> lock, or an external Tune), false
+    /// Tune, or keying from outside this app), false
     /// whenever the connected rig doesn't support PTT readback at all (VOX/DTR-only keying --
     /// see this indicator's own tooltip). Lags the rig's real key-down/key-up by roughly one poll
     /// interval (<see cref="RadioConnectionSpec.PollInterval"/>, ~250ms default) plus rig

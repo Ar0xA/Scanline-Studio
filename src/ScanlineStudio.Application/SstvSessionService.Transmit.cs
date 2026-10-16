@@ -36,7 +36,7 @@ public sealed partial class SstvSessionService
         }
     }
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, bool leaveKeyedAfterTune = false, CancellationToken ct = default)
+    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
     {
         const int sampleRate = 48_000;
 
@@ -68,7 +68,7 @@ public sealed partial class SstvSessionService
         }
 
         Log.TuneStarting(_logger, frequencyHz, duration);
-        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct, leaveKeyedAfterCall: leaveKeyedAfterTune);
+        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct);
     }
 
     public async Task<int> GetTxVolumePercentAsync(CancellationToken ct = default)
@@ -205,25 +205,19 @@ public sealed partial class SstvSessionService
 
     /// <summary>Shared PTT-guarantee shape for both <see cref="TransmitAsync"/> and <see cref="TuneAsync"/>:
     /// pauses capture (resumed afterward only if RX was already running), keys PTT, plays
-    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends --
-    /// unless <paramref name="leaveKeyedAfterCall"/> is set (see <see cref="TuneAsync"/>'s own doc
-    /// comment for its one caller) or <see cref="SetPttLockAsync"/>'s lock is currently engaged, in
-    /// which case the un-key/resume-RX steps are skipped -- <b>but only on a NORMAL (successful)
-    /// completion</b>. A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see
-    /// <c>TxControlsPaneViewModel</c>) ALWAYS un-keys PTT, even if the lock was engaged: a safety
-    /// cutoff/manual stop must never be overridable by "stay keyed" state (a real defect an audit pass
-    /// caught and this fix closes -- the lock existing at all must never be able to defeat the SWR
-    /// cutoff's whole reason for existing). <b>Doc-comment correction (round-7 finding):</b> the un-key
-    /// COMMAND is unconditional, but clearing the lock/state flags it left behind is not, as of round
-    /// 5's epoch guard in <c>UnkeyForCleanupAsync</c> -- if a CONCURRENT, NEWER key command completed
-    /// during this call's own un-key attempt, the clear is deliberately skipped so it doesn't wipe
-    /// that newer call's genuinely-still-keyed state (see <c>_pttKeyEpoch</c>'s own doc comment).
-    /// "Force-clears the lock" was accurate before that fix; it is not unconditional anymore.
+    /// <paramref name="samples"/>, then un-keys PTT in a <c>finally</c> no matter how playback ends.
+    /// A cancellation or fault (manual Stop TX, SWR auto-cutoff -- see <c>TxControlsPaneViewModel</c>)
+    /// un-keys BEFORE stopping playback; a normal completion un-keys after the drain. The un-key
+    /// COMMAND is unconditional. The key/unkey epoch guards around it only matter against
+    /// <c>DisposeAsync</c>'s backstop un-key, the one PTT command that can overlap this call (after its
+    /// bounded wait for this call expires): they keep that backstop from clearing a newer key's
+    /// "may still be keyed" belief, and let this call skip a redundant cleanup un-key once the backstop
+    /// has confirmed the rig off after this call's own key (see <c>PttSafetyCoordinator</c>'s own doc
+    /// comment).
     ///
-    /// Device resolution and the entry PTT-key now live INSIDE the guarded region (moved in during
-    /// the same audit-fix pass) -- previously a device-resolution failure (e.g. no playback device
-    /// configured) after RX had already been paused above left RX stopped forever, since the old
-    /// shape's <c>try</c>/<c>finally</c> didn't start until after those calls.</summary>
+    /// Device resolution and the entry PTT-key live INSIDE the guarded region, so a
+    /// device-resolution failure (e.g. no playback device configured) after RX has already been
+    /// paused still resumes RX.</summary>
     // T1-3 (production_audit.md): samples is IAsyncEnumerable<ReadOnlyMemory<float>> (batched), not
     // IAsyncEnumerable<float> -- verified this parameter has exactly ONE use in this method's whole
     // 844-line body (the pass-through to PumpToPlaybackAsync below), so this is a pure type-plumbing
@@ -232,7 +226,7 @@ public sealed partial class SstvSessionService
     // now specifically so PumpToPlaybackAsync can consume batches directly -- see that method's own
     // comment for why flattening back to individual floats before this point would erase the entire
     // point of batching.
-    private async Task PlayWithPttAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, CancellationToken ct, bool leaveKeyedAfterCall = false, long? totalSamplesEstimate = null)
+    private async Task PlayWithPttAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, CancellationToken ct, long? totalSamplesEstimate = null)
     {
         // Round-12 finding: single-flight guard, checked before ANYTHING else -- no RX pause, no
         // device resolution, no PTT touched. See _transmitInFlight's own doc comment for the failure
@@ -300,23 +294,17 @@ public sealed partial class SstvSessionService
             // it.
             var pttKeyedOnRealRig = false;
 
-            // Round-26 finding, round-28 correction: declared out here, not alongside its own snapshot
-            // assignment inside the try below -- the cleanup finally needs to read this, and a local
-            // declared inside the try is not in scope there. Round-28 finding (nit): the ORIGINAL
-            // safety argument for this placeholder ("every guard is prefixed with `pttKeyedOnRealRig &&`,
-            // also false-by-default until the try reaches its own snapshot line") went stale the moment
-            // round 27 moved pttKeyedOnRealRig's own assignment earlier (now near the top of the try,
-            // before this field is ever touched) -- so it is generally NOT false-by-default anymore at
-            // any point this placeholder could matter. Still safe, for a different reason: every
-            // consumer requires pttKeyedOnRealRig true, which requires _pttLocked having been true at
-            // some point, which requires _pttKeyEpoch >= 1 -- combined with the second epoch term below,
-            // every interleaving still errs toward attempting the un-key, never toward wrongly skipping
-            // one based on this specific placeholder value.
+            // Declared out here, not alongside its own snapshot assignment inside the try below -- the
+            // cleanup finally needs to read this. The 0 placeholder (and keyEpochAfterOwnKeyAttempt's,
+            // below) survives into cleanup when a throw lands before the snapshot, and is still safe:
+            // the only consumer requires pttKeyedOnRealRig true, and pttKeyedOnRealRig true implies some
+            // key attempt bumped _pttKeyEpoch -- either this call's own (success or failure both bump
+            // it) or the earlier call whose failed unkey latched the entry baseline. So _pttKeyEpoch is
+            // >= 1, ConfirmedUnkeyAlreadyHappenedSinceOwnKey(0, 0) reads false, and the retry runs.
             var unkeyEpochAfterOwnKeyAttempt = 0;
 
-            // Round-27 finding: same reason/shape as unkeyEpochAfterOwnKeyAttempt just above -- declared out here,
-            // assigned inside the try below, once this call's own key phase (not just method entry) has
-            // completed. See that assignment's own comment.
+            // Same reason/shape as unkeyEpochAfterOwnKeyAttempt just above -- assigned inside the try
+            // below, once this call's own key phase (not just method entry) has completed.
             var keyEpochAfterOwnKeyAttempt = 0;
 
             // Blocker 3: this call's own handle into the coordinator's keyed-slot registration.
@@ -324,69 +312,22 @@ public sealed partial class SstvSessionService
 
             try
             {
-                // Round-27 finding (risk): pttKeyedOnRealRig's own round-25 baseline used to read AND
-                // ASSIGN from _pttLocked via pttLockedBeforeKeyDecision, both of which happen LATE -- just before
-                // the rigIsRealAtKeyTime branch, AFTER the three bounded device/settings awaits below.
-                // Correct for pttLockedBeforeKeyDecision's OWN purpose (deciding whether to double-key an
-                // already-engaged lock, which must see the freshest possible state), but wrong for
-                // baselining pttKeyedOnRealRig: a failure in any of the three awaits below (device not
-                // found, no device configured, or the WaitAsync timeout itself -- all realistic)
-                // reached the generic catch with pttKeyedOnRealRig still at its OUTER false default,
-                // since the code never reached the late assignment -- even when a lock was ALREADY
-                // engaged at this call's own true entry, reproducing verbatim the harm round 25 exists
-                // to prevent (no Critical, no retry, just a Debug "no radio configured" line). Both the
-                // read AND the assignment happen HERE instead, before those awaits -- the read into a
-                // separate local from pttLockedBeforeKeyDecision (kept late, for its own purpose), the assignment
-                // directly into pttKeyedOnRealRig so it survives a throw from any of the three awaits.
-                // The rigIsRealAtKeyTime branch further down still unconditionally sets this true for
-                // the case THIS call keys/re-keys the rig itself, a strict superset of this baseline.
+                // Baselined HERE, before the three bounded device/settings awaits below, so a failure in
+                // any of them still reaches cleanup with pttKeyedOnRealRig true when an EARLIER call's
+                // unkey failed on a real rig -- that rig may still be keyed independent of this call's
+                // own RigId observation (RadioController.DisconnectAsync resets RigId to "none" without
+                // un-keying), so cleanup must log Critical and retry, not a Debug "no radio" line. The
+                // rigIsRealAtKeyTime branch further down still sets this true when THIS call keys the
+                // rig itself, a strict superset of this baseline.
                 //
-                // Round-28 finding (nit, flagged not fixed): moving this baseline earlier widened its
-                // OWN false-positive window in the opposite direction -- if a lock is engaged here, then
-                // during the three awaits below a confirmed un-key genuinely turns the rig off AND
-                // RigId separately goes to "none" (RadioController.DisconnectAsync), this call never
-                // keys (rigIsRealAtKeyTime false) but pttKeyedOnRealRig stays stuck true from this
-                // stale baseline -- cleanup then attempts a doomed un-key against the null-object
-                // backend and logs a false Critical on a rig already confirmed off elsewhere. Pre-round-
-                // 27 this same window was instruction-scale (right up to the read); it is now up to
-                // three bounded-await-widths. unkeyEpochAfterOwnKeyAttempt's own round-28 fix does not rescue this
-                // -- that confirmed un-key's own epoch bump lands BEFORE unkeyEpochAfterOwnKeyAttempt's own (also
-                // moved-later) read, so the pair sees no change and does not skip the doomed attempt.
-                // Narrow (needs lock-engaged-then-confirmed-unlock-then-disconnect, all within these
-                // three awaits) and requires SetPttLockAsync, which has zero production callers today --
-                // not fixed this round; a real fix would need this baseline itself to be downgradeable
-                // by a confirmed un-key observed since this exact line, not just guardable at the
-                // consumer sites the way _pttUnkeyEpoch already is.
-                //
-                // Round-29 finding (nit): this used to read _pttLocked alone -- narrower than this
-                // class's own equivalent "did this class believe something was keyed" test used at the
-                // unlock-direction catch above (_pttLocked || _pttLeftKeyedByCall ||
-                // _pttUnkeyFailedOnRealRig). Scenario: a prior TuneAsync(leaveKeyedAfterTune: true) left
-                // the rig physically keyed (_pttLeftKeyedByCall = true, _pttLocked still false), then
-                // RadioController.DisconnectAsync sets RigId to "none" without un-keying -- a new
-                // transmit entering here baselined false, so its cleanup un-key logged Debug instead of
-                // the Critical this baseline exists to guarantee. Not a leak either way
-                // (_pttLeftKeyedByCall itself survives untouched, so DisposeAsync's own four-state
-                // backstop still fires) -- same signal-quality class this whole baseline exists to
-                // protect, one flag short. Widened to match the established belief test exactly.
-                //
-                // Round-30 finding (nit, considered and accepted, not changed): including
-                // _pttUnkeyFailedOnRealRig here means that once ONE real un-key failure has latched it
-                // and the operator then disconnects (RigId -> "none", where every un-key attempt throws
-                // synchronously and so can never CONFIRM success to clear the flag -- see its own clear
-                // sites), every SUBSEQUENT transmit's cleanup re-attempts an un-key against the
-                // null-object backend, fails again, and re-emits a fresh Critical "PTT MAY STILL BE
-                // KEYED" -- once per transmit, indefinitely, not just once. This is the signal-erosion
-                // SHAPE rounds 4/19 added gates to prevent, but the underlying belief (a rig that failed
-                // to un-key and is now unreachable) is genuinely still unresolved -- unlike the false
-                // positives those two rounds actually fixed (a rig confirmed OFF, or never keyed at
-                // all), there is no confirmed-safe state to fall silent about here. A real fix would need
-                // to distinguish "the same still-latent failure repeating" from "a genuinely new event"
-                // (e.g. de-duplicating by _pttUnkeyEpoch's own value at latch time), which trades a
-                // repeated-but-true alarm for a real risk of under-warning if implemented wrong. Left as
-                // a persistent, if repetitive, Critical -- the more conservative failure mode for a
-                // possibly-still-transmitting rig.
-                pttKeyedOnRealRig = _pttCoordinator.BelievesKeyed(_pttCoordinator.IsPttLocked);
+                // Accepted trade: once one real un-key failure has latched _pttUnkeyFailedOnRealRig and
+                // the operator disconnects (every un-key against the null-object backend throws, so the
+                // flag can never be cleared by a confirmed unkey), every SUBSEQUENT transmit re-attempts
+                // an un-key and re-emits a fresh Critical "PTT MAY STILL BE KEYED". The underlying belief
+                // is genuinely unresolved, so a persistent, repetitive Critical is the conservative
+                // failure mode for a possibly-still-transmitting rig; de-duplicating it would risk
+                // under-warning.
+                pttKeyedOnRealRig = _pttCoordinator.BelievesKeyed();
 
                 // Round-15 finding 3: these three awaits had no bound of their own either -- unlike
                 // findings 1/2 (round 14), PTT is NOT yet keyed at this point, so a hang here is not
@@ -422,80 +363,24 @@ public sealed partial class SstvSessionService
                 // Critical item 1), not Capabilities -- see IRadioController.RigId's own doc comment for
                 // why a live-capability check would be unsafe here (real backends connect lazily, so
                 // Capabilities reads None during a real window even with a genuine PTT-capable rig
-                // configured). Read into a local exactly once: the old code's "RigId is stable so there's
-                // no was-available-at-entry-gone-by-cleanup scenario" claim was FALSE (see
-                // pttKeyedOnRealRig above), and this is the single read that claim is now replaced by.
-                //
-                // Round-31 finding (nit): renamed from pttLockedAtEntry -- despite the name, this was
-                // never read at method ENTRY (that read is the separate, genuinely-early one feeding
-                // pttKeyedOnRealRig's own baseline above, before the three bounded awaits). This one is
-                // deliberately read LATE, right here, for its own different purpose (deciding whether to
-                // double-key an already-engaged lock, which needs the freshest possible observation) --
-                // see its own consumers' comments. The old name invited exactly the kind of confusion
-                // round 29 already fixed once for unkeyEpochAtEntry -> unkeyEpochAfterOwnKeyAttempt.
-                var pttLockedBeforeKeyDecision = _pttCoordinator.IsPttLocked;
+                // configured). Read into a local exactly once: RigId is NOT stable across this call (see
+                // pttKeyedOnRealRig above), and this is the single read every later decision uses.
                 var rigIsRealAtKeyTime = _radioSession.RigId != "none";
 
-                // Round-28 finding (blocker): this used to be snapshotted here, at method entry -- see
-                // _pttUnkeyEpoch's own doc comment for what it's used for. Round 28 found that reading
-                // it THIS early was itself the bug: it let a confirmed un-key that happened BEFORE this
-                // call's own key command be misread, at cleanup time, as "confirmed AFTER I keyed" --
-                // the pairing with keyEpochAfterOwnKeyAttempt (below) only proves "nobody re-keyed since
-                // MY key phase", not "this specific confirmed un-key postdates my key". Moved to the
-                // SAME point as keyEpochAfterOwnKeyAttempt (right after this call's own key phase, see
-                // that assignment's own comment) so the pair now correctly means "since MY OWN key:
-                // someone confirmed off, and nobody re-keyed" -- preserving both of round 26's own
-                // motivating scenarios (an unlock mid-tone, and an unlock during
-                // StopPlaybackWithWatchdogAsync's own drain), both of which land after that point.
-
-                // Round-25 finding (risk): pttKeyedOnRealRig is baselined on an already-engaged lock --
-                // an already-engaged lock means the rig is genuinely keyed independent of THIS call's
-                // own RigId observation, even once RigId has since gone to "none" (RadioController.
-                // DisconnectAsync's own documented no-unkey-on-disconnect behavior, the file's own
-                // blocker-2 premise). Previously this stayed false whenever rigIsRealAtKeyTime was
-                // false, silently disabling the cleanup Critical log AND the round-18 retry for a call
-                // that entered on a rig genuinely keyed by an EARLIER SetPttLockAsync call whose RigId
-                // has since gone stale -- an SWR cutoff/manual Stop TX on that call then un-keyed with
-                // no Critical, no retry, just a Debug "no radio configured" line. The branch below still
-                // unconditionally sets this true for the case THIS call keys/re-keys the rig itself, a
-                // strict superset of this baseline.
-                //
-                // Round-27 finding (risk): that baseline is now assigned at this method's own true
-                // entry (see the assignment right after the try block opens, above), not here -- this
-                // comment stays as the reasoning for WHY the baseline exists; see that assignment's own
-                // comment for WHY it had to move earlier.
-
-                // Round-26 finding (nit, flagged not fixed): when pttLockedBeforeKeyDecision is true but
-                // rigIsRealAtKeyTime is false (a lock engaged on a real rig, then RadioController.
-                // DisconnectAsync set RigId to "none" without un-keying), the baseline just above
-                // correctly declares this call IS holding a genuinely keyed real rig -- but the
-                // keyedCompletion publish/_keyedTransmitCount increment just below are still gated
-                // entirely on rigIsRealAtKeyTime, so DisposeAsync will not wait for THIS call's own
-                // cleanup un-key. Harmless while RigId stays "none" (nothing to talk to either way);
-                // if RadioController reconnects mid-transmit, the cleanup un-key could race
-                // IRadioSessionService's own DI teardown, the exact hazard the round-8 publish exists
-                // to prevent. Narrow (requires a lock-then-disconnect-then-reconnect-mid-transmit
-                // sequence) and not a live bug today -- not fixed this round; revisit if reachability
-                // ever changes.
                 if (rigIsRealAtKeyTime)
                 {
                     // Published BEFORE the key command goes out and cleared only once this method's own
                     // finally has finished its un-key attempt, so DisposeAsync can never tear
-                    // IRadioSessionService down out from under an in-flight un-key. Published in the
-                    // pttLockedBeforeKeyDecision case too: this call didn't key the rig, but the rig IS keyed for
-                    // the whole duration of this call either way.
+                    // IRadioSessionService down out from under an in-flight un-key.
                     //
-                    // Round-3 finding: Volatile.Write here paired with DisposeAsync's Volatile.Read is NOT
-                    // enough to make the publish-then-recheck below actually see each other -- a volatile
-                    // write is a release-store and a volatile read is an acquire-load, and that pairing does
-                    // not forbid StoreLoad reordering (the classic Dekker's-algorithm gap). On x86-64, .NET
+                    // Volatile.Write here paired with DisposeAsync's Volatile.Read would NOT be enough to
+                    // make the publish-then-recheck below actually see each other -- a volatile write is a
+                    // release-store and a volatile read is an acquire-load, and that pairing does not
+                    // forbid StoreLoad reordering (the classic Dekker's-algorithm gap). On x86-64, .NET
                     // emits both as plain movs, so this call's write and DisposeAsync's _disposed write can
                     // each sit in a per-core store buffer while the OTHER side's read runs first -- this call
                     // reads _disposed as false, DisposeAsync reads this field as null, and neither side sees
-                    // the other. Interlocked.Exchange is a full fence, closing that gap. (The pre-existing
-                    // Risk B pattern below -- _rxPendingResumeAfterUnlock/_pttLocked -- has the identical
-                    // shape and the identical gap; that one's failure mode is a stranded RX pause, not a
-                    // leaked keyed transmitter, so it hasn't been given the same treatment here.)
+                    // the other. PublishKeyedSlot's Interlocked.Exchange is a full fence, closing that gap.
                     _pttCoordinator.PublishKeyedSlot(attempt);
 
                     // Set BEFORE the await deliberately: a SetPttAsync that throws mid-command can still
@@ -504,171 +389,113 @@ public sealed partial class SstvSessionService
                     // Warning; erring false is the blocker-2 silent swallow.
                     pttKeyedOnRealRig = true;
 
-                    // Round-2 fix, publish-then-recheck (same shape as Risk B's own at the RX-resume branch
-                    // further down this method): either DisposeAsync's read of _keyedTransmitCompletion
-                    // (its own very first line now sets _disposed before that read) sees THIS call's
-                    // just-published completion and waits for it, or this call sees _disposed here and
-                    // never issues the actual key command below at all -- the two sides can no longer miss
-                    // each other the way a TuneAsync call with no CancellationToken
-                    // (RadioStatusViewModel.TuneAsync passes CancellationToken.None) previously could race
-                    // a closing DisposeAsync.
+                    // Publish-then-recheck: either DisposeAsync's read of _keyedTransmitCompletion (its own
+                    // very first line sets _disposed before that read) sees THIS call's just-published
+                    // completion and waits for it, or this call sees _disposed here and never issues the
+                    // actual key command below at all -- the two sides cannot miss each other, even for a
+                    // TuneAsync call with no CancellationToken (RadioStatusViewModel.TuneAsync passes
+                    // CancellationToken.None).
                     if (_disposed)
                     {
                         // Provably never keyed BY THIS CALL -- the actual SetPttAsync(true) command is
-                        // still below this block. Only an already-engaged lock could have the rig keyed
-                        // independent of this call, and pttLockedBeforeKeyDecision covers exactly that -- keeps the
-                        // cleanup un-key's Critical-vs-Debug classification honest in the finally below.
-                        // Deliberately the LATE read here -- this is exactly the "don't double-key/
-                        // misclassify an already-engaged lock" decision that local is designed for, and
-                        // the freshest possible observation is correct for it.
-                        // (Round 27 note: no longer necessarily the same value the baseline near this
-                        // method's own entry assigned -- that one now deliberately uses the EARLY
-                        // `_pttLocked` read taken at entry instead, so the two can genuinely differ if
-                        // _pttLocked changed during this method's own device/settings awaits.)
-                        //
-                        // Round-30 finding (nit): this used to silently re-narrow round 29's own widened
-                        // baseline back down to pttLockedBeforeKeyDecision alone -- e.g. a prior
-                        // TuneAsync(leaveKeyedAfterTune: true) leaving the rig keyed via
-                        // _pttLeftKeyedByCall alone (with _pttLocked false) survived the entry baseline
-                        // correctly, then got wiped back to false right here, downgrading the eventual
-                        // cleanup failure from Critical to Debug. Widened to match the SAME three-flag
-                        // belief test the entry baseline uses, keeping pttLockedBeforeKeyDecision's own late/fresh
-                        // read for the _pttLocked term specifically (this branch's whole reason to exist)
-                        // while no longer silently dropping the other two flags.
-                        pttKeyedOnRealRig = _pttCoordinator.BelievesKeyed(pttLockedBeforeKeyDecision);
-                        // Round-4 nit: GetType().FullName, not nameof(SstvSessionService), to match the
-                        // ObjectName ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in
-                        // this class -- both throw sites should report the same object identity.
+                        // still below this block. Re-baselined to the same belief test the entry baseline
+                        // uses, so the cleanup un-key's Critical-vs-Debug classification stays honest when
+                        // an earlier call's failed unkey left the rig possibly keyed.
+                        pttKeyedOnRealRig = _pttCoordinator.BelievesKeyed();
+                        // GetType().FullName, not nameof(SstvSessionService), to match the ObjectName
+                        // ObjectDisposedException.ThrowIf(_disposed, this) produces elsewhere in this class.
                         throw new ObjectDisposedException(GetType().FullName);
                     }
-                }
 
-                if (!pttLockedBeforeKeyDecision)
-                {
-                    if (rigIsRealAtKeyTime)
+                    // Bounded with WaitAsync: RigctldClientProtocol bounds only its initial connect
+                    // (_connectTimeout) -- the per-command reply read has none -- so a half-open CAT
+                    // connection (peer power-cycled, VPN drop) could otherwise block this forever WHILE
+                    // THE PTT COMMAND HAS ALREADY REACHED THE WIRE AND PHYSICALLY KEYED THE RIG. WaitAsync
+                    // rather than a fresh CancellationTokenSource (contrast UnkeyForCleanupAsync's own
+                    // pattern, a pure cleanup step with no caller-cancellation distinction to preserve): a
+                    // genuine cancellation of `ct` still completes the awaited task with
+                    // OperationCanceledException (the benign arm below), while exceeding the budget with
+                    // no cancellation surfaces as TimeoutException instead, correctly routing through the
+                    // generic catch below -> abnormalTermination -> urgent un-key-before-StopPlayback. `ct`
+                    // is passed to WaitAsync itself too (CA2016 -- not just the inner call), so a genuine
+                    // caller cancellation is observed and classified correctly HERE even if the backend
+                    // itself never polls `ct` promptly once its native call has started
+                    // (HamlibRadioProtocol's own documented limitation).
+                    //
+                    // Caveat: that urgent un-key is only a genuine recovery when the backend doesn't
+                    // serialize requests behind the very command that just timed out --
+                    // RigctldClientProtocol/HamlibRadioProtocol both hold a single request semaphore across
+                    // the reply read, so the abandoned key command still holds it and the un-key attempt is
+                    // expected to itself time out and log Critical ("MAY STILL BE KEYED"), not silently
+                    // recover -- a signal to disconnect/reconnect the CAT link, not evidence the rig is
+                    // actually off. The underlying call is left running in the background either way --
+                    // same trade-off EnqueueAllAsync's own stall fix accepts.
+                    Task? keyCommand = null;
+                    try
                     {
-                        // Round-14 finding 1: this await had no bound of its own.
-                        // RigctldClientProtocol bounds only its initial connect (_connectTimeout) --
-                        // the per-command reply read has none -- so a half-open CAT connection (peer
-                        // power-cycled, VPN drop) can block this forever WHILE THE PTT COMMAND HAS
-                        // ALREADY REACHED THE WIRE AND PHYSICALLY KEYED THE RIG. Bounded with
-                        // WaitAsync rather than a fresh CancellationTokenSource (contrast
-                        // UnkeyForCleanupAsync's own pattern, a pure cleanup step with no caller-
-                        // cancellation distinction to preserve): a genuine cancellation of `ct` still
-                        // completes the awaited task with OperationCanceledException (the benign arm
-                        // below), while exceeding the budget with no cancellation surfaces as
-                        // TimeoutException instead, correctly routing through the generic catch below
-                        // -> abnormalTermination -> urgent un-key-before-StopPlayback. `ct` is passed
-                        // to WaitAsync itself too (CA2016 -- not just the inner call): WaitAsync(TimeSpan,
-                        // CancellationToken) races completion/timeout/cancellation independently, so a
-                        // genuine caller cancellation is observed and classified correctly HERE even if
-                        // the backend itself never polls `ct` promptly once its native call has started
-                        // (HamlibRadioProtocol's own documented limitation -- round-15 finding 4, closed
-                        // by this rather than just caveated).
-                        //
-                        // Round-15 caveat: that urgent un-key is only a genuine recovery when the backend
-                        // doesn't serialize requests behind the very command that just timed out --
-                        // RigctldClientProtocol/HamlibRadioProtocol both hold a single request
-                        // semaphore across the reply read, so the abandoned key command still holds it
-                        // and the un-key attempt is expected to itself time out and log Critical
-                        // ("MAY STILL BE KEYED"), not silently recover -- still strictly better than
-                        // the pre-round-14 unbounded hang (the operator is now told, loudly, instead
-                        // of the app just stalling), but this is a signal to disconnect/reconnect the
-                        // CAT link, not evidence the rig is actually off. The underlying call is left
-                        // running in the background either way -- same trade-off EnqueueAllAsync's own
-                        // round-13 stall fix accepts.
-                        Task? keyCommand = null;
-                        try
-                        {
-                            keyCommand = _radioSession.SetPttAsync(true, ct);
-                            await keyCommand.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
-                        }
-                        catch (Exception)
-                        {
-                            // Round-15 finding: this call is just as much a lost-update hazard as
-                            // SetPttLockAsync's own key-failure catch (round-8 finding, see its own
-                            // comment) -- a failed-but-possibly-keyed attempt is a NEW key for
-                            // _pttKeyEpoch's purposes. Without this, a concurrent un-keyer that
-                            // snapshotted the epoch BEFORE this call reached the wire can read the
-                            // epoch as unchanged after this call's own cleanup un-key also fails, and
-                            // wrongly clear _pttUnkeyFailedOnRealRig -- reporting a rig this call may
-                            // have genuinely keyed as confirmed off. This was the one site rounds 5-8
-                            // missed of this class; round 14's WaitAsync fix made it newly reachable in
-                            // practice (a hung key command now reliably throws instead of hanging).
-                            _pttCoordinator.RecordKeyEpochAdvance();
-
-                            // Round-31 finding (risk): this abandoned key command had no fault-observer
-                            // -- the direct twin of SetPttLockAsync's own pttCommand (rounds 29/30), but
-                            // strictly more reachable (this method has live production callers,
-                            // SetPttLockAsync currently has none) and the most safety-relevant instance
-                            // in the whole class: this is the one abandoned command that, by this
-                            // method's own reasoning just above, may have physically keyed the rig.
-                            // Harm is diagnostic/attribution only -- state handling above is already
-                            // correct regardless (epoch bump, then abnormalTermination -> urgent un-key
-                            // in the finally). Same gating as every sibling site: only attach if the
-                            // command was actually issued (not still null from a synchronous throw) and
-                            // is still running (not yet completed -- if it already finished, its own
-                            // fault already propagated through the WaitAsync above as the exception this
-                            // catch is handling).
-                            if (keyCommand is { IsCompleted: false })
-                            {
-                                _ = keyCommand.ContinueWith(
-                                    t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT key command (finished after watchdog)", t.Exception!)),
-                                    CancellationToken.None,
-                                    TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
-                                    TaskScheduler.Default);
-                            }
-
-                            throw;
-                        }
-
-                        // Round-5 finding: see PttSafetyCoordinator's own doc comment.
+                        keyCommand = _radioSession.SetPttAsync(true, ct);
+                        await keyCommand.WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                    }
+                    catch (Exception)
+                    {
+                        // A failed-but-possibly-keyed attempt is a NEW key for _pttKeyEpoch's purposes,
+                        // and the cleanup retry gate depends on it: pttKeyedOnRealRig is already true, so
+                        // this bump is what guarantees _pttKeyEpoch >= 1 when a throw here leaves
+                        // keyEpochAfterOwnKeyAttempt/unkeyEpochAfterOwnKeyAttempt at their 0 placeholders.
+                        // Without it, transmit #1 (key fails, urgent unkey confirms off -- unkey epoch 1)
+                        // followed by transmit #2 (key fails, urgent unkey fails) would read
+                        // ConfirmedUnkeyAlreadyHappenedSinceOwnKey(0, 0) as true and skip the retry on a
+                        // rig transmit #2 may have keyed. It also stops a concurrent DisposeAsync backstop
+                        // un-key that snapshotted the epoch BEFORE this command reached the wire from
+                        // clearing _pttUnkeyFailedOnRealRig.
                         _pttCoordinator.RecordKeyEpochAdvance();
-                        // Round-23 finding (risk): the ONE Log.* call in the whole file that executes
-                        // while a real transmitter is physically keyed -- was still unwrapped. A
-                        // transient logging-provider failure landing in this exact window (the state
-                        // latches above already correctly mark this key attempt, so no state-latching
-                        // write is skipped -- just a risk, not a blocker) used to abort the transmit
-                        // with the raw logging exception instead of a caller-recognizable type, and
-                        // swallow the very PlaybackFailed log that would have explained why.
-                        SafeLog(() => Log.PttKeyed(_logger));
+
+                        // Fault-observer for the abandoned key command -- this is the one abandoned
+                        // command that may have physically keyed the rig. Harm is diagnostic/attribution
+                        // only -- state handling is already correct regardless (epoch bump, then
+                        // abnormalTermination -> urgent un-key in the finally). Only attached if the
+                        // command was actually issued (not still null from a synchronous throw) and is
+                        // still running (if it already finished, its own fault already propagated through
+                        // the WaitAsync above as the exception this catch is handling).
+                        if (keyCommand is { IsCompleted: false })
+                        {
+                            _ = keyCommand.ContinueWith(
+                                t => SafeLog(() => Log.CleanupStepFailed(_logger, "PTT key command (finished after watchdog)", t.Exception!)),
+                                CancellationToken.None,
+                                TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously,
+                                TaskScheduler.Default);
+                        }
+
+                        throw;
                     }
-                    else
-                    {
-                        // Round-23 finding (nit): same shape, no-radio branch -- PTT is never touched
-                        // here, so the only harm is a transient logging failure aborting a no-radio
-                        // transmit with a bogus exception type.
-                        SafeLog(() => Log.PttSkippedNoRadio(_logger));
-                    }
+
+                    // See PttSafetyCoordinator's own doc comment (Race 1).
+                    _pttCoordinator.RecordKeyEpochAdvance();
+                    // SafeLog: the one Log.* call that executes while a real transmitter is physically
+                    // keyed -- a transient logging-provider failure here must not abort the transmit with
+                    // the raw logging exception instead of a caller-recognizable type.
+                    SafeLog(() => Log.PttKeyed(_logger));
+                }
+                else
+                {
+                    // Same shape, no-radio branch -- PTT is never touched here, so the only harm is a
+                    // transient logging failure aborting a no-radio transmit with a bogus exception type.
+                    SafeLog(() => Log.PttSkippedNoRadio(_logger));
                 }
 
-                // Round-27 finding (risk): _pttUnkeyEpoch alone answers "did a confirmed un-key happen
-                // since I started", not "is the rig off NOW" -- a key landing AFTER that confirmed
-                // un-key but BEFORE this call's own cleanup is invisible to unkeyEpochAfterOwnKeyAttempt's own
-                // check, unlike _pttKeyEpoch's own consumers, which snapshot immediately before their
-                // own un-key await (a one-await-wide window) rather than at method entry (a whole-
-                // transmission-wide window, potentially minutes). Concrete leak: this transmit keys ->
-                // a concurrent SetPttLockAsync(false) confirms the rig off (_pttUnkeyEpoch bumps) -> a
-                // LATER SetPttLockAsync(true) re-keys it (successfully, or fails after physically
-                // keying -- either way _pttKeyEpoch bumps again, per round-7/8's own established rule)
-                // -> this transmit's own cleanup sees _pttUnkeyEpoch moved and skips its un-key
-                // entirely, leaving a genuinely re-keyed rig un-attended. Snapshotted here, right after
-                // this call's own key phase (success, failure, or no-radio skip) -- both consumer sites
-                // now also require this to be UNCHANGED before trusting the "already off" signal,
-                // erring toward attempting the un-key (this file's own established rule) whenever
-                // ANYONE has re-keyed since this point, not just when this call's own belief is stale.
+                // Both epochs snapshotted HERE, right after this call's own key phase (success, failure,
+                // or no-radio skip), with no await between the two reads, so the pair answers "since MY
+                // OWN key: did anyone confirm off, and did anyone re-key". A snapshot at method entry
+                // would misread a confirmed un-key that landed BEFORE this call's key command as
+                // "confirmed after I keyed" and skip this call's own un-key. The key-epoch half makes the
+                // cleanup skip require that nobody re-keyed since this point either -- the unkey epoch
+                // alone answers "did a confirmed un-key happen", not "is the rig off NOW" -- erring toward
+                // attempting the un-key whenever anyone has re-keyed since.
                 keyEpochAfterOwnKeyAttempt = _pttCoordinator.CurrentKeyEpoch;
-
-                // Round-28 finding (blocker): unkeyEpochAfterOwnKeyAttempt now read HERE too, not at method entry
-                // -- see its own comment (near pttLockedBeforeKeyDecision, above) for why the entry-time read was
-                // itself the bug. Reading both epochs at this SAME point (immediately after this call's
-                // own key phase, no await between the two reads) means the pair now correctly answers
-                // "since MY OWN key: did anyone confirm off, and did anyone re-key" -- not two questions
-                // anchored to different, unrelated points in time.
                 unkeyEpochAfterOwnKeyAttempt = _pttCoordinator.CurrentUnkeyEpoch;
 
                 // Round-14 finding 2: same unbounded-await shape as finding 1, one step later --
-                // PTT is already keyed (or was already locked keyed at entry) by this point, so an
+                // PTT is already keyed by this point, so an
                 // indefinite native device-open hang here is exactly as much a leaked-keyed-
                 // transmitter exposure as finding 1's key command itself, not a smaller-window
                 // variant of it. Same WaitAsync treatment, same reasoning. Round-15 nit:
@@ -716,7 +543,7 @@ public sealed partial class SstvSessionService
                 // Round-22 finding (risk): same shape as the OperationCanceledException arm above -- a
                 // throwing log call used to substitute an unrelated exception for the
                 // ObjectDisposedException this class's own established convention has callers branch
-                // on (see SetPttLockAsync's own post-dispose recovery guard for the same reasoning).
+                // on.
                 SafeLog(() => Log.PlaybackAbortedByDispose(_logger));
                 throw;
             }
@@ -740,8 +567,7 @@ public sealed partial class SstvSessionService
                     // An abnormal termination IS the safety path (manual Stop TX / SWR auto-cutoff): the
                     // operator wants the transmitter off NOW and there is no audio tail worth preserving
                     // (the image is aborted either way). Un-key BEFORE StopPlayback so a wedged output
-                    // device can't delay it at all. skipUnkeyAndRxResume is false by construction whenever
-                    // abnormalTermination is true, so this can never fire on a "stay keyed" path.
+                    // device can't delay it at all.
                     // Round-19 finding: this whole cleanup region (the enclosing try starting above)
                     // had a finally but NO catch -- both UnkeyForCleanupAsync and
                     // StopPlaybackWithWatchdogAsync are documented as never throwing, but neither claim
@@ -787,34 +613,6 @@ public sealed partial class SstvSessionService
                         SafeLog(() => Log.CleanupStepFailed(_logger, "StopPlayback", ex));
                     }
 
-                    // Risk B (Tier A Batch 3 chunk 3a, round 19): _pttLocked read ONCE for this whole
-                    // decision, not independently at the skip computation and again at the deferred-
-                    // resume branch below -- two independent reads let a SetPttLockAsync(false) landing
-                    // between them disagree, taking the "leaveKeyedAfterCall residual" branch on a call
-                    // that had actually paused RX, stranding it with nothing left to resume it.
-                    //
-                    // Round-25 finding (risk): round 19's fix took this ONE read too early -- at the
-                    // very top of this finally, BEFORE StopPlaybackWithWatchdogAsync's own await (up to
-                    // playbackStopWaitBudget). A SetPttLockAsync(true) that completes DURING that drain
-                    // wait -- engaging a genuine operator lock seconds after this transmit's own body
-                    // finished -- was invisible to a snapshot already taken before the drain even
-                    // started: this call's own un-key below then ran unconditionally and silently
-                    // defeated that just-engaged lock, with UnkeyForCleanupAsync's own epoch guard
-                    // unable to catch it either (that guard protects against a newer key completing
-                    // WHILE the un-key call itself is in flight, not one that already completed before
-                    // the un-key call was even entered). Moved here, immediately before this same read's
-                    // first actual use -- still exactly ONE read shared by every decision below (round
-                    // 19's own property is preserved), just taken as late as StopPlaybackWithWatchdogAsync
-                    // allows rather than long before it. Shrinks the race to the residual, instruction-
-                    // scale window between this read and the un-key command actually reaching the wire
-                    // just below -- the same class of accepted residual this file already documents at
-                    // its other epoch-guarded sites, not eliminated outright.
-                    var pttLockedAtCleanup = _pttCoordinator.IsPttLocked;
-
-                    // Only a NORMAL completion honors "stay keyed" (leaveKeyedAfterCall/lock) -- see this
-                    // method's own doc comment for why an abnormal termination always overrides both.
-                    var skipUnkeyAndRxResume = PttSafetyCoordinator.ComputeSkipUnkeyAndRxResume(abnormalTermination, leaveKeyedAfterCall, pttLockedAtCleanup);
-
                     // Round-18 finding: UnkeyForCleanupAsync's own bool return (whether the un-key was
                     // actually CONFIRMED, not just attempted) used to be discarded here -- an urgent
                     // un-key that timed out against a momentarily-busy backend (SWR cutoff / manual Stop
@@ -834,33 +632,18 @@ public sealed partial class SstvSessionService
                     // if it doesn't, this retry -- and later DisposeAsync's own backstop -- queue up
                     // behind it and get their own turn once it clears), just not via the two
                     // "independent" attempts the removed wording implied.
-                    if (!skipUnkeyAndRxResume && (!unkeyAlreadyAttempted || (pttKeyedOnRealRig && !unkeyConfirmed)))
+                    if (!unkeyAlreadyAttempted || (pttKeyedOnRealRig && !unkeyConfirmed))
                     {
-                        // Round-26 finding (nit, closed as a side effect of finding 1's own
-                        // _pttUnkeyEpoch mechanism): round 25 moved pttLockedAtCleanup's own read to
-                        // right before this decision, closing a leaked-transmitter risk -- but that also
-                        // opened a symmetric window: an operator's own SetPttLockAsync(false) completing
-                        // DURING StopPlaybackWithWatchdogAsync's own drain now reads pttLockedAtCleanup
-                        // as false too, so this call's cleanup would otherwise attempt a REDUNDANT
-                        // un-key on a rig the operator's own unlock already confirmed off. If that
-                        // redundant attempt then fails for any unrelated reason (e.g. the CAT link
-                        // dropped in the interim), it falsely latches _pttUnkeyFailedOnRealRig on a rig
-                        // that is demonstrably fine -- the exact signal erosion round 4's clear exists to
-                        // prevent. Skip the attempt entirely when a confirmed un-key already happened
-                        // anywhere since this call's own key phase (round-29 nit: corrected from "since
-                        // this call's own entry" -- the actual snapshot point, per round 28, is right
-                        // after the key phase, not at method entry).
-                        //
-                        // Round-27 finding (risk): also requires _pttKeyEpoch to be UNCHANGED since
-                        // this call's own key phase -- see keyEpochAfterOwnKeyAttempt's own comment for
-                        // why the confirmed-un-key signal alone is not enough (a re-key AFTER that
-                        // confirmed un-key, still within this call's own lifetime, must never be
-                        // skipped over).
+                        // Skip the attempt when a confirmed un-key already happened anywhere since this
+                        // call's own key phase AND nobody re-keyed since (see the epoch snapshots' own
+                        // comment) -- e.g. DisposeAsync's backstop un-key landing after its bounded wait
+                        // for this transmit expired. A redundant attempt that then fails for an unrelated
+                        // reason (CAT link dropped in the interim) would falsely latch
+                        // _pttUnkeyFailedOnRealRig on a rig that is demonstrably off.
                         if (pttKeyedOnRealRig && _pttCoordinator.ConfirmedUnkeyAlreadyHappenedSinceOwnKey(keyEpochAfterOwnKeyAttempt, unkeyEpochAfterOwnKeyAttempt))
                         {
-                            // Round-27 finding (nit): no `unkeyConfirmed = true` here -- nothing rechecks
-                            // this block's own outer `if` condition afterward, so that write was dead
-                            // (this whole block runs at most once per call).
+                            // No `unkeyConfirmed = true` here -- nothing rechecks this block's own outer
+                            // `if` condition afterward (this whole block runs at most once per call).
                             SafeLog(() => Log.PttCleanupUnkeySkippedConfirmedElsewhere(_logger));
                         }
                         else
@@ -871,121 +654,29 @@ public sealed partial class SstvSessionService
                             }
                             catch (Exception ex)
                             {
-                                // Round-20 finding: SafeLog -- see the urgent-half arm's own comment above.
+                                // SafeLog -- see the urgent-half arm's own comment above.
                                 SafeLog(() => Log.CleanupStepFailed(_logger, "PTT off (retry)", ex));
                             }
                         }
                     }
 
-                    if (skipUnkeyAndRxResume && leaveKeyedAfterCall && pttKeyedOnRealRig)
-                    {
-                        // PTT is deliberately left physically keyed after this call returns, with no
-                        // _pttLocked to record it (SetPttLockAsync's own doc comment already calls this
-                        // gap out) -- DisposeAsync's shutdown backstop needs to know about it.
-                        //
-                        // Round-7 finding: only ever writes `true` here, never `false` -- this line runs
-                        // AFTER StopPlaybackWithWatchdogAsync's own await (up to 5s), the same
-                        // snapshot-then-act-on-stale-state shape rounds 5/6 already closed at the two
-                        // epoch-guarded sites. Writing `false` unconditionally here (the old behavior, when
-                        // pttKeyedOnRealRig happened to be false -- e.g. RigId was "none" at this call's own
-                        // key time) could stomp a CONCURRENT call's genuinely-keyed `true`, set moments
-                        // earlier while this await was in flight. The `false` direction is never load-
-                        // bearing here -- the only correct owner of clearing this flag is a CONFIRMED
-                        // un-key, which the two epoch-guarded sites already handle.
-                        //
-                        // Round-26 finding (risk): that reasoning covered a re-KEY racing this write, but
-                        // not a confirmed UN-key racing it -- e.g. TuneAsync(leaveKeyedAfterTune: true)
-                        // keys the rig, the operator calls SetPttLockAsync(false) mid-tone and genuinely
-                        // un-keys it (rig confirmed OFF, _pttUnkeyEpoch bumped), then this line ran anyway
-                        // and wrote a permanent false "still keyed" belief on a rig that is demonstrably
-                        // off. Guarded on unkeyEpochAfterOwnKeyAttempt: if a confirmed un-key happened
-                        // anywhere since this call's own key phase, skip the write -- the rig is already
-                        // known to be off, and writing `true` here would just be wrong, not merely
-                        // stale. (Round-29 nit: this comment previously said "since this call started" --
-                        // corrected; the actual snapshot point, per round 28, is right after this call's
-                        // own key phase, not at method entry/start.)
-                        //
-                        // Round-27 finding (risk, reported as "covered by luck" today -- whoever re-keys
-                        // after a confirmed un-key sets _pttLocked or _pttLeftKeyedByCall itself, so
-                        // nothing is currently lost by this write's own skip -- but the same
-                        // _pttKeyEpoch cross-check is added here anyway for defense-in-depth, matching
-                        // the un-key call site's own fix and not relying on that luck holding under a
-                        // future change).
-                        var latchResult = _pttCoordinator.TryLatchLeftKeyedAfterCall(keyEpochAfterOwnKeyAttempt, unkeyEpochAfterOwnKeyAttempt);
-                        if (latchResult == PttSafetyCoordinator.PttLeftKeyedLatchResult.SkippedConfirmedUnkeyRace)
-                        {
-                            SafeLog(() => Log.PttLeftKeyedSkippedConfirmedUnkeyRace(_logger));
-                        }
-                    }
-
-                    // Created only HERE, after every potentially-slow step above, so the RX-resume steps
-                    // get a full independent budget rather than whatever StopPlayback/un-key left over --
-                    // the same starvation bug blocker 1 is about, one step further down the chain. At most
-                    // one StartReceivingAsync call runs per invocation (the three branches below are
-                    // mutually exclusive on wasReceiving/skipUnkeyAndRxResume), so one source is enough.
-                    //
-                    // Round-16 correction (mirrors SetPttLockAsync's own twin CTS's identical fix, see
-                    // its own comment): every StartReceivingAsync(rxResumeCts.Token) call below is now
-                    // ALSO wrapped in .WaitAsync(rxResumeCts.Token) -- passing the token as the callee's
-                    // own `ct` parameter alone never actually bounded this call, since
-                    // MiniAudioDeviceEnumerator.RefreshAsync/MiniAudioEngine.StartCaptureAsync only check
-                    // `ct` at their own start/lock-acquire boundary, not during the blocking native call
-                    // itself. Without this, a wedged capture device leaves this await pending forever,
-                    // and since this whole method's outer finally (where _transmitInFlight is finally
-                    // released) can't complete while ANY await inside it is still pending, that strands
-                    // _transmitInFlight too -- the exact permanent-lockout class rounds 13-15 closed at
-                    // every OTHER site in this method, missed here because this CTS looked
-                    // already-sufficient.
-                    using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
-
-                    // Auditor-caught (round 2): a PRIOR locked call may have already stopped capture
-                    // and set the coordinator's own deferred-resume flag before THIS call force-unkeyed
-                    // on an abnormal termination -- if so, THIS call's own `wasReceiving` is false, so the
-                    // `if (wasReceiving)` block below would never see it, leaving RX stopped forever
-                    // with IsPttLocked already reporting false. See
-                    // PttSafetyCoordinator.DecideStrandedLockResume's own doc comment: guarded on
-                    // `!wasReceiving` internally so this never double-fires alongside that block's own
-                    // resume for THIS call.
-                    if (_pttCoordinator.DecideStrandedLockResume(skipUnkeyAndRxResume, wasReceiving) == PttSafetyCoordinator.PttRxResumeDecision.ResumeThenRaise)
-                    {
-                        await TryCleanupAsync("Resume RX (stranded lock pending-resume)", () => ResumeReceivingBoundedAsync(rxResumeCts)).ConfigureAwait(false);
-                        RaiseCapturePausedForTransmitChanged(false);
-                    }
-
                     if (wasReceiving)
                     {
-                        // See PttSafetyCoordinator.DecideWasReceivingResume's own doc comment for the
-                        // full 3-way reasoning: ResumeThenRaise (not skipping -- normal resume);
-                        // ResumeThenRaiseUnlockRaced (Risk B, publish-then-recheck -- a concurrent
-                        // SetPttLockAsync(false) raced this call's own deferred-resume publish, narrows
-                        // but does not fully close the window, deliberately unfenced since the failure
-                        // mode is a user-recoverable stranded RX pause, not a leaked keyed transmitter --
-                        // see the coordinator's own class doc comment); RaiseOnly (Auditor-caught round 1
-                        // residual: leaveKeyedAfterCall=true and NOT locked -- RX intentionally stays
-                        // stopped, but this transmission's own pause window is still over, so the event
-                        // must not stay stuck true forever); DeferPending (published, nothing to do yet).
-                        var decision = _pttCoordinator.DecideWasReceivingResume(skipUnkeyAndRxResume, abnormalTermination, pttLockedAtCleanup);
-                        switch (decision)
-                        {
-                            case PttSafetyCoordinator.PttRxResumeDecision.ResumeThenRaise:
-                                await TryCleanupAsync("Resume RX", () => ResumeReceivingBoundedAsync(rxResumeCts)).ConfigureAwait(false);
-                                // User-reported gap (2026-08-18): fires once the resume attempt has finished,
-                                // success or failure -- this event is "no longer paused FOR THIS transmission,"
-                                // not a restatement of IsReceiving itself (see the event's own doc comment).
-                                RaiseCapturePausedForTransmitChanged(false);
-                                break;
-                            case PttSafetyCoordinator.PttRxResumeDecision.ResumeThenRaiseUnlockRaced:
-                                await TryCleanupAsync("Resume RX (unlock raced cleanup)", () => ResumeReceivingBoundedAsync(rxResumeCts)).ConfigureAwait(false);
-                                RaiseCapturePausedForTransmitChanged(false);
-                                break;
-                            case PttSafetyCoordinator.PttRxResumeDecision.RaiseOnly:
-                                RaiseCapturePausedForTransmitChanged(false);
-                                break;
-                            case PttSafetyCoordinator.PttRxResumeDecision.DeferPending:
-                            case PttSafetyCoordinator.PttRxResumeDecision.None:
-                            default:
-                                break;
-                        }
+                        // Created only HERE, after every potentially-slow step above, so the RX-resume
+                        // step gets a full independent budget rather than whatever StopPlayback/un-key left
+                        // over -- the same starvation bug blocker 1 is about, one step further down the
+                        // chain. ResumeReceivingBoundedAsync also wraps StartReceivingAsync in
+                        // .WaitAsync(rxResumeCts.Token): passing the token as the callee's own `ct` alone
+                        // never bounded it, since MiniAudioDeviceEnumerator.RefreshAsync/
+                        // MiniAudioEngine.StartCaptureAsync only check `ct` at their own start/lock-acquire
+                        // boundary, not during the blocking native call itself -- and a pending await here
+                        // would strand _transmitInFlight (released only in this method's outer finally).
+                        using var rxResumeCts = new CancellationTokenSource(_cleanupTimeout);
+                        await TryCleanupAsync("Resume RX", () => ResumeReceivingBoundedAsync(rxResumeCts)).ConfigureAwait(false);
+                        // Fires once the resume attempt has finished, success or failure -- this event is
+                        // "no longer paused FOR THIS transmission," not a restatement of IsReceiving
+                        // itself (see the event's own doc comment).
+                        RaiseCapturePausedForTransmitChanged(false);
                     }
                 }
                 finally

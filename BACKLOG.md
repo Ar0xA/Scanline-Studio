@@ -408,11 +408,7 @@ The quality pass follows `docs/plans/cq-README.md`: 9 reviewed plans, in this or
 cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass picks up later from
 `docs/code-quality-audit/auditor-top10.md` and the parked plans cq-09, cq-05, cq-06, cq-10 and cq-11.
 
-### CQ-P1. OPEN — one fix-soon item left (the others are in §9)
-
-- **CQ-08-F1. Two PTT features with no production caller** — `SetPttLockAsync`, and
-  `TuneAsync(leaveKeyedAfterTune: true)` (never passed `true`). ~54% of ~2,000 PTT lines. Removal also
-  closes 08-F7's races. Needs the removal-rule check and the full review cadence.
+### CQ-P1. DONE — all fix-soon items are in §9
 
 ### CQ-P2. OPEN — fix when touching the code
 
@@ -569,6 +565,13 @@ Listed with evidence in the area reports. Pick them up only when already working
   ConfigurationPresetStore. Startup dialog via `ISettingsRecoveryNotice` (before the version notice). ReadyRack
   TogglePin guarded; Refresh keeps working when settings are unavailable. Help en/de. Auditor: 2 plan-review rounds +
   plan text fixes, 1 code-review round, go.
+- **CQ-08-F1.** DONE — removed `SetPttLockAsync`/`IsPttLocked` and `TuneAsync(leaveKeyedAfterTune)` (no production
+  caller, no UI/setting/help), with their coordinator state (lock, deferred RX resume, leave-keyed latch). Normal
+  TX/Tune/Stop TX/Dispose PTT safety is unchanged; the key-failure epoch bump is kept and re-justified (pinned by a new
+  two-transmit test), and the confirmed-unkey skip branch is now asserted. 08-F7: Risk B deleted outright; Race 1 closed
+  in effect (epochs stay; the only overlap left is the dispose backstop vs. a transmit whose bounded wait expired).
+  No removed-features entry needed (legacy PTTLock is a different feature, :308); a cross-reference was added to the
+  `m_TuneSat` entry. Auditor: 2 plan-review rounds + 1 code-review round, go.
 - **CQ-09-F1-GAP.** OPEN — the Options dialog opened during a transient settings-read failure shows defaults, and its
   Save writes them once the file is readable again (`OptionsWindowViewModel.LoadSave.cs:40-104`).
 - **CQ-09-F1-RELOC.** OPEN, minor — `Program.cs` `ApplyPendingRelocations` (legacy bridge) moves only `settings.json`,
