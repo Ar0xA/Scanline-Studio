@@ -332,7 +332,9 @@ real QSSTV/EasyPal WAVs for P8.
 - **DRM-P0.** DONE — QSSTV golden-vector harness (`~/tools/qsstv-drm-harness`, unmodified QSSTV 9.5.11 sources) and
   fixtures `tests/ScanlineStudio.Core.Drm.Tests/Fixtures/QsstvGolden/` (79 TX cases, bit-exact through the cell grid,
   six full 48 kHz streams). Auditor: 2 code-review rounds, go.
-- **DRM-P1.** OPEN — Core.Drm foundations: tables, CRC, PRBS, complex, mixed-radix FFT, Latin-1.
+- **DRM-P1.** DONE — `ScanlineStudio.Core.Drm` + tests: HamDRM tables and the TX cell map (all 6 mode×SO maps match
+  QSSTV's runtime table cell-for-cell), TX/RX CRC (QSSTV's CRC16 is GENIBUS-shaped, not X.25) and PRBS, mixed-radix
+  2/3/4/5 FFT (FFTW conventions), Latin-1 per UTF-16 unit. Auditor: 1 code-review round, go.
 - **DRM-P2 / P3.** OPEN — TX source side / TX channel side, golden-checked.
 - **DRM-P4a / P4b.** OPEN — TX core + OpenJPEG binding / TX UI (own plan review).
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
