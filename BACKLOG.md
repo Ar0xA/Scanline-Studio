@@ -414,8 +414,6 @@ User data, safety and error paths:
   Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
 - **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
   transaction (`LogbookPaneViewModel.cs:940`).
-- **CQ-05-F1. On-air risk.** Header TX volume is never reloaded after an Options edit
-  (`RadioStatusViewModel.cs:876,1211`), but the live TX gain changes at once (`SstvSessionService.cs:3202`).
   The first touch of the header slider then jumps the gain mid-TX. Fix: re-read the value in the Options
   Closed handler (`MainWindow.axaml.cs:603`) under `_suppressVolumePersist`. A cross-thread change event
   needs full review, a UI-thread hop, and save suppression.
@@ -535,3 +533,10 @@ Listed with evidence in the area reports. Pick them up only when already working
   `IDisposable` among its dependencies"; each fails under its mutation. A GC-based test was dropped after review: queued
   Avalonia dispatcher posts also hold the view-model, and Host.Tests cannot drain them reliably (xunit 2, no headless
   dispatcher owner). Auditor plan review + code review: go.
+- **CQ-05-F1.** DONE — `ISstvSessionService.TxVolumePercentChanged` (percent + version in settings-commit order) is
+  raised by every Pwr write and by `ResyncTxVolumeFromSettingsAsync`, which a configuration preset switch now calls
+  when the preset carries the Audio section (the merge bypassed the setter). The header slider follows other writers
+  without writing back: it holds changes back while its own write is pending or in flight (counted from `Schedule`
+  to the end of its Task) and applies the newest version when that ends. Live gain writes, including the TX-start
+  seed, are version-guarded. Auditor: 2 plan-review + 2 code-review rounds, go. Known gap kept: if a header write
+  fails, the header keeps the unsaved value (pre-existing).

@@ -728,6 +728,19 @@ public interface ISstvSessionService : IAsyncDisposable
 
     Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
 
+    /// <summary>Re-reads the persisted Pwr value, applies it to the live gain and raises
+    /// <see cref="TxVolumePercentChanged"/>. For writers that replace the Audio section without going
+    /// through <see cref="SetTxVolumePercentAsync"/> (a configuration preset switch).</summary>
+    Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default);
+
+    /// <summary>Raised after every committed Pwr change (<see cref="SetTxVolumePercentAsync"/> or
+    /// <see cref="ResyncTxVolumeFromSettingsAsync"/>), with the clamped value and a version that increases in
+    /// settings-commit order. Raised synchronously on the writer's thread (usually the thread pool), outside any
+    /// lock, after the live gain is updated (or left at a newer version's value); each subscriber is invoked and
+    /// guarded separately, so a throwing subscriber never fails the write or skips another one. Subscribers must
+    /// not block: marshal to the UI thread with a non-blocking Post.</summary>
+    event Action<TxVolumeChange>? TxVolumePercentChanged;
+
     /// <summary>Whether the playback device a real <see cref="TransmitAsync"/> call would resolve
     /// right now is currently muted at the OS level -- independent of <see cref="GetTxVolumePercentAsync"/>'s
     /// own app-internal Pwr gain (muting the OS device silences it regardless of what Pwr is set to,

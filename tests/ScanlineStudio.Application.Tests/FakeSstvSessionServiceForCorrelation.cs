@@ -248,6 +248,14 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default) => throw NotExercised();
 
+    public Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default) => throw NotExercised();
+
+    public event Action<TxVolumeChange>? TxVolumePercentChanged
+    {
+        add { }
+        remove { }
+    }
+
     public Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default) => throw NotExercised();
 
     public Task SetPttLockAsync(bool locked, CancellationToken ct = default) => throw NotExercised();

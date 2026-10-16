@@ -71,6 +71,38 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         return (service, decoder, encoder, sstvSession, settingsStore, radioSession, presetStore, audioEngine);
     }
 
+    [Fact]
+    public async Task SwitchToPresetAsync_PresetCarriesAudio_RaisesTxVolumeChangeWithPresetValue()
+    {
+        // CQ-05-F1: the merge replaces the whole Audio section, bypassing SetTxVolumePercentAsync.
+        var (service, _, _, sstvSession, settingsStore, _, presetStore, _) = CreateService();
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
+        await presetStore.SavePresetAsync("Low power", new AppSettings().WithSection(
+            AudioDeviceSettings.SectionKey, audio with { TxVolumePercent = 30 }, AudioSettingsJsonContext.Default.AudioDeviceSettings));
+        var changes = new List<TxVolumeChange>();
+        sstvSession.TxVolumePercentChanged += changes.Add;
+
+        var result = await service.SwitchToPresetAsync("Low power");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        Assert.False(result.PartiallyApplied);
+        Assert.Equal([30], changes.Select(c => c.Percent));
+        Assert.Equal(30, await sstvSession.GetTxVolumePercentAsync());
+    }
+
+    [Fact]
+    public async Task SwitchToPresetAsync_PresetWithoutAudio_DoesNotResyncTxVolume()
+    {
+        var (service, _, _, sstvSession, _, _, presetStore, _) = CreateService();
+        await presetStore.SavePresetAsync("No audio", new AppSettings());
+        var changes = new List<TxVolumeChange>();
+        sstvSession.TxVolumePercentChanged += changes.Add;
+
+        await service.SwitchToPresetAsync("No audio");
+
+        Assert.Empty(changes);
+    }
+
     private static AppSettings DefaultSettings() =>
         new AppSettings().WithSection(
             AudioDeviceSettings.SectionKey,

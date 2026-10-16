@@ -924,10 +924,43 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => Task.FromResult(TxVolumePercent);
 
-    public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    public int SetTxVolumePercentCallCount { get; private set; }
+
+    /// <summary>When set, SetTxVolumePercentAsync awaits it before storing, so a test can hold a write in flight.</summary>
+    public TaskCompletionSource? SetTxVolumePercentGate { get; set; }
+
+    private long _txVolumeVersion;
+
+    public event Action<TxVolumeChange>? TxVolumePercentChanged;
+
+    public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    {
+        SetTxVolumePercentCallCount++;
+        if (SetTxVolumePercentGate is { } gate)
+        {
+            await gate.Task.ConfigureAwait(false);
+        }
+
+        TxVolumePercent = Math.Clamp(percent, 0, 100);
+        TxVolumePercentChanged?.Invoke(new TxVolumeChange(TxVolumePercent, Interlocked.Increment(ref _txVolumeVersion)));
+    }
+
+    public Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default)
+    {
+        RaiseExternalTxVolumeChange(TxVolumePercent);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Raises an exact change, e.g. one that arrives out of version order.</summary>
+    public void RaiseTxVolumeChange(TxVolumeChange change) => TxVolumePercentChanged?.Invoke(change);
+
+    /// <summary>Simulates another writer (Options, a preset switch) committing a Pwr value.</summary>
+    public TxVolumeChange RaiseExternalTxVolumeChange(int percent)
     {
         TxVolumePercent = percent;
-        return Task.CompletedTask;
+        var change = new TxVolumeChange(percent, Interlocked.Increment(ref _txVolumeVersion));
+        TxVolumePercentChanged?.Invoke(change);
+        return change;
     }
 
     public bool TxIsMuted { get; set; }

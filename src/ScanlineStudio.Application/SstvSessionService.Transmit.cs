@@ -95,8 +95,12 @@ public sealed partial class SstvSessionService
         // consistent with what every reader promises.
         percent = Math.Clamp(percent, 0, 100);
 
+        long version = 0;
         await _settingsStore.UpdateAsync(appSettings =>
         {
+            // Not pure, deliberately: mutate runs once under the settings file lock, so this version
+            // follows commit order. A failed save wastes a number but raises no event.
+            version = Interlocked.Increment(ref _txVolumeVersion);
             var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
                 ?? new AudioDeviceSettings();
             return appSettings.WithSection(
@@ -109,9 +113,83 @@ public sealed partial class SstvSessionService
         // completion (e.g. the Options window's debounced Pwr-slider persist) is guaranteed
         // PumpToPlaybackAsync's NEXT chunk read already sees the new value, not just "eventually".
         // See _liveTxGain's own doc comment for why a live in-flight transmission needs this at all.
-        _liveTxGain = percent / 100f;
+        ApplyLiveTxGain(percent, version);
 
         Log.TxVolumeSet(_logger, percent);
+        RaiseTxVolumePercentChanged(new TxVolumeChange(percent, version));
+    }
+
+    public async Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default)
+    {
+        var percent = 100;
+        long version = 0;
+        // Read and version under the same lock as SetTxVolumePercentAsync; returning the input
+        // unchanged makes UpdateAsync skip the write.
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            version = Interlocked.Increment(ref _txVolumeVersion);
+            var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+            percent = Math.Clamp(current?.TxVolumePercent ?? 100, 0, 100);
+            return appSettings;
+        }, ct).ConfigureAwait(false);
+
+        ApplyLiveTxGain(percent, version);
+        Log.TxVolumeResynced(_logger, percent);
+        RaiseTxVolumePercentChanged(new TxVolumeChange(percent, version));
+    }
+
+    /// <summary>Reads Pwr and samples the version under the settings lock: a write committed after this read
+    /// has a higher version, so <see cref="ApplyLiveTxGain"/> lets it win in either landing order. Relies on the
+    /// store skipping the write for a same-reference mutate, as JsonSettingsStore does.</summary>
+    private async Task SeedLiveTxGainAsync(CancellationToken ct)
+    {
+        var percent = 100;
+        long seenVersion = 0;
+        await _settingsStore.UpdateAsync(appSettings =>
+        {
+            seenVersion = Interlocked.Read(ref _txVolumeVersion);
+            var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+            percent = Math.Clamp(current?.TxVolumePercent ?? 100, 0, 100);
+            return appSettings;
+        }, ct).ConfigureAwait(false);
+
+        ApplyLiveTxGain(percent, seenVersion);
+    }
+
+    /// <summary>Writes the live gain unless a newer version already did: writers resume after the
+    /// settings lock in no fixed order.</summary>
+    private void ApplyLiveTxGain(int percent, long version)
+    {
+        lock (_liveTxGainGate)
+        {
+            if (version < _liveTxGainVersion)
+            {
+                return;
+            }
+
+            _liveTxGainVersion = version;
+            _liveTxGain = percent / 100f;
+        }
+    }
+
+    private void RaiseTxVolumePercentChanged(TxVolumeChange change)
+    {
+        if (TxVolumePercentChanged is not { } handlers)
+        {
+            return;
+        }
+
+        foreach (var handler in handlers.GetInvocationList())
+        {
+            try
+            {
+                ((Action<TxVolumeChange>)handler)(change);
+            }
+            catch (Exception ex)
+            {
+                Log.TxVolumeChangedSubscriberFailed(_logger, ex);
+            }
+        }
     }
 
     public async Task<bool> GetTxDeviceMutedAsync(CancellationToken ct = default)
@@ -337,7 +415,7 @@ public sealed partial class SstvSessionService
                 // yet this process's life -- PumpToPlaybackAsync below reads the LIVE field per chunk,
                 // not this local, so a Pwr-slider change after this point (e.g. mid-Tune) still takes
                 // effect immediately. See _liveTxGain's own doc comment for the full reasoning.
-                _liveTxGain = (await Task.Run(() => GetTxVolumePercentAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false)) / 100f;
+                await Task.Run(() => SeedLiveTxGainAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
                 var audioSettings = await Task.Run(() => LoadAudioSettingsAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
                 // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md

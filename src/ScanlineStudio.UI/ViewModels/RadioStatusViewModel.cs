@@ -872,6 +872,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         sstvSession.MaintenanceWarningCleared += OnMaintenanceWarningCleared;
         sstvSession.MaintenanceCriticalStopRaised += OnMaintenanceCriticalStopRaised;
         sstvSession.CapturePausedForTransmitChanged += OnCapturePausedForTransmitChanged;
+        // App-lifetime VM, like the subscriptions above: never unsubscribed.
+        sstvSession.TxVolumePercentChanged += OnSessionTxVolumePercentChanged;
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxStateSafeAsync();
@@ -1216,6 +1218,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
+                // This read has no version: a change event already seen is newer.
+                if (_txVolumeChangeSeen)
+                {
+                    return;
+                }
+
                 // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
                 // fix for _suppressModeCommand.
                 try
@@ -1790,7 +1798,80 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // Debounced (not one settings write per slider tick, per the Piece 5 plan) -- a slider drag
         // can fire dozens of times a second, and overlapping un-awaited settings-store SaveAsync
         // calls could race each other and let a stale write clobber a fresher one.
-        _ = _txVolumePersist.Schedule(ct => PersistVolumeAsync(value, ct));
+        // Counted from Schedule until its Task ends (superseded, cancelled or written): Debouncer clears
+        // IsPending before the write runs, so IsPending alone misses the in-flight window.
+        _ownTxVolumeWrites++;
+        _ = _txVolumePersist.Schedule(ct => PersistVolumeAsync(value, ct))
+            .ContinueWith(_ => Dispatcher.UIThread.Post(OnOwnTxVolumeWriteEnded), CancellationToken.None,
+                TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
+    }
+
+    /// <summary>UI thread only. Number of header Pwr writes scheduled and not yet ended.</summary>
+    private int _ownTxVolumeWrites;
+
+    /// <summary>UI thread only. Highest-version Pwr change seen, applied or held back.</summary>
+    private TxVolumeChange? _latestTxVolumeChange;
+
+    /// <summary>UI thread only. Version of the last change reconciled into <see cref="TxVolumePercent"/>.</summary>
+    private long _appliedTxVolumeVersion;
+
+    /// <summary>UI thread only. True once any change event arrived, so the unversioned startup load
+    /// must not overwrite it.</summary>
+    private bool _txVolumeChangeSeen;
+
+    /// <summary>Raised on the writer's thread (see <see cref="ISstvSessionService.TxVolumePercentChanged"/>);
+    /// Post never blocks it.</summary>
+    private void OnSessionTxVolumePercentChanged(TxVolumeChange change) =>
+        Dispatcher.UIThread.Post(() => OnTxVolumeChangeReceived(change));
+
+    private void OnTxVolumeChangeReceived(TxVolumeChange change)
+    {
+        _txVolumeChangeSeen = true;
+        if (_latestTxVolumeChange is null || change.Version > _latestTxVolumeChange.Version)
+        {
+            _latestTxVolumeChange = change;
+        }
+
+        // While the user's own write is pending or in flight, hold back: it lands after this change,
+        // and the reconcile below picks whichever committed last.
+        if (_ownTxVolumeWrites == 0)
+        {
+            ReconcileTxVolume();
+        }
+    }
+
+    private void OnOwnTxVolumeWriteEnded()
+    {
+        _ownTxVolumeWrites--;
+        if (_ownTxVolumeWrites == 0)
+        {
+            ReconcileTxVolume();
+        }
+    }
+
+    private void ReconcileTxVolume()
+    {
+        if (_latestTxVolumeChange is not { } latest || latest.Version <= _appliedTxVolumeVersion)
+        {
+            return;
+        }
+
+        _appliedTxVolumeVersion = latest.Version;
+        if (latest.Percent == TxVolumePercent)
+        {
+            return;
+        }
+
+        Log.TxVolumeSyncedFromElsewhere(_logger, latest.Percent);
+        try
+        {
+            _suppressVolumePersist = true;
+            TxVolumePercent = latest.Percent;
+        }
+        finally
+        {
+            _suppressVolumePersist = false;
+        }
     }
 
     private async Task PersistVolumeAsync(int value, CancellationToken ct)
@@ -1948,6 +2029,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX Pwr ({Value}%) failed")]
         public static partial void PersistTxVolumeFailed(ILogger logger, int value, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Header Pwr synced to {Percent}% from another writer")]
+        public static partial void TxVolumeSyncedFromElsewhere(ILogger logger, int percent);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedRadioMode changed: {Value}")]
         public static partial void SelectedRadioModeChanged(ILogger logger, RadioMode value);

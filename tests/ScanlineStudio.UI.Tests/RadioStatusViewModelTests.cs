@@ -3,6 +3,7 @@ using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Time.Testing;
 using ScanlineStudio.Abstractions.Radio;
+using ScanlineStudio.Application;
 using ScanlineStudio.UI.ViewModels;
 
 namespace ScanlineStudio.UI.Tests;
@@ -2354,5 +2355,159 @@ public sealed class RadioStatusViewModelTests
         row.SelectedMode = RadioMode.Lsb;
 
         Assert.Same(before, row.AvailableBandwidthPresetsHz);
+    }
+
+    /// <summary>CQ-05-F1: drains the UI queue until the condition holds; writes resume on the thread pool.</summary>
+    private static async Task DrainUntilAsync(Func<bool> condition, string what)
+    {
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (true)
+        {
+            Dispatcher.UIThread.RunJobs();
+            if (condition())
+            {
+                return;
+            }
+
+            Assert.True(DateTime.UtcNow < deadline, $"Timed out waiting for: {what}");
+            await Task.Delay(10);
+        }
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_ChangedElsewhere_UpdatesHeaderWithoutAWrite()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseExternalTxVolumeChange(40);
+        Dispatcher.UIThread.RunJobs();
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(500)));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(40, vm.TxVolumePercent);
+        Assert.Equal(0, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public void TxVolume_ChangeArrivesOutOfOrder_OlderVersionIsDropped()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(70, Version: 5));
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(20, Version: 4));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(70, vm.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_ChangeWhileOwnWritePending_OwnValueWins()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        sstvSession.RaiseExternalTxVolumeChange(30);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(55, vm.TxVolumePercent);
+
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1 && sstvSession.TxVolumePercent == 55, "own write committed");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(55, vm.TxVolumePercent);
+        Assert.Equal(1, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_NewerChangeWhileOwnWriteInFlight_AppliedWhenWriteEnds()
+    {
+        // Debouncer clears IsPending before the write runs: this pins the in-flight window.
+        var sstvSession = new FakeSstvSessionService { SetTxVolumePercentGate = new TaskCompletionSource() };
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "own write in flight");
+
+        // Committed after the own write (higher version than the own write will get).
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(30, Version: 1000));
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(55, vm.TxVolumePercent);
+
+        sstvSession.SetTxVolumePercentGate.SetResult();
+        await DrainUntilAsync(() => vm.TxVolumePercent == 30, "newer change applied after the own write ended");
+        Assert.Equal(1, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_OlderChangeWhileOwnWriteInFlight_OwnValueWins()
+    {
+        var sstvSession = new FakeSstvSessionService { SetTxVolumePercentGate = new TaskCompletionSource() };
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "own write in flight");
+        sstvSession.RaiseExternalTxVolumeChange(30);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(55, vm.TxVolumePercent);
+
+        sstvSession.SetTxVolumePercentGate.SetResult();
+        await DrainUntilAsync(() => sstvSession.TxVolumePercent == 55, "own write committed");
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(55, vm.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_SetInOptions_HeaderFollowsWithoutAnExtraWrite()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var header = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        using var options = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
+        Dispatcher.UIThread.RunJobs();
+
+        options.TxVolumePercent = 40;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => header.TxVolumePercent == 40, "header follows the Options write");
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(500)));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(1, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxVolume_SupersededOwnWrite_LaterExternalChangeStillApplies()
+    {
+        // A superseded write must still end its count, or the header would ignore every later change.
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        vm.TxVolumePercent = 60;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.TxVolumePercent == 60, "own write committed");
+        await Task.Delay(50);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseExternalTxVolumeChange(25);
+        await DrainUntilAsync(() => vm.TxVolumePercent == 25, "external change applies once own writes end");
+        Assert.Equal(1, sstvSession.SetTxVolumePercentCallCount);
     }
 }

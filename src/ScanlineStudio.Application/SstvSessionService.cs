@@ -138,6 +138,18 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// well-defined-atomic-read/write reasoning as <see cref="_rawInputPeakLevel"/> right above --
     /// this is a single float, not a struct/tuple, so no lock is needed for cross-thread visibility.</summary>
     private volatile float _liveTxGain = 1f;
+
+    /// <summary>Incremented inside the settings-store mutate of every Pwr write/resync, so it follows
+    /// commit order. See <see cref="ISstvSessionService.TxVolumePercentChanged"/>.</summary>
+    private long _txVolumeVersion;
+
+    private readonly object _liveTxGainGate = new();
+
+    /// <summary>Version of the last write to <see cref="_liveTxGain"/>, guarded by
+    /// <see cref="_liveTxGainGate"/>.</summary>
+    private long _liveTxGainVersion;
+
+    public event Action<TxVolumeChange>? TxVolumePercentChanged;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
     // (which writes this) from the audio drain thread, not just from a UI-thread-initiated
     // StartReceivingAsync/StopReceivingAsync call -- volatile for the same reason _pttLocked below
@@ -1159,6 +1171,12 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr set to {Percent}%")]
         public static partial void TxVolumeSet(ILogger logger, int percent);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr resynced from settings: {Percent}%")]
+        public static partial void TxVolumeResynced(ILogger logger, int percent);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "A TxVolumePercentChanged subscriber threw")]
+        public static partial void TxVolumeChangedSubscriberFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "CaptureOverrunCount read raced a concurrent StopReceivingAsync; reporting 0")]
         public static partial void CaptureOverrunCountRaceObserved(ILogger logger);

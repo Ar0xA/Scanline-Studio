@@ -122,6 +122,21 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 Log.SwitchAudioPushFailed(_logger, name, ex);
             }
 
+            // A merge that replaced the Audio section bypassed SetTxVolumePercentAsync, so the header
+            // Pwr slider would otherwise keep showing the old value while TX uses the preset's.
+            if (preset.Sections.ContainsKey(AudioDeviceSettings.SectionKey))
+            {
+                try
+                {
+                    await _sstvSession.ResyncTxVolumeFromSettingsAsync(ct).ConfigureAwait(false);
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    partiallyApplied = true;
+                    Log.SwitchTxVolumeResyncFailed(_logger, name, ex);
+                }
+            }
+
             try
             {
                 PushDecoderChanges(previous, preset);
@@ -457,6 +472,9 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: audio push failed")]
         public static partial void SwitchAudioPushFailed(ILogger logger, string name, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: TX Pwr resync failed")]
+        public static partial void SwitchTxVolumeResyncFailed(ILogger logger, string name, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: decoder push failed")]
         public static partial void SwitchDecoderPushFailed(ILogger logger, string name, Exception exception);
