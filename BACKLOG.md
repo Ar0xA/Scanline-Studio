@@ -373,8 +373,10 @@ real QSSTV/EasyPal WAVs for P8.
   9-15 ms). Frame count for the recount: 12-46 ms. The 400 ms debounce, not the encode, dominates the estimate
   latency; revisit only if a slower machine shows > 250 ms. Estimate compose from a 24 MP original at 800×600: 96 ms
   median (Release), so about 125 ms per estimate with the encode.
-- **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
-  and the lost-frame attribution (fixture README).
+- **DRM-P5.** DONE — RX demodulation, exact QSSTV port: P5a front end (30bf4d29), P5b acquisition (cea9f8ef), P5c
+  channel estimation/tracking/cells with own LU (7ff248e0). Goldens on all 79 cases; CPU ≤ 0.6 % of one core mean.
+- **DRM-P6.** OPEN — RX channel decoding (FAC demap/decode, mkmscmap, deinterleave, msd hard decode + Viterbi,
+  de-dispersal). Replaces the tests' injected `spectrum_occupancy` with the real value.
 - **DRM-P6b.** OPEN — RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
   exact port + goldens: decode the last frame (QSSTV always loses it), fix the knife-edge sync drop (B0_q4_high_long),
   RS1 signed-char size bug, E0_q64_low_short first-frame bit errors. Each with proof + UI toggle; TX stays QSSTV-identical.
