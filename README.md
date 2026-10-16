@@ -26,7 +26,7 @@ what has shipped since.
   — per-OS build prerequisites and troubleshooting.
 - The offline in-app user guide lives in `assets/help/`, reachable from Help > User guide inside the
   running app.
-- [LICENSES.md](LICENSES.md) — why this project is LGPL-3.0-or-later, and what legacy assets were
+- [LICENSES.md](LICENSES.md) — why this project is GPL-3.0-or-later, and what legacy assets were
   deliberately excluded from the port.
 - [scanlinestudio.app](https://scanlinestudio.app) — end-user docs and downloads.
 
@@ -55,5 +55,6 @@ The original C++Builder/VCL codebase this project is modernizing lives upstream 
 
 ## License
 
-LGPL-3.0-or-later. See [COPYING](COPYING), [COPYING.LESSER](COPYING.LESSER), and [LICENSES.md](LICENSES.md)
-for the full reasoning.
+GPL-3.0-or-later. See [COPYING](COPYING) and [LICENSES.md](LICENSES.md) for the full reasoning.
+[COPYING.LESSER](COPYING.LESSER) is kept because the ported YONIQ/MMSSTV code was received under
+LGPL-3.0-or-later.

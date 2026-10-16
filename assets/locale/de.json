@@ -749,7 +749,7 @@
   "About.Website.Help": "scanlinestudio.app im Standardbrowser öffnen",
   "About.Derivative": "Eine vollständige Neuentwicklung von YONIQ (einem Fork von MMSSTV) für Windows, Linux und macOS.",
   "About.LicenseHeader": "Lizenz",
-  "About.LicenseBody": "Lizenziert unter der GNU Lesser General Public License v3.0 oder später (LGPL-3.0-or-later), entsprechend der Lizenz des zugrunde liegenden YONIQ/MMSSTV-Projekts, von dem dies ein abgeleitetes Werk ist. Der vollständige Lizenztext (COPYING, COPYING.LESSER) und die Lizenzherkunft (LICENSES.md) liegen dieser Anwendung bei.",
+  "About.LicenseBody": "Lizenziert unter der GNU General Public License v3.0 oder später (GPL-3.0-or-later). Dies ist ein abgeleitetes Werk des YONIQ/MMSSTV-Projekts, das unter LGPL-3.0-or-later lizenziert ist. Der vollständige Lizenztext (COPYING, COPYING.LESSER) und die Lizenzherkunft (LICENSES.md) liegen dieser Anwendung bei.",
   "About.CloseButton": "Schließen",
   "Options.Title": "Optionen",
   "Options.HelpGlyph": "[?]",

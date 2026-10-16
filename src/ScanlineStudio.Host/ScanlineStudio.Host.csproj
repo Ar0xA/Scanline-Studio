@@ -105,7 +105,7 @@
   </ItemGroup>
 
   <!-- spec/18-path-to-1.0.md High item 5: previously not shipped with the app at all. A binary
-       distribution had no delivery path for the LGPL notice these files satisfy (the roadmap's own
+       distribution had no delivery path for the licence notice these files satisfy (the roadmap's own
        stated gap: "the LGPL notice has no delivery path in a binary distribution without an About
        box"). Static None items, not a dynamically-added target-time item. CopyToPublishDirectory
        is unset deliberately, matching the locale/font ItemGroups immediately above/below: the SDK

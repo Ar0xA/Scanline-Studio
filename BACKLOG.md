@@ -322,6 +322,34 @@ is touched anyway, not as one big change. Not started until AV12 ships.
 
 ---
 
+### RESEARCH. Research list — not committed work
+
+Look into these before deciding whether to build anything. Each needs a user decision first.
+
+- **RES-DRM. DRM / EasyPal digital SSTV.** User decided "not now" (2026-10-16). Findings so far:
+  - `milesburton/easypal-toolkit` (TypeScript) is not a usable reference. Its README says MIT but the repo has no
+    LICENSE file. Its verify script only decodes its own encoder's WAVs, and its carrier/FAC/SDC layout does not
+    look like real DRM Mode B (round-trip-only, the Scottie trap).
+    Checked against QSSTV's HamDRM Mode B tables (2026-10-16): symbol timing matches (46.875 Hz spacing, Tg = Tu/4,
+    15 symbols/frame), but the toolkit uses 29 carriers k = -10..18 around 1500 Hz where QSSTV uses k = 1..45
+    (SO_0) or 1..51 (SO_1) from a 350 Hz offset; 5 time pilots vs QSSTV's 15; frequency pilots on 3 cells vs
+    QSSTV's continuous carriers 8/24/32; 2 FAC cells per frame vs QSSTV's 45. It cannot interoperate.
+  - QSSTV's DRM code (`QSSTV-main/src/drmrx`, `src/drmtx`, ~29k lines, Dream/Diorama-derived, GPL-2+; QSSTV is
+    GPL-3) is the working, EasyPal-compatible reference. The project moved to GPL-3.0-or-later on 2026-10-16,
+    so porting it is now licence-compatible. Alternatives (no longer needed for licensing): clean-room from ETSI ES 201 980 (HamDRM specifics are not in it), or a
+    separate GPL helper process.
+  - Interop proof needs real EasyPal/QSSTV recordings as golden vectors. Reverses `docs/removed-features.md:806`.
+- **RES-SSTVAE. SSTVAE neural image mode** (`arodland/SSTVAE`, C++, Artistic-2.0). Experimental: an autoencoder
+  sends image latents as OFDM carrier amplitudes, inspired by FreeDV RADE. Working beta on real HF, but the on-air
+  format is not frozen (both stations need the same commit and model checkpoint), and it has no integration with
+  other SSTV software. To check: licence of the model checkpoint (the code's Artistic-2.0 is GPL-compatible via its §4(c)(ii) relicense option), runtime/model size, whether it
+  can run as a library or only as its own app, and whether the format has stabilised.
+- **RES-BMPSSTV. bmp-sstv bitmap-over-PCM mode** (`ClearAct290/bmp-sstv`, Python, 2 files: `codec.py`, `GUI.py`;
+  no licence file, so all rights reserved by default). Converts an image to a bitmap and plays its bytes as PCM
+  audio slowly enough to stay under 1.75 kHz, then reverses it on receive. 1 star, no other software uses it. To
+  check: the actual on-air format (sample rate, framing, sync, error handling), whether it survives real HF noise
+  and drift, and the licence (needs one from the author before any port).
+
 ## 6. Blocked on a human
 
 ### H1. BLOCKED — FSK-ID/CW-ID legacy golden-vector fixture (B-P4)
