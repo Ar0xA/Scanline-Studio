@@ -348,7 +348,9 @@ real QSSTV/EasyPal WAVs for P8.
   linux-x64). QSSTV harness RX decodes our TX output to the identical file. Auditor: 2 code-review rounds, go.
 - **DRM-REL.** OPEN — release checklist: (1) per OS, confirm `libopenjp2` sits beside the published exe and the
   "OpenJPEG 2.5.4 loaded" log appears on first DRM use (release workflows run no tests); (2) state "macOS 14+,
-  glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34).
+  glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34);
+  (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
+  far; AU/NZ nets use EasyPal. Include BSR in EasyPal mode once P9 ships.
 - **DRM-P4b.** DONE — TX UI: "DRM (EasyPal)" target in the TX mode list (TargetGeometry refactor of the editor,
   SSTV unchanged), DRM block (profile, size, file size, live airtime estimate while editing, on-air callsign), Options ›
   Station profiles (Robust/Normal/Fast defaults) and VOX, sent-frames/resend, help en/de. Live check: QSSTV harness
@@ -373,6 +375,9 @@ real QSSTV/EasyPal WAVs for P8.
   median (Release), so about 125 ms per estimate with the encode.
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
   and the lost-frame attribution (fixture README).
+- **DRM-P6b.** OPEN — RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
+  exact port + goldens: decode the last frame (QSSTV always loses it), fix the knife-edge sync drop (B0_q4_high_long),
+  RS1 signed-char size bug, E0_q64_low_short first-frame bit errors. Each with proof + UI toggle; TX stays QSSTV-identical.
 - **DRM-P7a / P7b.** OPEN — RX source + Application integration / RX UI (own plan review).
 - **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
 - **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).

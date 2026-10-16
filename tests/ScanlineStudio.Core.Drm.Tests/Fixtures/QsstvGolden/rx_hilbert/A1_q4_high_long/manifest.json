@@ -1,0 +1,11 @@
+{
+  "case": "A1_q4_high_long",
+  "stripes": 248,
+  "stripe_size": 1024,
+  "head_stripes": 8,
+  "tail_zero_blocks": 8,
+  "delay": 76,
+  "full_interleaved_sha256": "51f36099b6cd6d2432ce95982d5a223f0459cd6addde89e8f7f41a72dc7eb6b6",
+  "hilbert_re_sha256": "065a7f6988435f35ab7ee9da5e83e392b965e08e7265165f7c56c48987722c7f",
+  "hilbert_head_sha256": "8793f36cc329c5227692cd9e29409a94dfc797eb73babd496855f96809073acd"
+}
