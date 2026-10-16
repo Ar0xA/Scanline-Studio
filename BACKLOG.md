@@ -339,7 +339,9 @@ real QSSTV/EasyPal WAVs for P8.
   reproduced), MOT object/schedule (incl. FIX branch), data groups, packets, FAC with callsign and QSSTV's in-place
   scrambler leak in bits 31-39, EOT tail. Byte/bit-exact on all 79 goldens. Tiny RS payloads zero-padded (QSSTV is UB;
   harness-RX gate moves to P4a). Auditor: 1 code-review round, go.
-- **DRM-P3.** OPEN — TX channel side, golden-checked.
+- **DRM-P3.** DONE — TX channel side: dispersal, K=7 conv code + puncturing, bit/symbol interleavers, QAM,
+  per-symbol FIFO cell mapping, OFDM (IFFT, guard, −5650 Hz rotation), x86 int16 truncation. Sample-exact against
+  QSSTV on all compared cases (8.7M samples, 0 off by one). Auditor: 1 code-review round, EQUIVALENT, go.
 - **DRM-P4a / P4b.** OPEN — TX core + OpenJPEG binding / TX UI (own plan review).
 - **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
   and the lost-frame attribution (fixture README).
