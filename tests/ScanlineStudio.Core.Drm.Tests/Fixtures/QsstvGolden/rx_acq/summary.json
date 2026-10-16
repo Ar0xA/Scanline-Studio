@@ -1,0 +1,239 @@
+{
+ "A0_q16_high_long": {
+  "handoff": null
+ },
+ "A0_q16_high_short": {
+  "handoff": null
+ },
+ "A0_q16_low_long": {
+  "handoff": null
+ },
+ "A0_q16_low_short": {
+  "handoff": null
+ },
+ "A0_q4_high_long": {
+  "handoff": 7
+ },
+ "A0_q4_high_short": {
+  "handoff": null
+ },
+ "A0_q4_low_long": {
+  "handoff": null
+ },
+ "A0_q4_low_short": {
+  "handoff": null
+ },
+ "A0_q64_high_long": {
+  "handoff": null
+ },
+ "A0_q64_high_short": {
+  "handoff": null
+ },
+ "A0_q64_low_long": {
+  "handoff": null
+ },
+ "A0_q64_low_short": {
+  "handoff": null
+ },
+ "A1_q16_high_long": {
+  "handoff": null
+ },
+ "A1_q16_high_short": {
+  "handoff": null
+ },
+ "A1_q16_low_long": {
+  "handoff": null
+ },
+ "A1_q16_low_short": {
+  "handoff": null
+ },
+ "A1_q4_high_long": {
+  "handoff": 7
+ },
+ "A1_q4_high_short": {
+  "handoff": null
+ },
+ "A1_q4_low_long": {
+  "handoff": null
+ },
+ "A1_q4_low_short": {
+  "handoff": null
+ },
+ "A1_q64_high_long": {
+  "handoff": null
+ },
+ "A1_q64_high_short": {
+  "handoff": null
+ },
+ "A1_q64_low_long": {
+  "handoff": null
+ },
+ "A1_q64_low_short": {
+  "handoff": null
+ },
+ "B0_q16_high_long": {
+  "handoff": null
+ },
+ "B0_q16_high_short": {
+  "handoff": null
+ },
+ "B0_q16_low_long": {
+  "handoff": null
+ },
+ "B0_q16_low_short": {
+  "handoff": null
+ },
+ "B0_q4_high_long": {
+  "handoff": 6
+ },
+ "B0_q4_high_short": {
+  "handoff": null
+ },
+ "B0_q4_low_long": {
+  "handoff": null
+ },
+ "B0_q4_low_short": {
+  "handoff": null
+ },
+ "B0_q64_high_long": {
+  "handoff": null
+ },
+ "B0_q64_high_short": {
+  "handoff": null
+ },
+ "B0_q64_low_long": {
+  "handoff": null
+ },
+ "B0_q64_low_short": {
+  "handoff": null
+ },
+ "B1_q16_high_long": {
+  "handoff": 6
+ },
+ "B1_q16_high_long_jp2": {
+  "handoff": null
+ },
+ "B1_q16_high_short": {
+  "handoff": null
+ },
+ "B1_q16_low_long": {
+  "handoff": null
+ },
+ "B1_q16_low_short": {
+  "handoff": null
+ },
+ "B1_q4_high_long": {
+  "handoff": null
+ },
+ "B1_q4_high_long_bsr": {
+  "handoff": null
+ },
+ "B1_q4_high_long_rs1": {
+  "handoff": null
+ },
+ "B1_q4_high_long_rs1_jp2": {
+  "handoff": null
+ },
+ "B1_q4_high_long_rs2": {
+  "handoff": null
+ },
+ "B1_q4_high_long_rs3": {
+  "handoff": null
+ },
+ "B1_q4_high_long_rs4": {
+  "handoff": null
+ },
+ "B1_q4_high_short": {
+  "handoff": null
+ },
+ "B1_q4_low_long": {
+  "handoff": null
+ },
+ "B1_q4_low_short": {
+  "handoff": null
+ },
+ "B1_q64_high_long": {
+  "handoff": null
+ },
+ "B1_q64_high_short": {
+  "handoff": null
+ },
+ "B1_q64_low_long": {
+  "handoff": null
+ },
+ "B1_q64_low_short": {
+  "handoff": null
+ },
+ "E0_q16_high_long": {
+  "handoff": null
+ },
+ "E0_q16_high_short": {
+  "handoff": null
+ },
+ "E0_q16_low_long": {
+  "handoff": null
+ },
+ "E0_q16_low_short": {
+  "handoff": null
+ },
+ "E0_q4_high_long": {
+  "handoff": 6
+ },
+ "E0_q4_high_short": {
+  "handoff": null
+ },
+ "E0_q4_low_long": {
+  "handoff": null
+ },
+ "E0_q4_low_short": {
+  "handoff": null
+ },
+ "E0_q64_high_long": {
+  "handoff": null
+ },
+ "E0_q64_high_short": {
+  "handoff": null
+ },
+ "E0_q64_low_long": {
+  "handoff": null
+ },
+ "E0_q64_low_short": {
+  "handoff": null
+ },
+ "E1_q16_high_long": {
+  "handoff": null
+ },
+ "E1_q16_high_short": {
+  "handoff": null
+ },
+ "E1_q16_low_long": {
+  "handoff": null
+ },
+ "E1_q16_low_short": {
+  "handoff": null
+ },
+ "E1_q4_high_long": {
+  "handoff": 6
+ },
+ "E1_q4_high_short": {
+  "handoff": null
+ },
+ "E1_q4_low_long": {
+  "handoff": null
+ },
+ "E1_q4_low_short": {
+  "handoff": null
+ },
+ "E1_q64_high_long": {
+  "handoff": null
+ },
+ "E1_q64_high_short": {
+  "handoff": null
+ },
+ "E1_q64_low_long": {
+  "handoff": null
+ },
+ "E1_q64_low_short": {
+  "handoff": null
+ }
+}

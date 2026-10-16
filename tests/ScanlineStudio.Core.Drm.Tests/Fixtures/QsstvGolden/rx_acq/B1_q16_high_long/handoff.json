@@ -1,0 +1,11 @@
+{
+ "K_modulo": 256,
+ "Ts": 320,
+ "dtype": "f32",
+ "file": "handoff.f32.gz",
+ "rs_complex": 1312,
+ "sha256": "e9e4f732df52bb817584a9c7a08a5133da4ed500bdcd867ba1e62c8ef03e68bc",
+ "stripe": 6,
+ "symbol_complex": 1536,
+ "symbols_per_2D_window": 6
+}

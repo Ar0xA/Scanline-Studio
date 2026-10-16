@@ -213,6 +213,8 @@ are printed to 9 significant digits.
 cd ~/tools/qsstv-drm-harness
 make            # needs deps/ (see Makefile); builds qsstv-drm-harness
 python3 -I make_fixtures.py   # rewrites this directory, including this README and cases.json
+python3 -I make_rx_hilbert.py  # then rx_hilbert/ (P5a); make_fixtures.py deletes it
+python3 -I make_rx_acq.py      # then rx_acq/ (P5b): RX acquisition state, see rx_acq/README.md
 ```
 
 ## Cases
