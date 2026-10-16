@@ -414,8 +414,6 @@ User data, safety and error paths:
   Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
 - **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
   transaction (`LogbookPaneViewModel.cs:940`).
-- **CQ-11-F2.** Each Options open leaks one `OptionsWindowViewModel` until exit (transient `IDisposable`
-  from the root provider, `Program.cs:998`).
 - **CQ-05-F1. On-air risk.** Header TX volume is never reloaded after an Options edit
   (`RadioStatusViewModel.cs:876,1211`), but the live TX gain changes at once (`SstvSessionService.cs:3202`).
   The first touch of the header slider then jumps the gain mid-TX. Fix: re-read the value in the Options
@@ -526,3 +524,14 @@ Listed with evidence in the area reports. Pick them up only when already working
   request) are remembered in the `UpdateCheck` section, excluded from presets, and can be changed in every manual
   check result. Network-supplied release URLs are validated before opening. Verified live with a 0.9.0-beta build
   against real GitHub. Auditor plan review + code review: go.
+
+## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
+
+- **CQ-11-F2.** DONE — `OptionsWindowViewModel` is created by a registered `Func<>` factory
+  (`ActivatorUtilities`), outside the root provider's disposal tracking; the dialog's `Closed` still disposes it, and
+  MainWindow now also disposes it when opening the window fails. `OptionsViewModelLifetimeTests`: per open command,
+  the view-model is absent from the root provider's disposables list (read by reflection on MS.DI internals; a probe
+  test proves the reader sees a tracked transient), fresh-instance check, and a graph walk pinning "no transient
+  `IDisposable` among its dependencies"; each fails under its mutation. A GC-based test was dropped after review: queued
+  Avalonia dispatcher posts also hold the view-model, and Host.Tests cannot drain them reliably (xunit 2, no headless
+  dispatcher owner). Auditor plan review + code review: go.

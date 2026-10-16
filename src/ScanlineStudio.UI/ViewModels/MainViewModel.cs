@@ -281,11 +281,16 @@ public partial class MainViewModel : ViewModelBase
     /// simpler than registering it in the container for a single caller.</summary>
     public event Action<AboutWindowViewModel>? AboutRequested;
 
+    /// <summary>Creates the Options view-model through its registered factory, outside the root
+    /// provider's disposal tracking; the dialog's own <c>Closed</c> handler disposes it.</summary>
+    private OptionsWindowViewModel CreateOptionsViewModel() =>
+        _services.GetRequiredService<Func<OptionsWindowViewModel>>()();
+
     [RelayCommand]
     private void OpenOptions()
     {
         Log.OpenOptionsInvoked(_logger);
-        OptionsRequested?.Invoke(_services.GetRequiredService<OptionsWindowViewModel>());
+        OptionsRequested?.Invoke(CreateOptionsViewModel());
     }
 
     /// <summary>Configurations &gt; Macros (stub survey Tier 3) -- same
@@ -318,9 +323,15 @@ public partial class MainViewModel : ViewModelBase
     private void OpenOptionsToTxTab()
     {
         Log.OpenOptionsInvoked(_logger);
-        var optionsViewModel = _services.GetRequiredService<OptionsWindowViewModel>();
+        // No subscriber means no window, so nothing would ever dispose the view-model.
+        if (OptionsRequested is not { } handler)
+        {
+            return;
+        }
+
+        var optionsViewModel = CreateOptionsViewModel();
         optionsViewModel.SelectedTabIndex = OptionsWindowViewModel.TxTabIndex;
-        OptionsRequested?.Invoke(optionsViewModel);
+        handler(optionsViewModel);
     }
 
     /// <summary>The radio-connection give-up popup's own "Config" button jump target (user request)
@@ -334,9 +345,15 @@ public partial class MainViewModel : ViewModelBase
     private void OpenOptionsToRadioTab()
     {
         Log.OpenOptionsInvoked(_logger);
-        var optionsViewModel = _services.GetRequiredService<OptionsWindowViewModel>();
+        // No subscriber means no window, so nothing would ever dispose the view-model.
+        if (OptionsRequested is not { } handler)
+        {
+            return;
+        }
+
+        var optionsViewModel = CreateOptionsViewModel();
         optionsViewModel.SelectedTabIndex = OptionsWindowViewModel.RadioTabIndex;
-        OptionsRequested?.Invoke(optionsViewModel);
+        handler(optionsViewModel);
     }
 
     [RelayCommand]

@@ -756,7 +756,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         _ = LoadStorageLocationsSafeAsync();
 
         // Live-locale-switch review (2026-09-20): same leak class as ConnectionEvents just above --
-        // this VM is AddTransient, a fresh instance per Options open, so a permanent subscription to
+        // this VM is a fresh instance per Options open (Program.cs's factory), so a permanent subscription to
         // the long-lived ILocalizationService singleton needs the same Dispose()-paired unsubscribe.
         // Every stored GetString-backed member here is a transient status/error message tied to one
         // in-flight action (Test Connection/PTT, Hamlib probe, a directory save) -- self-heals on
@@ -771,8 +771,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     private readonly IDisposable _connectionEventsSubscription;
 
-    /// <summary>Code-review finding: this dialog's own view-model is <c>AddTransient</c> (a fresh
-    /// instance per Options open, <c>MainViewModel</c>'s own <c>GetRequiredService</c> call site) --
+    /// <summary>Code-review finding: this dialog's own view-model is a fresh instance per Options
+    /// open (created by Program.cs's registered factory, outside the container's tracking) --
     /// without unsubscribing, every dialog open added a permanent subscriber to the singleton
     /// <see cref="IRadioSessionService.ConnectionEvents"/> stream, rooting the whole dead
     /// view-model graph for the app's remaining lifetime. Called from <c>OptionsWindowView</c>'s own

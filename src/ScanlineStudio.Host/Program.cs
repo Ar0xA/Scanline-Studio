@@ -996,7 +996,11 @@ internal static partial class Program
         // Options dialog -- transient so each open/close cycle gets a fresh OptionsSettingsService
         // (re-reads settings.json from disk each time, no stale in-memory copy carried over).
         services.AddTransient<OptionsSettingsService>();
-        services.AddTransient<OptionsWindowViewModel>();
+        // A factory, not AddTransient: the root provider keeps every transient IDisposable it creates
+        // until exit, so each Options open leaked one view-model. Holds only while no transient
+        // IDisposable sits in this view-model's dependency graph (pinned by OptionsViewModelLifetimeTests).
+        services.AddSingleton<Func<OptionsWindowViewModel>>(sp =>
+            () => ActivatorUtilities.CreateInstance<OptionsWindowViewModel>(sp));
 
         // Macros reference/preview dialog (stub survey Tier 3) -- transient, same reasoning: a
         // fresh instance re-reads OperatorSettings (Name/Grid/Callsign) each open.

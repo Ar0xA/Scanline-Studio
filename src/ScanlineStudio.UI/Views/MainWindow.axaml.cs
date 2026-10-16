@@ -658,6 +658,8 @@ public partial class MainWindow : Window
                     }
                     catch (Exception ex)
                     {
+                        // Closed never fires on a failed open, so its Dispose() never runs either.
+                        optionsViewModel.Dispose();
                         if (logger is not null)
                         {
                             Log.OptionsWindowFailed(logger, ex);

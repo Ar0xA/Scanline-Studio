@@ -62,7 +62,9 @@ public sealed class SstvCompositionRootTests
         await using var provider = services.BuildServiceProvider();
 
         var mainViewModel = provider.GetRequiredService<MainViewModel>();
-        var optionsViewModel = provider.GetRequiredService<OptionsWindowViewModel>();
+        // Calls the factory: ValidateOnBuild cannot see into its lambda, so this is the only check
+        // that every OptionsWindowViewModel dependency is registered.
+        using var optionsViewModel = provider.GetRequiredService<Func<OptionsWindowViewModel>>()();
         _ = provider.GetRequiredService<ReceiveHistoryRecorder>();
         _ = provider.GetRequiredService<ISettingsStore>();
 
@@ -122,7 +124,7 @@ public sealed class SstvCompositionRootTests
     /// real hardware/disk state on this developer/CI machine) -- extracted here since the two tests
     /// above need it identically and don't otherwise care about a specific settings VALUE the way
     /// e.g. <see cref="MainViewModel_LoadOperatorSettingsAsync_ReflectsLaterSettingsChange"/> does.</summary>
-    private static ServiceCollection BuildServicesWithFakes()
+    internal static ServiceCollection BuildServicesWithFakes()
     {
         var services = new ServiceCollection();
         services.AddLogging();
