@@ -162,7 +162,7 @@ public sealed class SstvSessionServicePttSafetyTests
             playbackStopWaitBudget: TimeSpan.FromSeconds(30));
 
         // Duration is irrelevant -- StartPlaybackAsync throws before any tone is ever generated.
-        var tune = service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        var tune = service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
         await WaitForAsync(() => radio.PttCalls.Count == 2, TimeSpan.FromSeconds(5));
 
         Assert.Equal(PttOnThenOff, radio.PttCalls);
@@ -249,7 +249,7 @@ public sealed class SstvSessionServicePttSafetyTests
             inFlightKeyedTransmitWait: TimeSpan.FromSeconds(30));
 
         using var cts = new CancellationTokenSource();
-        var tune = service.TuneAsync(1750, TimeSpan.FromSeconds(30), ct: cts.Token);
+        var tune = service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromSeconds(30), ct: cts.Token);
         await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
 
         cts.Cancel(); // exactly what TxControlsPaneViewModel.Dispose() does -- no await
@@ -281,7 +281,7 @@ public sealed class SstvSessionServicePttSafetyTests
             inFlightKeyedTransmitWait: TimeSpan.FromMilliseconds(300));
 
         using var cts = new CancellationTokenSource();
-        var tune = service.TuneAsync(1750, TimeSpan.FromSeconds(30), ct: cts.Token);
+        var tune = service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromSeconds(30), ct: cts.Token);
         await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
 
         var stopwatch = Stopwatch.StartNew();
@@ -362,7 +362,7 @@ public sealed class SstvSessionServicePttSafetyTests
         };
         var (service, _, radio, _) = CreateService(deviceEnumerator: deviceEnumerator);
 
-        var tune = service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        var tune = service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
 
         // The tune is parked inside ResolveDeviceAsync's RefreshAsync call -- before it has published
         // _keyedTransmitCompletion or keyed PTT at all.
@@ -478,7 +478,7 @@ public sealed class SstvSessionServicePttSafetyTests
 #pragma warning disable xUnit1031
                 // The NEWER call: overlaps the OLDER one (which is still executing this very un-key
                 // command) -- now rejected outright by the single-flight guard.
-                var ex = Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1))).GetAwaiter().GetResult();
+                var ex = Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1))).GetAwaiter().GetResult();
                 Assert.Equal("A transmit or tune is already in progress.", ex.Message);
 
                 service.DisposeAsync().AsTask().GetAwaiter().GetResult();
@@ -487,7 +487,7 @@ public sealed class SstvSessionServicePttSafetyTests
         };
 
         stage = 1;
-        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+        await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1)));
 
         // THE property: the newer call never keyed or un-keyed anything (rejected before touching PTT
         // at all) -- 1 key (older) + 2 un-key attempts (DisposeAsync's backstop, fired while reentrant
@@ -522,7 +522,7 @@ public sealed class SstvSessionServicePttSafetyTests
             }
         };
 
-        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
 
         // THE property: only ONE key + ONE un-key -- the rejected second call never touched PTT.
         Assert.Equal([true, false], radio.PttCalls);
@@ -642,7 +642,7 @@ public sealed class SstvSessionServicePttSafetyTests
         };
         var (service, _, radio, logger) = CreateService(cleanupTimeout: TimeSpan.FromMilliseconds(50), settingsStore: settingsStore);
 
-        await Assert.ThrowsAsync<TimeoutException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+        await Assert.ThrowsAsync<TimeoutException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1)));
 
         // THE property: PTT was never KEYED (the hang is entirely pre-key, so no `true` call) -- the
         // single `false` is the cleanup's own deliberately-unconditional un-key attempt (this class's
@@ -653,7 +653,7 @@ public sealed class SstvSessionServicePttSafetyTests
         // _transmitInFlight must have been released too -- a subsequent, non-hanging tune must
         // succeed cleanly rather than being rejected as "already in progress."
         settingsStore.Gate = null;
-        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
         Assert.Equal([false, true, false], radio.PttCalls);
     }
 
@@ -766,14 +766,14 @@ public sealed class SstvSessionServicePttSafetyTests
         var (service, _, _, _) = CreateService(settingsStore: settingsStore);
 
         // Read-side clamp.
-        Assert.Equal(100, await service.GetTxVolumePercentAsync());
+        Assert.Equal(100, await service.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
 
         // Write-side clamp -- an out-of-range value passed to the setter must not reach disk
         // unclamped either, otherwise every future read would keep needing the read-side clamp to
         // mask what's actually stored. Inspects the STORED value directly via settingsStore, not
         // through GetTxVolumePercentAsync -- reading it back through the getter would pass even with
         // the write-side clamp mutated away, since the read-side clamp masks an unclamped write too.
-        await service.SetTxVolumePercentAsync(-20);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, -20);
         var stored = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
         Assert.Equal(0, stored?.TxVolumePercent);
     }
@@ -887,16 +887,16 @@ public sealed class SstvSessionServicePttSafetyTests
         // directly, WITH PTT KEYED. Every rejected call here must never touch PTT at all.
         var (service, _, radio, _) = CreateService();
 
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(double.NaN, TimeSpan.FromSeconds(1)));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(-100, TimeSpan.FromSeconds(1)));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(30_000, TimeSpan.FromSeconds(1))); // >= Nyquist at the hardcoded 48kHz
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(1750, TimeSpan.Zero));
-        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(1750, TimeSpan.FromMinutes(10)));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(TxLevelFamily.Sstv, double.NaN, TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(TxLevelFamily.Sstv, -100, TimeSpan.FromSeconds(1)));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(TxLevelFamily.Sstv, 30_000, TimeSpan.FromSeconds(1))); // >= Nyquist at the hardcoded 48kHz
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.Zero));
+        await Assert.ThrowsAsync<ArgumentOutOfRangeException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMinutes(10)));
 
         Assert.Empty(radio.PttCalls);
 
         // A valid call still works normally.
-        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
         Assert.Equal([true, false], radio.PttCalls);
     }
 
@@ -1079,7 +1079,7 @@ public sealed class SstvSessionServicePttSafetyTests
         logger.ThrowOnMessageContaining = "Playback cancelled";
 
         using var cts = new CancellationTokenSource();
-        var tune = service.TuneAsync(1750, TimeSpan.FromSeconds(30), ct: cts.Token);
+        var tune = service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromSeconds(30), ct: cts.Token);
         await WaitForAsync(() => radio.PttCalls.Count == 1, TimeSpan.FromSeconds(5));
 
         cts.Cancel();

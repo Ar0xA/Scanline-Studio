@@ -354,8 +354,10 @@ real QSSTV/EasyPal WAVs for P8.
   Station profiles (Robust/Normal/Fast defaults) and VOX, sent-frames/resend, help en/de. Live check: QSSTV harness
   RX decoded a UI-sent JP2; PTT via rigctld dummy rig; estimate 80.4 s = airtime. Auditor: 2 plan-review + 2
   code-review rounds, go. The interim DRM level offset is replaced by DRM-PWR.
-- **DRM-PWR.** OPEN — separate Pwr per mode type (SSTV/DRM), user decision; plan Addendum A in the P4b plan
-  (auditor 2 rounds + principal review, ready to build).
+- **DRM-PWR.** DONE — separate Pwr per mode type (SSTV/DRM), user decision: header/TX-pane slider edits the selected
+  type's level ("Pwr · SSTV"/"Pwr · DRM"), Options shows both, Tune uses the selected type, each transmission keeps
+  its own type's level, presets carry the DRM level forward, DRM starts at the SSTV value. Replaced the interim DRM
+  level offset. Auditor: 2 plan-review rounds + principal review, 1 code-review round, go.
 - **DRM-SRC.** OPEN — the "Source (max 1024)" DRM size option, cut from P4b: its geometry, re-load and ratio rules
   need their own design (QSSTV sends the source size capped at 1024).
 - **DRM-QGRID.** OPEN — a DRM slot on the TX quick-mode grid, cut from P4b: the grid types are shared with RX

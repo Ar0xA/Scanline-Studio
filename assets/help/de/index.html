@@ -200,7 +200,7 @@
           <li><strong>Frequenz und Betriebsart</strong> zeigen den aktuellen Zustand des verbundenen Transceivers. Bei verbundener CAT-Steuerung können Sie eine Frequenz oder eine unterstützte Betriebsart anfordern.</li>
           <li><strong>Favoriten</strong> rufen eine gespeicherte Kombination aus Frequenz, Betriebsart und Filterbandbreite in einem Schritt auf. Verwaltet werden sie über <strong>Aktuelle speichern</strong> oder <strong>Liste bearbeiten…</strong>. Wie sich der Bandbreitenanteil verhält, steht unter <a href="#radio-cat">Transceiver und CAT-Steuerung</a>.</li>
           <li><strong>RX-Pegel</strong> zeigt den aktuellen Aufnahmepegel. Eine dauerhaft niedrige Anzeige ebenso vermeiden wie rotes Clipping (Übersteuerung).</li>
-          <li><strong>Pwr</strong> ist die TX-Wiedergabeverstärkung der Anwendung. Sie ist weder die Gerätelautstärke des Betriebssystems noch die HF-Leistungseinstellung des Transceivers.</li>
+          <li><strong>Pwr</strong> ist die TX-Wiedergabeverstärkung der Anwendung. Sie ist weder die Gerätelautstärke des Betriebssystems noch die HF-Leistungseinstellung des Transceivers. Für SSTV und DRM gibt es je einen eigenen Pegel: Die Beschriftung (<strong>Pwr · SSTV</strong> oder <strong>Pwr · DRM</strong>) folgt der auf der Registerkarte Senden gewählten Betriebsart und zeigt, welcher Pegel eingestellt wird.</li>
           <li><strong>Empfang</strong> startet oder pausiert die SSTV-Suche. Während einer Aussendung durch Scanline Studio pausiert die Aufnahme automatisch und wird danach fortgesetzt. Für dieses gesamte Zeitfenster (eine echte Aussendung oder ein Abstimmton) zeigt die Beschriftung <strong>Senden</strong> und wechselt nach dem Ende zurück zu <strong>Empfang</strong>. Ansonsten wechselt die Beschriftung zu <strong>RX stumm</strong>, sobald die Aufnahme gestoppt ist. Während ein Bild decodiert wird, blinkt sie bernsteinfarben und zeigt <strong>Decodierung</strong>. Das Blinken lässt sich in den <a href="#appearance-options">Darstellungsoptionen</a> abschalten. Die zugehörige Anzeige in der Statusleiste verhält sich genauso, sodass Sende- und Decodierzustand von jeder Registerkarte aus sichtbar sind, nicht nur unter Empfang.</li>
           <li><strong>TX stoppen</strong> neben <strong>Empfang</strong> bricht eine laufende Aussendung sofort ab. Die Schaltfläche ist unabhängig von der aktiven Registerkarte immer sichtbar und daher erreichbar, ohne zuerst zur Registerkarte Senden zu wechseln.</li>
         </ul>
@@ -379,9 +379,18 @@
           <dt>Fehlerkorrektur</dt><dd>Zusätzliche Reed-Solomon-Daten (RS 1 bis RS 4) erlauben dem Empfänger, die Datei auch bei verlorenen Segmenten wiederherzustellen. Höhere Werte senden mehr Daten.</dd>
         </dl>
 
-        <h3>Rufzeichen, VOX-Ton und Pegel</h3>
-        <p>DRM sendet das Rufzeichen aus den <a href="#station-options">Stationsoptionen</a> in einer kurzen Kennung mit höchstens 9 einfachen lateinischen Zeichen. Die Zeile <strong>Rufzeichen</strong> zeigt, was tatsächlich gesendet wird; sie wird rot und zeigt einen Hinweis, wenn das von der Eingabe abweicht. Der <strong>VOX-Ton</strong> (ein 1 s langer Ton vor dem Signal zum Tasten per VOX) und der <strong>DRM-Pegel</strong> werden in den <a href="#station-options">Stationsoptionen</a> eingestellt.</p>
-        <div class="safety"><strong>Ansteuerpegel.</strong> DRM hat einen hohen <a class="term" href="#glossary-papr">PAPR</a>. Pwr so einstellen, dass der Transceiver wenig oder keinen <a class="term" href="#glossary-alc">ALC</a>-Eingriff zeigt; ein übersteuertes DRM-Signal ist für jeden Empfänger unbrauchbar. Mit dem DRM-Pegel lässt sich DRM absenken, ohne Pwr für SSTV zu verändern.</div>
+        <h3>Rufzeichen und VOX-Ton</h3>
+        <p>DRM sendet das Rufzeichen aus den <a href="#station-options">Stationsoptionen</a> in einer kurzen Kennung mit höchstens 9 einfachen lateinischen Zeichen. Die Zeile <strong>Rufzeichen</strong> zeigt, was tatsächlich gesendet wird; sie wird rot und zeigt einen Hinweis, wenn das von der Eingabe abweicht. Der <strong>VOX-Ton</strong> (ein 1 s langer Ton vor dem Signal zum Tasten per VOX) wird in den <a href="#station-options">Stationsoptionen</a> eingestellt.</p>
+
+        <h3>DRM-Pegel einstellen</h3>
+        <p>SSTV ist ein Dauerton, DRM dagegen hat einen hohen <a class="term" href="#glossary-papr">PAPR</a>: Die Spitzen liegen etwa 12-14 dB über dem Mittelwert. Deshalb hat DRM in Scanline Studio einen eigenen Pwr-Pegel. Bei gewähltem DRM zeigen der Pwr-Regler im Kopfbereich und auf der Registerkarte Senden <strong>Pwr · DRM</strong> und stellen nur den DRM-Pegel ein; der SSTV-Pegel bleibt unverändert. Die Registerkarte „Transceiver / CAT“ in den Optionen zeigt beide Pegel.</p>
+        <ol class="steps">
+          <li>Auf der Registerkarte Senden DRM wählen, möglichst an einer Dummy-Load.</li>
+          <li><strong>Abstimmen</strong> auf der Registerkarte Senden oder im Tongenerator wählen. Bei gewähltem DRM spielt der Ton mit dem DRM-Pegel.</li>
+          <li>Pwr erhöhen, bis die <a class="term" href="#glossary-alc">ALC</a> des Transceivers gerade anspricht, dann etwas zurücknehmen. Der Ton liegt etwas über den echten DRM-Spitzen, das ist also eine sichere Obergrenze.</li>
+          <li>Bei DRM sind im Mittel nur etwa 20-30 % der Nennleistung zu erwarten. Das ist normal; die Spitzen erreichen trotzdem die volle Leistung.</li>
+        </ol>
+        <div class="safety"><strong>Ansteuerpegel.</strong> Ein übersteuertes DRM-Signal ist für jeden Empfänger unbrauchbar. Den ALC-Eingriff bei DRM gering halten, auch wenn die Leistungsanzeige schwach wirkt.</div>
         <div class="note"><strong>Was DRM nicht nutzt.</strong> Die automatische Modusfolge wählt nur SSTV-Modi und wechselt daher nie von DRM weg. Loopback-Selbsttest, VIS-Header, Vorton und Tonbereich gelten nur für SSTV. TX stoppen, SWR-Abschaltung, Gesendete Bilder und Erneut senden funktionieren wie bei SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
@@ -638,6 +647,7 @@
           <li><strong>Pwr</strong> langsam erhöhen und dabei die HF-Leistungs- und <a class="term" href="#glossary-alc">ALC</a>-Anzeigen des Transceivers beobachten.</li>
           <li>Aufhören, bevor die ALC übermäßig ausschlägt. <strong>Abstimmen beenden</strong> wählen oder die Zeitbegrenzung abwarten.</li>
         </ol>
+        <p>Die Registerkarte „Transceiver / CAT“ hat zwei Pwr-Regler, <strong>Leistung · SSTV</strong> und <strong>Leistung · DRM</strong>; ihr Abstimmen nutzt immer den SSTV-Pegel. Zum Abstimmen für DRM auf der Registerkarte Senden DRM wählen und dort abstimmen; siehe <a href="#transmit-drm">DRM-Pegel einstellen</a>.</p>
 
         <p><strong>Senden bei zu hohem <a class="term" href="#glossary-swr">SWR</a> abbrechen</strong> bricht eine laufende Aussendung ab, nachdem der verbundene Transceiver bei zwei aufeinanderfolgenden Abfragen einen Wert über der gewählten Schwelle gemeldet hat. Die Option kann nicht funktionieren, wenn Transceiver oder Backend kein SWR melden.</p>
         <div class="safety"><strong>Kein primärer Schutz.</strong> Software-Abfragen und CAT können ausfallen oder verzögert reagieren. Die SWR-Abschaltung ist eine zusätzliche Absicherung, kein Ersatz für den Hardware-Schutz des Transceivers, eine geeignete Antennenanlage oder die Überwachung durch den Funkamateur.</div>
@@ -793,7 +803,6 @@
           <dt>Standard-RST</dt><dd>Füllt die Felder „Gesendet“ und „Empfangen“ vor, wenn ein neues QSO geloggt wird. Standardwert ist <strong>595</strong>. SSTV-Stationen tauschen Lesbarkeit/Stärke/<em>Video</em> (R-S-V) aus, nicht den sonst im Amateurfunk üblichen Rapport Lesbarkeit/Stärke/<em>Ton</em> (R-S-T), daher wäre 599 der falsche Rapport zum Vorbelegen. Das Feld leeren, wenn lieber nichts vorbelegt und der Rapport jedes Mal von Hand eingegeben werden soll.</dd>
           <dt>DRM-Sendeprofile</dt><dd>Die drei Profile, die die Registerkarte Senden für <a href="#transmit-drm">DRM (EasyPal)</a> anbietet: je ein Name und die sechs Übertragungsfelder. Ein leerer Name verwendet den Standardnamen (Robust, Normal, Schnell). Das eigene Profil „Benutzerdefiniert“ der Registerkarte Senden wird getrennt gespeichert.</dd>
           <dt>VOX-Ton vor DRM senden</dt><dd>Sendet vor jeder DRM-Aussendung einen 1 s langen 1700-Hz-Ton, damit ein per <a class="term" href="#glossary-vox">VOX</a> getasteter Sender schon an ist, wenn das Signal beginnt. Standardmäßig aus.</dd>
-          <dt>DRM-Pegel (dB)</dt><dd>Senkt DRM gegenüber SSTV ab, von 0 bis −20 dB, ohne Pwr zu verändern. Pwr wirkt zusätzlich. Damit bleibt die <a class="term" href="#glossary-alc">ALC</a> bei DRM ruhig.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>

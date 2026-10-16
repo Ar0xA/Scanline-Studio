@@ -52,7 +52,8 @@
   "RadioStatus.SetFrequency": "Setzen",
   "RadioStatus.PresetsLabel": "VOREINSTELLUNGEN",
   "RadioStatus.RxLevelLabel": "RX-Pegel",
-  "RadioStatus.TxVolumeLabel": "Pwr",
+  "RadioStatus.TxVolumeLabel.Sstv": "Pwr · SSTV",
+  "RadioStatus.TxVolumeLabel.Drm": "Pwr · DRM",
   "RadioStatus.Tune": "Abstimmen",
   "RadioStatus.Tune.Stop": "Abstimmen beenden",
   "RadioStatus.Tune.Help": "Tastet PTT und sendet einen konstanten Testton mit der angegebenen Frequenz/Dauer, damit die AFC bzw. Abstimmanzeige der Gegenstation einrasten kann -- sendet kein Bild.",
@@ -431,7 +432,6 @@
   "Panes.TxControls.Telemetry.ToneMapFormat": "{0:0}–{1:0} Hz",
   "Panes.TxControls.Telemetry.TxClock": "TX-Takt",
   "Panes.TxControls.Telemetry.TxClockIdle": "—",
-  "Panes.TxControls.DriveLabel": "Pwr",
   "Panes.TxControls.Telemetry.Power": "PWR",
   "Panes.TxControls.Telemetry.Alc": "ALC",
   "Panes.TxControls.Telemetry.Swr": "SWR",
@@ -850,7 +850,9 @@
   "Options.Radio.OmniRig.TestConnection": "Verbindung testen",
   "Options.Radio.OmniRig.AlreadyConnected": "Zuerst die aktive Transceiver-Verbindung trennen -- ein Test kann nicht parallel dazu laufen.",
   "Options.Radio.PwrHeader": "Sendeleistung",
-  "Options.Radio.PwrLabel": "Leistung",
+  "Options.Radio.PwrLabel.Sstv": "Leistung · SSTV",
+  "Options.Radio.PwrLabel.Drm": "Leistung · DRM",
+  "Options.Radio.PwrLabel.Drm.Help": "DRM hat Spitzen etwa 12-14 dB über dem Mittelwert und behält deshalb einen eigenen Pegel. Erhöhen, bis die ALC bei Spitzen gerade anspricht, dann etwas zurücknehmen. Tune hier nutzt immer den SSTV-Pegel.",
   "Options.Radio.Tune": "Abstimmen",
   "Options.Radio.Tune.Stop": "Abstimmen beenden",
   "Options.Radio.Tune.Help": "Tastet PTT und sendet bis zu 30 Sekunden lang einen konstanten Abstimmton -- währenddessen den Leistungsregler ziehen und das Leistungsinstrument des Transceivers beobachten, bis es die gewünschte Ausgangsleistung anzeigt, dann auf \"Abstimmen beenden\" klicken (oder die 30-s-Sicherheitsabschaltung abwarten).",
@@ -1175,7 +1177,5 @@
   "Options.Drm.Header.Help": "Die drei Profile, die der Senden-Reiter bei gewähltem DRM (EasyPal) anbietet. Robust übersteht schlechte Bedingungen; Schnell sendet auf einem sauberen Kanal am schnellsten.",
   "Options.Drm.ProfileHeadingFormat": "Profil {0}",
   "Options.Drm.ProfileName": "Name",
-  "Options.Drm.VoxTone": "VOX-Ton vor DRM senden",
-  "Options.Drm.LevelOffset": "DRM-Pegel (dB)",
-  "Options.Drm.LevelOffset.Help": "Senkt das DRM-Signal gegenüber SSTV, von 0 bis −20 dB. Pwr wirkt zusätzlich. DRM hat ein hohes Spitzen-Mittelwert-Verhältnis: ALC niedrig halten."
+  "Options.Drm.VoxTone": "VOX-Ton vor DRM senden"
 }

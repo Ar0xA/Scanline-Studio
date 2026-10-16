@@ -203,7 +203,7 @@
           <li><strong>Frequency and mode</strong> show the connected radio's current state. You can request a frequency or supported radio mode when CAT is linked.</li>
           <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
           <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
-          <li><strong>Pwr</strong> is the application's TX playback gain. It is not the operating system's device volume, and not the radio's RF power setting.</li>
+          <li><strong>Pwr</strong> is the application's TX playback gain. It is not the operating system's device volume, and not the radio's RF power setting. It keeps a separate level for SSTV and for DRM: the label (<strong>Pwr · SSTV</strong> or <strong>Pwr · DRM</strong>) follows the mode selected on the Transmit tab and shows which level you are setting.</li>
           <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. The label reads <strong>Transmitting</strong> for that whole window (a real Transmit or a Tune tone), then returns to <strong>Receiving</strong> once it finishes. Otherwise the label switches to <strong>RX Muted</strong> whenever capture is stopped. It blinks amber and reads <strong>Decoding</strong> while an image is being decoded. The blink can be turned off in <a href="#appearance-options">Appearance options</a>. The matching status-bar chip does the same, so the transmitting and decoding state is visible from any tab, not only Receive.</li>
           <li><strong>Stop TX</strong>, next to <strong>Receiving</strong>, cancels an in-progress transmission immediately. It is always visible, regardless of which tab you're on, so it is reachable without switching to the Transmit tab first.</li>
         </ul>
@@ -362,7 +362,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone level offset papr callsign">
+      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone pwr drive level alc papr callsign">
         <p class="topic-category">Transmitting</p>
         <h2>Send a picture with DRM (EasyPal)</h2>
         <p><a class="term" href="#glossary-drm">DRM</a> sends the picture as a compressed JPEG 2000 file instead of as analogue SSTV tones. It is compatible with EasyPal and QSSTV. A DRM picture arrives without noise or slant, or not at all, so it suits good paths and higher resolutions. Scanline Studio sends DRM only; receiving DRM is not available yet.</p>
@@ -388,9 +388,18 @@
           <dt>Error correction</dt><dd>Extra Reed-Solomon data (RS 1 to RS 4) lets a receiver rebuild the file when some segments are lost. Higher values send more data.</dd>
         </dl>
 
-        <h3>Callsign, VOX tone and level</h3>
-        <p>DRM sends your callsign from <a href="#station-options">Station options</a> in a short 9-character label using plain Latin letters. The <strong>Callsign</strong> row shows what goes on air; it turns red, with a hint, when that differs from what you entered. The <strong>VOX tone</strong> (a 1 s tone before the signal, for VOX keying) and the <strong>DRM level</strong> are set in <a href="#station-options">Station options</a>.</p>
-        <div class="safety"><strong>Drive level.</strong> DRM has a high <a class="term" href="#glossary-papr">PAPR</a>. Set Pwr so the radio shows little or no <a class="term" href="#glossary-alc">ALC</a> action; overdriving a DRM signal ruins it for every receiver. Use the DRM level to lower DRM without moving Pwr for SSTV.</div>
+        <h3>Callsign and VOX tone</h3>
+        <p>DRM sends your callsign from <a href="#station-options">Station options</a> in a short 9-character label using plain Latin letters. The <strong>Callsign</strong> row shows what goes on air; it turns red, with a hint, when that differs from what you entered. The <strong>VOX tone</strong> (a 1 s tone before the signal, for VOX keying) is set in <a href="#station-options">Station options</a>.</p>
+
+        <h3>Setting the DRM level</h3>
+        <p>SSTV is a constant tone, while DRM has a high <a class="term" href="#glossary-papr">PAPR</a>: its peaks are about 12-14 dB above its average. So Scanline Studio keeps a separate Pwr level for DRM. With DRM selected, the header and Transmit-tab Pwr slider read <strong>Pwr · DRM</strong> and set only the DRM level; your SSTV level stays as it is. The Radio / CAT tab in Options shows both levels.</p>
+        <ol class="steps">
+          <li>Select DRM on the Transmit tab, ideally into a dummy load.</li>
+          <li>Select <strong>Tune</strong> on the Transmit tab or in the Tone generator. With DRM selected, the tone plays at the DRM level.</li>
+          <li>Raise Pwr until the radio's <a class="term" href="#glossary-alc">ALC</a> just starts to move, then back off a little. The tone sits slightly above DRM's real peaks, so this is a safe ceiling.</li>
+          <li>Expect an average output of only about 20-30 % of the radio's rated power on DRM. That is normal; the peaks still reach full output.</li>
+        </ol>
+        <div class="safety"><strong>Drive level.</strong> Overdriving a DRM signal ruins it for every receiver. Keep ALC action low on DRM even if the power meter looks weak.</div>
         <div class="note"><strong>What DRM does not use.</strong> Auto mode following picks SSTV modes only, so it never switches away from DRM. The loopback self-test, VIS header, leader tone and tone map apply to SSTV only. Stop TX, SWR cutoff, Sent frames and Resend work as for SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -656,6 +665,7 @@
           <li>Slowly raise <strong>Pwr</strong> while watching the radio's RF power and <a class="term" href="#glossary-alc">ALC</a> indications.</li>
           <li>Stop before ALC becomes excessive. Select <strong>Stop tune</strong> or let the time limit stop it.</li>
         </ol>
+        <p>The Radio / CAT tab has two Pwr sliders, <strong>Pwr · SSTV</strong> and <strong>Pwr · DRM</strong>, and its Tune always plays at the SSTV level. To tune for DRM, select DRM on the Transmit tab and use Tune there; see <a href="#transmit-drm">Setting the DRM level</a>.</p>
 
         <p><strong>Stop TX if <a class="term" href="#glossary-swr">SWR</a> too high</strong> cancels an active transmission after the connected radio reports a value over the chosen threshold for two consecutive polls. The option cannot work if the radio or backend does not report SWR.</p>
         <div class="safety"><strong>Not primary protection.</strong> Software polling and CAT can fail or lag. The SWR cutoff is a convenience backstop, not a substitute for the transceiver's hardware protection, a suitable antenna system, or operator monitoring.</div>
@@ -805,7 +815,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log drm profile robust normal fast vox tone level offset">
+      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log drm profile robust normal fast vox tone">
         <p class="topic-category">Options reference</p>
         <h2>Station options</h2>
         <p>The Station tab holds the identity values other features quietly rely on: template macros, identification, and the logbook all read from here rather than asking you to retype them.</p>
@@ -817,7 +827,6 @@
           <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>, shown as grey placeholder text until you type your own. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
           <dt>DRM transmit profiles</dt><dd>The three profiles the Transmit tab offers for <a href="#transmit-drm">DRM (EasyPal)</a>: a name and the six transmission fields each. Leave a name empty to use the default (Robust, Normal, Fast). The Transmit tab's own Custom profile is kept separately.</dd>
           <dt>Send a VOX tone before DRM</dt><dd>Sends a 1 s, 1700 Hz tone before each DRM transmission so a <a class="term" href="#glossary-vox">VOX</a>-keyed transmitter is already on when the signal starts. Off by default.</dd>
-          <dt>DRM level (dB)</dt><dd>Lowers DRM relative to SSTV, from 0 to −20 dB, without moving Pwr. Pwr still applies on top. Use it to keep <a class="term" href="#glossary-alc">ALC</a> quiet on DRM.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>

@@ -4,7 +4,7 @@ using ScanlineStudio.UI.Settings;
 
 namespace ScanlineStudio.UI.ViewModels;
 
-/// <summary>Options › Station: the three DRM profiles, the VOX tone and the DRM level offset. These are the
+/// <summary>Options › Station: the three DRM profiles and the VOX tone. These are the
 /// Options-owned fields of <see cref="DrmSettings"/>; the TX pane owns the rest.</summary>
 public sealed partial class OptionsWindowViewModel
 {
@@ -16,8 +16,6 @@ public sealed partial class OptionsWindowViewModel
     [ObservableProperty]
     private bool _drmVoxTone = DrmSettingsDefaults.DefaultVoxTone;
 
-    [ObservableProperty]
-    private double _drmLevelOffsetDb = DrmSettingsDefaults.DefaultLevelOffsetDb;
 
     private void LoadDrmOptions(DrmSettings? drm)
     {
@@ -27,7 +25,6 @@ public sealed partial class OptionsWindowViewModel
         }
 
         DrmVoxTone = DrmSettingsDefaults.ResolveVoxTone(drm);
-        DrmLevelOffsetDb = DrmSettingsDefaults.ResolveLevelOffsetDb(drm);
     }
 
     private void ResetDrmOptions() => LoadDrmOptions(null);
@@ -37,7 +34,6 @@ public sealed partial class OptionsWindowViewModel
     {
         var profiles = DrmProfiles.Select(p => (DrmProfileSettings?)p.ToSettings()).ToArray();
         var voxTone = DrmVoxTone;
-        var levelOffsetDb = DrmTxSettings.ClampLevelOffsetDb(DrmLevelOffsetDb);
-        return current => current with { Profiles = profiles, VoxTone = voxTone, LevelOffsetDb = levelOffsetDb };
+        return current => current with { Profiles = profiles, VoxTone = voxTone };
     }
 }

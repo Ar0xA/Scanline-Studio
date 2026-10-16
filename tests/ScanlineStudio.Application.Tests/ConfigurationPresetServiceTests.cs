@@ -86,8 +86,27 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
 
         Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
         Assert.False(result.PartiallyApplied);
-        Assert.Equal([30], changes.Select(c => c.Percent));
-        Assert.Equal(30, await sstvSession.GetTxVolumePercentAsync());
+        Assert.Equal([(TxLevelFamily.Sstv, 30), (TxLevelFamily.Drm, 30)], changes.Select(c => (c.Family, c.Percent)));
+        Assert.Equal(30, await sstvSession.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
+    }
+
+    // Addendum A: a preset saved before the DRM Pwr level existed keeps the live one; a preset that has it wins.
+    [Theory]
+    [InlineData(null, 45)]
+    [InlineData(60, 60)]
+    public async Task SwitchToPresetAsync_DrmPwrLevel_IsCarriedForwardOnlyWhenThePresetLacksIt(int? presetDrm, int expectedDrm)
+    {
+        var (service, _, _, sstvSession, settingsStore, _, presetStore, _) = CreateService();
+        await sstvSession.SetTxVolumePercentAsync(TxLevelFamily.Drm, 45);
+        var audio = settingsStore.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!;
+        await presetStore.SavePresetAsync("Old", new AppSettings().WithSection(
+            AudioDeviceSettings.SectionKey, audio with { TxVolumePercent = 30, DrmTxVolumePercent = presetDrm }, AudioSettingsJsonContext.Default.AudioDeviceSettings));
+
+        var result = await service.SwitchToPresetAsync("Old");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        Assert.Equal(30, await sstvSession.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
+        Assert.Equal(expectedDrm, await sstvSession.GetTxVolumePercentAsync(TxLevelFamily.Drm));
     }
 
     [Fact]

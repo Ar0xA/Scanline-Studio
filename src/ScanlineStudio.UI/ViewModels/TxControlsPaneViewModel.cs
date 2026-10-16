@@ -617,8 +617,72 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// view-model types. A plain reference assigned once from the parent is the established safe
     /// pattern here (see QuickModeSlotViewModel/StockEntryViewModel/
     /// FrequencyPresetButtonViewModel, each carrying its own pre-resolved command for the same
-    /// reason).</summary>
-    public RadioStatusViewModel? RadioStatus { get; set; }
+    /// reason). Assigning it pushes the selected target's Pwr family to the header.</summary>
+    public RadioStatusViewModel? RadioStatus
+    {
+        get => _radioStatus;
+        set
+        {
+            if (ReferenceEquals(_radioStatus, value))
+            {
+                return;
+            }
+
+            if (_radioStatus is not null)
+            {
+                _radioStatus.PropertyChanged -= OnRadioStatusPropertyChanged;
+            }
+
+            _radioStatus = value;
+            if (value is not null)
+            {
+                value.PropertyChanged += OnRadioStatusPropertyChanged;
+            }
+
+            PushTxLevelFamily();
+            OnTargetLockChanged();
+        }
+    }
+
+    private RadioStatusViewModel? _radioStatus;
+
+    /// <summary>The Pwr family of the selected target, shown and edited by the header and the Output card.</summary>
+    private TxLevelFamily SelectedTxLevelFamily => IsDrmSelected ? TxLevelFamily.Drm : TxLevelFamily.Sstv;
+
+    private void PushTxLevelFamily()
+    {
+        if (_radioStatus is { } radioStatus)
+        {
+            radioStatus.ActiveTxLevelFamily = SelectedTxLevelFamily;
+        }
+    }
+
+    private void OnRadioStatusPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(RadioStatusViewModel.IsTuning))
+        {
+            return;
+        }
+
+        // TuneAsync clears IsTuning after a ConfigureAwait(false), so this can arrive off the UI thread.
+        if (Dispatcher.UIThread.CheckAccess())
+        {
+            OnTargetLockChanged();
+        }
+        else
+        {
+            Dispatcher.UIThread.Post(OnTargetLockChanged);
+        }
+    }
+
+    /// <summary>No target change while transmitting or tuning: Tune plays at the selected family's level.</summary>
+    private bool IsTargetLocked => IsTransmitting || _radioStatus?.IsTuning == true;
+
+    private void OnTargetLockChanged()
+    {
+        OnPropertyChanged(nameof(CanChangeMode));
+        QuickSelectModeCommand.NotifyCanExecuteChanged();
+    }
 
     private const int StockThumbnailMaxDimension = 64;
 
@@ -977,7 +1041,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// sending the current image is confusing UX, not a safety requirement
     /// (<see cref="TransmitAsync"/> captures its own <c>image</c>/<c>mode</c> locals up front, so
     /// there is no correctness hazard either way).</summary>
-    public bool CanChangeMode => !IsTransmitting;
+    public bool CanChangeMode => !IsTargetLocked;
 
     /// <summary>User-requested (2026-09-15): "even if there are elements on the canvas, if no
     /// background has been picked before, i should be able to load one later also, not only as first
@@ -1015,7 +1079,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// rather than refused. Same <see cref="IsTransmitting"/>-only reasoning as
     /// <see cref="CanChangeMode"/> above (this backs the quick-mode grid, the ComboBox's sibling
     /// mode-change control).</summary>
-    private bool CanQuickSelectMode() => !IsTransmitting;
+    private bool CanQuickSelectMode() => !IsTargetLocked;
 
     /// <summary>Backs the 16-pill quick-mode grid (spec/18-path-to-1.0.md High item 7).
     /// <c>CanExecute</c> alone isn't a hard gate for a direct <c>Execute()</c> call, only
@@ -1026,7 +1090,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     [RelayCommand(CanExecute = nameof(CanQuickSelectMode))]
     private void QuickSelectMode(string modeId)
     {
-        if (IsTransmitting)
+        if (IsTargetLocked)
         {
             return;
         }
@@ -2165,10 +2229,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             return;
         }
 
-        // The stored frame's own size; the level offset is the current Options value, not the one at first send.
+        // The stored frame's own size and settings; it plays at the current DRM Pwr level.
         var geometry = new TargetGeometry(entry.Image.Width, entry.Image.Height, $"drm-{entry.Image.Width}x{entry.Image.Height}", SelectedTargetDisplayNameForDrm, FrameSeconds: null);
-        var settings = stored with { LevelOffsetDb = _drmLevelOffsetDb };
-        await TransmitCoreAsync(entry.Image, entry.Target, geometry, entry.SourceFileName, refreshMacros: false, new DrmSend(settings, fileName));
+        await TransmitCoreAsync(entry.Image, entry.Target, geometry, entry.SourceFileName, refreshMacros: false, new DrmSend(stored, fileName));
     }
 
     /// <summary>TX history plan (2026-09-01): saves a <see cref="SentFrames"/> entry's exact
@@ -2391,6 +2454,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         RunLoopbackSelfTestCommand.NotifyCanExecuteChanged();
         TransmitCommand.NotifyCanExecuteChanged();
         _currentEditor?.NotifyTransmitAvailabilityChanged();
+        PushTxLevelFamily();
         OnTargetGeometryChanged();
         RequestDrmEstimate();
     }

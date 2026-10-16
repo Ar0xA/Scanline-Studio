@@ -435,7 +435,7 @@
                             </Grid>
                         </Grid>
                         <TextBlock Grid.Row="0" Grid.Column="2" Classes="IndustryRowValue" Text="{Binding RxLevelDisplay}" VerticalAlignment="Center" />
-                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" Text="{loc:Translate RadioStatus.TxVolumeLabel}" VerticalAlignment="Center" />
+                        <TextBlock Grid.Row="1" Grid.Column="0" Classes="IndustryRowLabel" Text="{Binding TxLevelLabel}" VerticalAlignment="Center" />
                         <!-- Real bug found+fixed this session (not cosmetic): the fill/thumb never
                              reflected Value at all (confirmed via a runtime Bounds dump — DecreaseButton
                              Bounds.Width read exactly 0 regardless of Value=50 or 100) because

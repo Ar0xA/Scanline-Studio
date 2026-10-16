@@ -80,7 +80,23 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
     /// write to this class's own <see cref="SaveAsync"/> (not a duplicated throw/assign) so
     /// <see cref="SaveAsyncExceptionOnce"/>'s existing throw-before-assign ordering, depended on by
     /// <c>SstvSessionServiceCaptureDeviceLiveApplyTests</c>, is preserved automatically.</summary>
+    /// <summary>Test-only hook, one-shot: awaited by the next <see cref="UpdateAsync"/> call after it releases the
+    /// lock and before it returns, so a test can run something between a commit and the caller's next step.</summary>
+    public Func<Task>? AfterUpdate { get; set; }
+
     public async Task<AppSettings> UpdateAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct = default)
+    {
+        var result = await UpdateLockedAsync(mutate, ct).ConfigureAwait(false);
+        if (AfterUpdate is { } after)
+        {
+            AfterUpdate = null;
+            await after().ConfigureAwait(false);
+        }
+
+        return result;
+    }
+
+    private async Task<AppSettings> UpdateLockedAsync(Func<AppSettings, AppSettings> mutate, CancellationToken ct)
     {
         await _lock.WaitAsync(ct).ConfigureAwait(false);
         try

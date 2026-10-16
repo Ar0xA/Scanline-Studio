@@ -45,6 +45,12 @@
                     </Grid>
                 </StackPanel>
 
+                <!-- The tone plays at the selected family's Pwr level, so show which one. -->
+                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="6">
+                    <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{Binding TxLevelLabel}" />
+                    <TextBlock Grid.Column="1" Classes="IndustryRowValue" VerticalAlignment="Center" Text="{Binding TxVolumeDisplay}" />
+                </Grid>
+
                 <TextBlock Text="{Binding ErrorMessage}"
                            Foreground="{DynamicResource IndustryDanger}"
                            TextWrapping="Wrap"

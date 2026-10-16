@@ -245,7 +245,7 @@ public sealed class SstvSessionServiceRecordPlaybackTests
                 }
             };
 
-            await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+            await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
         }
         finally
         {
@@ -313,7 +313,7 @@ public sealed class SstvSessionServiceRecordPlaybackTests
             var decodeCall = service.DecodeFromFileAsync(path);
             await reachedFirstChunk.Task;
 
-            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(1750, TimeSpan.FromMilliseconds(1)));
+            var ex = await Assert.ThrowsAsync<InvalidOperationException>(() => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1)));
             Assert.Equal("Cannot transmit or tune while a file decode is in progress.", ex.Message);
             Assert.Empty(radio.PttCalls);
 

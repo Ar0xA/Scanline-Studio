@@ -2398,8 +2398,8 @@ public sealed class RadioStatusViewModelTests
         var vm = CreateViewModel(sstvSession: sstvSession);
         Dispatcher.UIThread.RunJobs();
 
-        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(70, Version: 5));
-        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(20, Version: 4));
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(TxLevelFamily.Sstv, 70, Version: 5));
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(TxLevelFamily.Sstv, 20, Version: 4));
         Dispatcher.UIThread.RunJobs();
 
         Assert.Equal(70, vm.TxVolumePercent);
@@ -2440,7 +2440,7 @@ public sealed class RadioStatusViewModelTests
         await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "own write in flight");
 
         // Committed after the own write (higher version than the own write will get).
-        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(30, Version: 1000));
+        sstvSession.RaiseTxVolumeChange(new TxVolumeChange(TxLevelFamily.Sstv, 30, Version: 1000));
         Dispatcher.UIThread.RunJobs();
         Assert.Equal(55, vm.TxVolumePercent);
 
@@ -2509,5 +2509,151 @@ public sealed class RadioStatusViewModelTests
         sstvSession.RaiseExternalTxVolumeChange(25);
         await DrainUntilAsync(() => vm.TxVolumePercent == 25, "external change applies once own writes end");
         Assert.Equal(1, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    // Addendum A: separate SSTV/DRM Pwr levels in the header.
+    [AvaloniaFact]
+    public void TxLevel_StartupLoadsBothLevels_AndASwitchShowsTheOtherWithoutAWrite()
+    {
+        var sstvSession = new FakeSstvSessionService { TxVolumePercent = 70, DrmTxVolumePercent = 40 };
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(70, vm.TxVolumePercent);
+        Assert.Equal("RadioStatus.TxVolumeLabel.Sstv", vm.TxLevelLabel);
+
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+        Assert.Equal(40, vm.TxVolumePercent);
+        Assert.Equal("RadioStatus.TxVolumeLabel.Drm", vm.TxLevelLabel);
+        vm.ActiveTxLevelFamily = TxLevelFamily.Sstv;
+        Assert.Equal(70, vm.TxVolumePercent);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxLevel_WriteScheduledBeforeASwitch_LandsInItsOriginalFamily()
+    {
+        var sstvSession = new FakeSstvSessionService { DrmTxVolumePercent = 40 };
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "the SSTV write");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal((TxLevelFamily.Sstv, 55), Assert.Single(sstvSession.SetTxVolumePercentCalls));
+        Assert.Equal(40, sstvSession.DrmTxVolumePercent);
+        Assert.Equal(40, vm.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public async Task TxLevel_SstvDragThenSwitchThenDrmDrag_WithinTheDebounce_BothPersist()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(200)));
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+        vm.TxVolumePercent = 30;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 2, "both writes");
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal((55, 30), (sstvSession.TxVolumePercent, sstvSession.DrmTxVolumePercent));
+        Assert.Equal(30, vm.TxVolumePercent);
+    }
+
+    [AvaloniaFact]
+    public async Task TxLevel_PendingOwnWriteForTheOldFamily_DoesNotHoldBackTheNewFamilysDisplay()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        sstvSession.SetTxVolumePercentGates[TxLevelFamily.Sstv] = new TaskCompletionSource();
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.TxVolumePercent = 55;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "SSTV write in flight");
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+        sstvSession.RaiseExternalTxVolumeChange(30, TxLevelFamily.Drm);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(30, vm.TxVolumePercent);
+        sstvSession.SetTxVolumePercentGates[TxLevelFamily.Sstv].SetResult();
+    }
+
+    [AvaloniaFact]
+    public void TxLevel_OtherFamilyChange_DoesNotAlterTheDisplayOrLabel()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        sstvSession.RaiseExternalTxVolumeChange(30, TxLevelFamily.Drm);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(100, vm.TxVolumePercent);
+        Assert.Equal("RadioStatus.TxVolumeLabel.Sstv", vm.TxLevelLabel);
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+        Assert.Equal(30, vm.TxVolumePercent);
+        Assert.Equal(0, sstvSession.SetTxVolumePercentCallCount);
+    }
+
+    [AvaloniaFact]
+    public async Task TxLevel_TuneWithDrmActive_PlaysAtTheDrmLevel_AndADragDuringTheToneSetsTheDrmLevel()
+    {
+        var sstvSession = new FakeSstvSessionService { TuneGate = new TaskCompletionSource() };
+        var clock = new FakeTimeProvider();
+        var vm = CreateViewModel(sstvSession: sstvSession, timeProvider: clock);
+        Dispatcher.UIThread.RunJobs();
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+
+        var tune = vm.TuneCommand.ExecuteAsync(null);
+        Assert.True(vm.IsTuning);
+        vm.TxVolumePercent = 25;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 1, "the drag during the tone");
+        sstvSession.TuneGate.SetResult();
+        await tune;
+
+        Assert.Equal(TxLevelFamily.Drm, Assert.Single(sstvSession.TuneFamilies));
+        Assert.Equal((TxLevelFamily.Drm, 25), Assert.Single(sstvSession.SetTxVolumePercentCalls));
+    }
+
+    [AvaloniaFact]
+    public async Task TxLevel_Options_LoadsBothLevels_AndEachSliderWritesItsOwnFamily()
+    {
+        var sstvSession = new FakeSstvSessionService { TxVolumePercent = 70, DrmTxVolumePercent = 40 };
+        var clock = new FakeTimeProvider();
+        using var options = new OptionsWindowViewModel(TestOptionsSettings.Create(new FakeSettingsStore()), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), new FakeSettingsStore(), new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), sstvSession, new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance, clock);
+        await DrainUntilAsync(() => options.DrmTxVolumePercent == 40 && options.TxVolumePercent == 70, "both levels loaded");
+
+        options.TxVolumePercent = 60;
+        options.DrmTxVolumePercent = 25;
+        await Task.Run(() => clock.Advance(TimeSpan.FromMilliseconds(400)));
+        await DrainUntilAsync(() => sstvSession.SetTxVolumePercentCallCount == 2, "both writes");
+
+        Assert.Equal([(TxLevelFamily.Sstv, 60), (TxLevelFamily.Drm, 25)], sstvSession.SetTxVolumePercentCalls.OrderBy(c => c.Family));
+    }
+
+    [AvaloniaFact]
+    public void TxLevel_StartupLoad_AFailedSstvReadStillLoadsDrm()
+    {
+        var sstvSession = new FakeSstvSessionService { DrmTxVolumePercent = 40 };
+        sstvSession.GetTxVolumePercentExceptions[TxLevelFamily.Sstv] = new IOException("settings unreadable");
+        var vm = CreateViewModel(sstvSession: sstvSession);
+        Dispatcher.UIThread.RunJobs();
+
+        vm.ActiveTxLevelFamily = TxLevelFamily.Drm;
+
+        Assert.Equal(40, vm.TxVolumePercent);
     }
 }

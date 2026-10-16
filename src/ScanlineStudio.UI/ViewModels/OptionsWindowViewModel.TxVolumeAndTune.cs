@@ -25,17 +25,22 @@ public sealed partial class OptionsWindowViewModel
 {
     public string TxVolumeDisplay => TxVolumePercent.ToString(CultureInfo.InvariantCulture);
 
+    public string DrmTxVolumeDisplay => DrmTxVolumePercent.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Loads both Pwr levels once when the dialog opens; it subscribes to no change events.</summary>
     private async Task LoadTxVolumeSafeAsync()
     {
         try
         {
-            var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
+            var sstv = await _sstvSession.GetTxVolumePercentAsync(TxLevelFamily.Sstv).ConfigureAwait(false);
+            var drm = await _sstvSession.GetTxVolumePercentAsync(TxLevelFamily.Drm).ConfigureAwait(false);
             Dispatcher.UIThread.Post(() =>
             {
                 try
                 {
                     _suppressTxVolumePersist = true;
-                    TxVolumePercent = percent;
+                    TxVolumePercent = sstv;
+                    DrmTxVolumePercent = drm;
                 }
                 finally
                 {
@@ -49,7 +54,11 @@ public sealed partial class OptionsWindowViewModel
         }
     }
 
-    partial void OnTxVolumePercentChanged(int value)
+    partial void OnTxVolumePercentChanged(int value) => SchedulePersistTxVolume(TxLevelFamily.Sstv, value);
+
+    partial void OnDrmTxVolumePercentChanged(int value) => SchedulePersistTxVolume(TxLevelFamily.Drm, value);
+
+    private void SchedulePersistTxVolume(TxLevelFamily family, int value)
     {
         if (_suppressTxVolumePersist)
         {
@@ -59,18 +68,18 @@ public sealed partial class OptionsWindowViewModel
         // Debounced, same reasoning as RadioStatusViewModel.OnTxVolumePercentChanged's own comment:
         // a slider drag can fire dozens of times a second, and overlapping un-awaited settings-store
         // writes could race each other and let a stale write clobber a fresher one.
-        _ = _txVolumePersist.Schedule(ct => PersistTxVolumeAsync(value, ct));
+        _ = _txVolumePersist.Schedule(family, ct => PersistTxVolumeAsync(family, value, ct));
     }
 
-    private async Task PersistTxVolumeAsync(int value, CancellationToken ct)
+    private async Task PersistTxVolumeAsync(TxLevelFamily family, int value, CancellationToken ct)
     {
         try
         {
-            await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);
+            await _sstvSession.SetTxVolumePercentAsync(family, value, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Log.PersistTxVolumeFailed(_logger, value, ex);
+            Log.PersistTxVolumeFailed(_logger, family, value, ex);
         }
     }
 
@@ -101,7 +110,8 @@ public sealed partial class OptionsWindowViewModel
         _tuneCts = cts;
         try
         {
-            await _sstvSession.TuneAsync(TuneFrequencyHz, MaxTuneDuration, ct: cts.Token).ConfigureAwait(false);
+            // Options' Tune stays SSTV; the DRM level is tuned from the header or TX pane with DRM selected.
+            await _sstvSession.TuneAsync(TxLevelFamily.Sstv, TuneFrequencyHz, MaxTuneDuration, ct: cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {

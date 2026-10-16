@@ -55,6 +55,11 @@ public sealed record AudioDeviceSettings
     /// re-add a non-null default value here.</summary>
     public int? TxVolumePercent { get; init; }
 
+    /// <summary>Pwr for DRM transmissions, kept apart from <see cref="TxVolumePercent"/> because DRM peaks about
+    /// 12-14 dB above its average while SSTV is a constant tone. Nullable for the same reason: null reads as
+    /// <see cref="TxVolumePercent"/>, and the first SSTV write stores that value here so SSTV never moves DRM.</summary>
+    public int? DrmTxVolumePercent { get; init; }
+
     /// <summary>OS scheduling priority for the capture drain thread (see
     /// <see cref="ScanlineStudio.Abstractions.Audio.IAudioEngine.StartCaptureAsync"/>'s own doc
     /// comment) -- does NOT affect the real-time native audio callback thread, which has no

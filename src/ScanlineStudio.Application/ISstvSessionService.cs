@@ -623,8 +623,8 @@ public interface ISstvSessionService : IAsyncDisposable
     /// <see cref="InvalidOperationException"/> before touching PTT when the JPEG 2000 codec is unavailable.</summary>
     /// <param name="fileName">Source name; QSSTV sends <c>stamp-name.jp2</c> (drmtx.cpp:50-78,114) with a new
     /// UTC stamp on every transmission, so a repeated image gets a new transport ID.</param>
-    /// <returns>The JPEG 2000 size and the stamped on-air name. <see cref="DrmTxSettings.LevelOffsetDb"/> is clamped
-    /// to −20..0 dB (NaN/infinity → 0) and scales only this transmission; Pwr still applies live on top.</returns>
+    /// <returns>The JPEG 2000 size and the stamped on-air name. Plays at the DRM Pwr level
+    /// (<see cref="TxLevelFamily.Drm"/>).</returns>
     Task<DrmTxResult> TransmitDrmAsync(IImageSource image, string fileName, DrmTxSettings settings, CancellationToken ct = default);
 
     /// <summary>Encodes <paramref name="image"/> exactly as <see cref="TransmitDrmAsync"/> would and counts the
@@ -723,30 +723,36 @@ public interface ISstvSessionService : IAsyncDisposable
 
     /// <summary>Keys PTT, plays a steady sine tone at <paramref name="frequencyHz"/> for
     /// <paramref name="duration"/> (WSJT-X/legacy-Tune-style AFC-lock aid), then un-keys PTT --
-    /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>.</summary>
-    Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default);
+    /// same pause-RX/key-PTT/resume-RX guarantee shape as <see cref="TransmitAsync"/>. Plays at
+    /// <paramref name="family"/>'s Pwr level, so tuning for DRM sets up the DRM drive.</summary>
+    Task TuneAsync(TxLevelFamily family, double frequencyHz, TimeSpan duration, CancellationToken ct = default);
 
     /// <summary>"Pwr" -- post-encode TX playback gain (0-100), applied as a linear multiplier on
     /// encoded PCM samples right before playback (same shape WSJT-X's/fldigi's own Pwr-style
     /// controls use: pure app-internal gain on the audio THIS app generates, never touching the OS
     /// mixer). User-directed reversal of an earlier same-session design (real OS device volume) --
     /// see <c>ScanlineStudio.Core.Audio.AudioDeviceSettings.TxVolumePercent</c>'s own doc comment
-    /// for the persisted field this reads/writes.</summary>
-    Task<int> GetTxVolumePercentAsync(CancellationToken ct = default);
+    /// for the persisted field this reads/writes. Each <see cref="TxLevelFamily"/> has its own level:
+    /// <see cref="TransmitAsync"/> plays at the SSTV level and <see cref="TransmitDrmAsync"/> at the DRM level.
+    /// An unset DRM level reads as the SSTV level.</summary>
+    Task<int> GetTxVolumePercentAsync(TxLevelFamily family, CancellationToken ct = default);
 
-    Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default);
+    /// <summary>Stores <paramref name="family"/>'s level. It changes the live gain only while a transmission of
+    /// that family is on air.</summary>
+    Task SetTxVolumePercentAsync(TxLevelFamily family, int percent, CancellationToken ct = default);
 
-    /// <summary>Re-reads the persisted Pwr value, applies it to the live gain and raises
-    /// <see cref="TxVolumePercentChanged"/>. For writers that replace the Audio section without going
+    /// <summary>Re-reads both persisted Pwr levels, applies the transmitting family's to the live gain and raises
+    /// <see cref="TxVolumePercentChanged"/> once per family. For writers that replace the Audio section without going
     /// through <see cref="SetTxVolumePercentAsync"/> (a configuration preset switch).</summary>
     Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default);
 
     /// <summary>Raised after every committed Pwr change (<see cref="SetTxVolumePercentAsync"/> or
-    /// <see cref="ResyncTxVolumeFromSettingsAsync"/>), with the clamped value and a version that increases in
+    /// <see cref="ResyncTxVolumeFromSettingsAsync"/>), with its family, the clamped value and a version that increases in
     /// settings-commit order. Raised synchronously on the writer's thread (usually the thread pool), outside any
     /// lock, after the live gain is updated (or left at a newer version's value); each subscriber is invoked and
     /// guarded separately, so a throwing subscriber never fails the write or skips another one. Subscribers must
-    /// not block: marshal to the UI thread with a non-blocking Post.</summary>
+    /// not block: marshal to the UI thread with a non-blocking Post. It means only "this family's level changed";
+    /// it is never raised for a change of the selected family, which is UI state.</summary>
     event Action<TxVolumeChange>? TxVolumePercentChanged;
 
     /// <summary>Whether the playback device a real <see cref="TransmitAsync"/> call would resolve

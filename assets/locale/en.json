@@ -52,7 +52,8 @@
   "RadioStatus.SetFrequency": "Set",
   "RadioStatus.PresetsLabel": "PRESETS",
   "RadioStatus.RxLevelLabel": "RX level",
-  "RadioStatus.TxVolumeLabel": "Pwr",
+  "RadioStatus.TxVolumeLabel.Sstv": "Pwr · SSTV",
+  "RadioStatus.TxVolumeLabel.Drm": "Pwr · DRM",
   "RadioStatus.Tune": "Tune",
   "RadioStatus.Tune.Stop": "Stop tune",
   "RadioStatus.Tune.Help": "Keys PTT and transmits a steady test tone at the given frequency/duration so the other station's AFC/tuning indicator can lock on -- does not send an image.",
@@ -431,7 +432,6 @@
   "Panes.TxControls.Telemetry.ToneMapFormat": "{0:0}–{1:0} Hz",
   "Panes.TxControls.Telemetry.TxClock": "TX clock",
   "Panes.TxControls.Telemetry.TxClockIdle": "—",
-  "Panes.TxControls.DriveLabel": "Pwr",
   "Panes.TxControls.Telemetry.Power": "PWR",
   "Panes.TxControls.Telemetry.Alc": "ALC",
   "Panes.TxControls.Telemetry.Swr": "SWR",
@@ -850,7 +850,9 @@
   "Options.Radio.OmniRig.TestConnection": "Test connection",
   "Options.Radio.OmniRig.AlreadyConnected": "Disconnect the active radio connection first -- a test can't run alongside it.",
   "Options.Radio.PwrHeader": "TX power",
-  "Options.Radio.PwrLabel": "Pwr",
+  "Options.Radio.PwrLabel.Sstv": "Pwr · SSTV",
+  "Options.Radio.PwrLabel.Drm": "Pwr · DRM",
+  "Options.Radio.PwrLabel.Drm.Help": "DRM peaks about 12-14 dB above its average, so it keeps its own level. Raise it until the ALC just moves on peaks, then back off. Tune here always uses the SSTV level.",
   "Options.Radio.Tune": "Tune",
   "Options.Radio.Tune.Stop": "Stop tune",
   "Options.Radio.Tune.Help": "Keys PTT and transmits a steady test tone for up to 30 seconds -- drag Pwr while it plays and watch your radio's own power meter until it reads the output you want, then click Stop tune (or wait for the 30s safety cutoff).",
@@ -1175,7 +1177,5 @@
   "Options.Drm.Header.Help": "The three profiles offered on the Transmit tab when DRM (EasyPal) is selected. Robust survives poor conditions; Fast sends quickest on a clean channel.",
   "Options.Drm.ProfileHeadingFormat": "Profile {0}",
   "Options.Drm.ProfileName": "Name",
-  "Options.Drm.VoxTone": "Send a VOX tone before DRM",
-  "Options.Drm.LevelOffset": "DRM level (dB)",
-  "Options.Drm.LevelOffset.Help": "Lowers the DRM signal relative to SSTV, from 0 to −20 dB. Pwr still applies on top. DRM has a high peak-to-average ratio: keep ALC low."
+  "Options.Drm.VoxTone": "Send a VOX tone before DRM"
 }

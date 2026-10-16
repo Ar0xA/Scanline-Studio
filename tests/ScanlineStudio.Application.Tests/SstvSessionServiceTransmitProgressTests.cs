@@ -159,7 +159,7 @@ public sealed class SstvSessionServiceTransmitProgressTests
         var reports = new List<TransmitProgressInfo>();
         service.TransmitProgressChanged += reports.Add;
 
-        await service.TuneAsync(1000, TimeSpan.FromMilliseconds(50));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1000, TimeSpan.FromMilliseconds(50));
 
         Assert.Empty(reports);
     }

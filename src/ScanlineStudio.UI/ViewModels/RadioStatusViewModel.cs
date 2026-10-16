@@ -39,7 +39,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private readonly DispatcherTimer _utcClockTimer;
     private readonly DispatcherTimer _rxAudioLevelTimer;
     private bool _suppressVolumePersist;
-    private readonly Debouncer _txVolumePersist;
+    private readonly KeyedDebouncer<TxLevelFamily> _txVolumePersist;
 
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(FrequencyDisplayOrPlaceholder))]
@@ -412,6 +412,32 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// percent underneath either way (OS mute is independent of this app's own gain), only this
     /// readout swaps.</summary>
     public string TxVolumeDisplay => TxIsMuted ? "\U0001F507" : TxVolumePercent.ToString(CultureInfo.InvariantCulture);
+
+    /// <summary>Which remembered Pwr level <see cref="TxVolumePercent"/> shows and edits, and which level Tune
+    /// plays at. UI state: the TX pane sets it from its selected target; switching it never writes a level.</summary>
+    public TxLevelFamily ActiveTxLevelFamily
+    {
+        get => _activeTxLevelFamily;
+        set
+        {
+            if (_activeTxLevelFamily == value)
+            {
+                return;
+            }
+
+            _activeTxLevelFamily = value;
+            Log.TxLevelFamilySelected(_logger, value);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(TxLevelLabel));
+            ShowTxLevel(TxLevelOf(value).Percent);
+        }
+    }
+
+    private TxLevelFamily _activeTxLevelFamily = TxLevelFamily.Sstv;
+
+    /// <summary>"Pwr · SSTV" / "Pwr · DRM": the label of every Pwr control bound to <see cref="TxVolumePercent"/>.</summary>
+    public string TxLevelLabel => _localization.GetString(
+        ActiveTxLevelFamily == TxLevelFamily.Drm ? "RadioStatus.TxVolumeLabel.Drm" : "RadioStatus.TxVolumeLabel.Sstv");
 
     /// <summary>User-directed redesign (same session): "RX level" is a plain incoming-audio-level
     /// meter, same idea as WSJT-X's own RX meter, not a slider. Backed by
@@ -838,7 +864,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger, TimeProvider? timeProvider = null)
     {
-        _txVolumePersist = new Debouncer(VolumePersistDebounce, timeProvider ?? TimeProvider.System, resumeOnCapturedContext: false);
+        _txVolumePersist = new KeyedDebouncer<TxLevelFamily>(VolumePersistDebounce, timeProvider ?? TimeProvider.System, resumeOnCapturedContext: false);
         _radioSession = radioSession;
         _sstvSession = sstvSession;
         _localization = localization;
@@ -1213,33 +1239,32 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// meter is driven entirely by <see cref="_rxAudioLevelTimer"/>, not a one-time load.</summary>
     private async Task LoadTxStateSafeAsync()
     {
-        try
+        // One try per family, so a failed SSTV read still loads DRM.
+        foreach (var family in new[] { TxLevelFamily.Sstv, TxLevelFamily.Drm })
         {
-            var percent = await _sstvSession.GetTxVolumePercentAsync().ConfigureAwait(false);
-            Dispatcher.UIThread.Post(() =>
+            try
             {
-                // This read has no version: a change event already seen is newer.
-                if (_txVolumeChangeSeen)
+                var percent = await _sstvSession.GetTxVolumePercentAsync(family).ConfigureAwait(false);
+                Dispatcher.UIThread.Post(() =>
                 {
-                    return;
-                }
+                    // This read has no version: a change event already seen is newer.
+                    var level = TxLevelOf(family);
+                    if (level.ChangeSeen)
+                    {
+                        return;
+                    }
 
-                // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
-                // fix for _suppressModeCommand.
-                try
-                {
-                    _suppressVolumePersist = true;
-                    TxVolumePercent = percent;
-                }
-                finally
-                {
-                    _suppressVolumePersist = false;
-                }
-            });
-        }
-        catch (Exception ex)
-        {
-            Log.LoadTxVolumeFailed(_logger, ex);
+                    level.Percent = percent;
+                    if (family == ActiveTxLevelFamily)
+                    {
+                        ShowTxLevel(percent);
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.LoadTxVolumeFailed(_logger, family, ex);
+            }
         }
 
         // Mute has no persist-on-change handler (read-only, see TxIsMuted's own doc comment) -- no
@@ -1660,9 +1685,12 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         IsTuning = true;
         var cts = new CancellationTokenSource();
         _tuneCts = cts;
+
+        // Captured at the start: the tone plays at this family's level, and a drag during it edits the same family.
+        var family = ActiveTxLevelFamily;
         try
         {
-            await _sstvSession.TuneAsync(TuneFrequencyHz, TimeSpan.FromSeconds(TuneDurationSeconds), ct: cts.Token).ConfigureAwait(false);
+            await _sstvSession.TuneAsync(family, TuneFrequencyHz, TimeSpan.FromSeconds(TuneDurationSeconds), ct: cts.Token).ConfigureAwait(false);
         }
         catch (OperationCanceledException)
         {
@@ -1798,26 +1826,44 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // Debounced (not one settings write per slider tick, per the Piece 5 plan) -- a slider drag
         // can fire dozens of times a second, and overlapping un-awaited settings-store SaveAsync
         // calls could race each other and let a stale write clobber a fresher one.
-        // Counted from Schedule until its Task ends (superseded, cancelled or written): Debouncer clears
+        // The family is captured now, so a write scheduled before a family switch lands in its own family, and the
+        // keyed debouncer keeps the two families' writes from cancelling each other.
+        // Counted from Schedule until its Task ends (superseded, cancelled or written): the debouncer clears
         // IsPending before the write runs, so IsPending alone misses the in-flight window.
-        _ownTxVolumeWrites++;
-        _ = _txVolumePersist.Schedule(ct => PersistVolumeAsync(value, ct))
-            .ContinueWith(_ => Dispatcher.UIThread.Post(OnOwnTxVolumeWriteEnded), CancellationToken.None,
+        var family = ActiveTxLevelFamily;
+        var level = TxLevelOf(family);
+        level.Percent = value;
+        level.OwnWrites++;
+        _ = _txVolumePersist.Schedule(family, ct => PersistVolumeAsync(family, value, ct))
+            .ContinueWith(_ => Dispatcher.UIThread.Post(() => OnOwnTxVolumeWriteEnded(family)), CancellationToken.None,
                 TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
     }
 
-    /// <summary>UI thread only. Number of header Pwr writes scheduled and not yet ended.</summary>
-    private int _ownTxVolumeWrites;
+    /// <summary>UI thread only. One family's Pwr bookkeeping.</summary>
+    private sealed class TxLevelState
+    {
+        /// <summary>The family's level as this view model knows it: loaded, dragged or synced.</summary>
+        public int Percent { get; set; } = DefaultTxVolumePercent;
 
-    /// <summary>UI thread only. Highest-version Pwr change seen, applied or held back.</summary>
-    private TxVolumeChange? _latestTxVolumeChange;
+        /// <summary>Header writes scheduled and not yet ended.</summary>
+        public int OwnWrites { get; set; }
 
-    /// <summary>UI thread only. Version of the last change reconciled into <see cref="TxVolumePercent"/>.</summary>
-    private long _appliedTxVolumeVersion;
+        /// <summary>Highest-version change seen, applied or held back.</summary>
+        public TxVolumeChange? Latest { get; set; }
 
-    /// <summary>UI thread only. True once any change event arrived, so the unversioned startup load
-    /// must not overwrite it.</summary>
-    private bool _txVolumeChangeSeen;
+        /// <summary>Version of the last change reconciled into <see cref="Percent"/>.</summary>
+        public long AppliedVersion { get; set; }
+
+        /// <summary>True once any change event arrived, so the unversioned startup load must not overwrite it.</summary>
+        public bool ChangeSeen { get; set; }
+    }
+
+    private const int DefaultTxVolumePercent = 100;
+
+    private readonly TxLevelState _sstvTxLevel = new();
+    private readonly TxLevelState _drmTxLevel = new();
+
+    private TxLevelState TxLevelOf(TxLevelFamily family) => family == TxLevelFamily.Drm ? _drmTxLevel : _sstvTxLevel;
 
     /// <summary>Raised on the writer's thread (see <see cref="ISstvSessionService.TxVolumePercentChanged"/>);
     /// Post never blocks it.</summary>
@@ -1826,47 +1872,62 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private void OnTxVolumeChangeReceived(TxVolumeChange change)
     {
-        _txVolumeChangeSeen = true;
-        if (_latestTxVolumeChange is null || change.Version > _latestTxVolumeChange.Version)
+        var level = TxLevelOf(change.Family);
+        level.ChangeSeen = true;
+        if (level.Latest is null || change.Version > level.Latest.Version)
         {
-            _latestTxVolumeChange = change;
+            level.Latest = change;
         }
 
-        // While the user's own write is pending or in flight, hold back: it lands after this change,
-        // and the reconcile below picks whichever committed last.
-        if (_ownTxVolumeWrites == 0)
+        // While the user's own write for this family is pending or in flight, hold back: it lands after this
+        // change, and the reconcile below picks whichever committed last.
+        if (level.OwnWrites == 0)
         {
-            ReconcileTxVolume();
-        }
-    }
-
-    private void OnOwnTxVolumeWriteEnded()
-    {
-        _ownTxVolumeWrites--;
-        if (_ownTxVolumeWrites == 0)
-        {
-            ReconcileTxVolume();
+            ReconcileTxVolume(change.Family);
         }
     }
 
-    private void ReconcileTxVolume()
+    private void OnOwnTxVolumeWriteEnded(TxLevelFamily family)
     {
-        if (_latestTxVolumeChange is not { } latest || latest.Version <= _appliedTxVolumeVersion)
+        var level = TxLevelOf(family);
+        level.OwnWrites--;
+        if (level.OwnWrites == 0)
+        {
+            ReconcileTxVolume(family);
+        }
+    }
+
+    private void ReconcileTxVolume(TxLevelFamily family)
+    {
+        var level = TxLevelOf(family);
+        if (level.Latest is not { } latest || latest.Version <= level.AppliedVersion)
         {
             return;
         }
 
-        _appliedTxVolumeVersion = latest.Version;
-        if (latest.Percent == TxVolumePercent)
+        level.AppliedVersion = latest.Version;
+        if (latest.Percent == level.Percent)
         {
             return;
         }
 
-        Log.TxVolumeSyncedFromElsewhere(_logger, latest.Percent);
+        Log.TxVolumeSyncedFromElsewhere(_logger, family, latest.Percent);
+        level.Percent = latest.Percent;
+        if (family == ActiveTxLevelFamily)
+        {
+            ShowTxLevel(latest.Percent);
+        }
+    }
+
+    /// <summary>Shows a level without writing it back.</summary>
+    private void ShowTxLevel(int percent)
+    {
+        // Tier B audit finding: try/finally -- see OnStateChanged's own comment on the same
+        // fix for _suppressModeCommand.
         try
         {
             _suppressVolumePersist = true;
-            TxVolumePercent = latest.Percent;
+            TxVolumePercent = percent;
         }
         finally
         {
@@ -1874,15 +1935,15 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         }
     }
 
-    private async Task PersistVolumeAsync(int value, CancellationToken ct)
+    private async Task PersistVolumeAsync(TxLevelFamily family, int value, CancellationToken ct)
     {
         try
         {
-            await _sstvSession.SetTxVolumePercentAsync(value, ct).ConfigureAwait(false);
+            await _sstvSession.SetTxVolumePercentAsync(family, value, ct).ConfigureAwait(false);
         }
         catch (Exception ex)
         {
-            Log.PersistTxVolumeFailed(_logger, value, ex);
+            Log.PersistTxVolumeFailed(_logger, family, value, ex);
         }
     }
 
@@ -1958,8 +2019,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading frequency presets failed")]
         public static partial void LoadPresetsFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX Pwr failed")]
-        public static partial void LoadTxVolumeFailed(ILogger logger, Exception ex);
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX Pwr ({Family}) failed")]
+        public static partial void LoadTxVolumeFailed(ILogger logger, TxLevelFamily family, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX device mute state failed")]
         public static partial void LoadTxMuteFailed(ILogger logger, Exception ex);
@@ -2027,11 +2088,14 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "SetReceiving({Value}) failed")]
         public static partial void SetReceivingFailed(ILogger logger, bool value, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX Pwr ({Value}%) failed")]
-        public static partial void PersistTxVolumeFailed(ILogger logger, int value, Exception ex);
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting TX Pwr ({Family}, {Value}%) failed")]
+        public static partial void PersistTxVolumeFailed(ILogger logger, TxLevelFamily family, int value, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "Header Pwr synced to {Percent}% from another writer")]
-        public static partial void TxVolumeSyncedFromElsewhere(ILogger logger, int percent);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Header Pwr ({Family}) synced to {Percent}% from another writer")]
+        public static partial void TxVolumeSyncedFromElsewhere(ILogger logger, TxLevelFamily family, int percent);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "Header Pwr now shows the {Family} level")]
+        public static partial void TxLevelFamilySelected(ILogger logger, TxLevelFamily family);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "SelectedRadioMode changed: {Value}")]
         public static partial void SelectedRadioModeChanged(ILogger logger, RadioMode value);

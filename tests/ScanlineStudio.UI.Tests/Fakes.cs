@@ -977,9 +977,13 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     /// <c>CanExecute</c>, not just via a direct <c>ExecuteAsync</c> call that bypasses it.</summary>
     public TaskCompletionSource? TuneGate { get; set; }
 
-    public async Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
+    /// <summary>The Pwr family of each <see cref="TuneAsync"/> call, parallel to <see cref="TuneCalls"/>.</summary>
+    public List<TxLevelFamily> TuneFamilies { get; } = [];
+
+    public async Task TuneAsync(TxLevelFamily family, double frequencyHz, TimeSpan duration, CancellationToken ct = default)
     {
         TuneCalls.Add((frequencyHz, duration));
+        TuneFamilies.Add(family);
         if (TuneGate is not null)
         {
             using (ct.Register(() => TuneGate.TrySetCanceled(ct)))
@@ -989,34 +993,64 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
         }
     }
 
+    /// <summary>The SSTV level.</summary>
     public int TxVolumePercent { get; set; } = 100;
 
-    public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => Task.FromResult(TxVolumePercent);
+    public int DrmTxVolumePercent { get; set; } = 100;
+
+    /// <summary>When a family has an entry, its read throws that exception.</summary>
+    public Dictionary<TxLevelFamily, Exception> GetTxVolumePercentExceptions { get; } = [];
+
+    public Task<int> GetTxVolumePercentAsync(TxLevelFamily family, CancellationToken ct = default) =>
+        GetTxVolumePercentExceptions.TryGetValue(family, out var ex)
+            ? Task.FromException<int>(ex)
+            : Task.FromResult(family == TxLevelFamily.Drm ? DrmTxVolumePercent : TxVolumePercent);
 
     public int SetTxVolumePercentCallCount { get; private set; }
 
+    public List<(TxLevelFamily Family, int Percent)> SetTxVolumePercentCalls { get; } = [];
+
     /// <summary>When set, SetTxVolumePercentAsync awaits it before storing, so a test can hold a write in flight.</summary>
     public TaskCompletionSource? SetTxVolumePercentGate { get; set; }
+
+    /// <summary>Per-family gates, checked before <see cref="SetTxVolumePercentGate"/>.</summary>
+    public Dictionary<TxLevelFamily, TaskCompletionSource> SetTxVolumePercentGates { get; } = [];
 
     private long _txVolumeVersion;
 
     public event Action<TxVolumeChange>? TxVolumePercentChanged;
 
-    public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    public async Task SetTxVolumePercentAsync(TxLevelFamily family, int percent, CancellationToken ct = default)
     {
         SetTxVolumePercentCallCount++;
+        SetTxVolumePercentCalls.Add((family, percent));
+        if (SetTxVolumePercentGates.TryGetValue(family, out var familyGate))
+        {
+            await familyGate.Task.ConfigureAwait(false);
+        }
+
         if (SetTxVolumePercentGate is { } gate)
         {
             await gate.Task.ConfigureAwait(false);
         }
 
-        TxVolumePercent = Math.Clamp(percent, 0, 100);
-        TxVolumePercentChanged?.Invoke(new TxVolumeChange(TxVolumePercent, Interlocked.Increment(ref _txVolumeVersion)));
+        percent = Math.Clamp(percent, 0, 100);
+        if (family == TxLevelFamily.Drm)
+        {
+            DrmTxVolumePercent = percent;
+        }
+        else
+        {
+            TxVolumePercent = percent;
+        }
+
+        TxVolumePercentChanged?.Invoke(new TxVolumeChange(family, percent, Interlocked.Increment(ref _txVolumeVersion)));
     }
 
     public Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default)
     {
         RaiseExternalTxVolumeChange(TxVolumePercent);
+        RaiseExternalTxVolumeChange(DrmTxVolumePercent, TxLevelFamily.Drm);
         return Task.CompletedTask;
     }
 
@@ -1024,13 +1058,24 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
     public void RaiseTxVolumeChange(TxVolumeChange change) => TxVolumePercentChanged?.Invoke(change);
 
     /// <summary>Simulates another writer (Options, a preset switch) committing a Pwr value.</summary>
-    public TxVolumeChange RaiseExternalTxVolumeChange(int percent)
+    public TxVolumeChange RaiseExternalTxVolumeChange(int percent, TxLevelFamily family = TxLevelFamily.Sstv)
     {
-        TxVolumePercent = percent;
-        var change = new TxVolumeChange(percent, Interlocked.Increment(ref _txVolumeVersion));
+        if (family == TxLevelFamily.Drm)
+        {
+            DrmTxVolumePercent = percent;
+        }
+        else
+        {
+            TxVolumePercent = percent;
+        }
+
+        var change = new TxVolumeChange(family, percent, Interlocked.Increment(ref _txVolumeVersion));
         TxVolumePercentChanged?.Invoke(change);
         return change;
     }
+
+    /// <summary>The next version number, for a test that builds its own <see cref="TxVolumeChange"/>.</summary>
+    public long NextTxVolumeVersion() => Interlocked.Increment(ref _txVolumeVersion);
 
     public bool TxIsMuted { get; set; }
 

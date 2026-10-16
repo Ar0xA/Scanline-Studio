@@ -28,7 +28,7 @@ public sealed partial class SstvSessionService
             // Reuse the exact resolved options for estimation and encoding. Estimation traverses
             // the scanlines, so keep that work off the caller's UI thread.
             var totalSamplesEstimate = await Task.Run(() => _encoder.EstimateSampleCount(mode, image, stationId, sampleRateOffsetHz), ct).ConfigureAwait(false);
-            await PlayWithPttAsync(_encoder.EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
+            await PlayWithPttAsync(_encoder.EncodeBatchedAsync(mode, image, stationId, sampleRateOffsetHz, txBpfEnabled, txBpfTapCount, txLpfEnabled, txLpfFrequencyHz, ct), _encoder.SampleRate, TxLevelFamily.Sstv, ct, totalSamplesEstimate: totalSamplesEstimate).ConfigureAwait(false);
         }
         finally
         {
@@ -36,7 +36,7 @@ public sealed partial class SstvSessionService
         }
     }
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default)
+    public Task TuneAsync(TxLevelFamily family, double frequencyHz, TimeSpan duration, CancellationToken ct = default)
     {
         const int sampleRate = 48_000;
 
@@ -67,11 +67,11 @@ public sealed partial class SstvSessionService
             throw new ArgumentOutOfRangeException(nameof(duration), duration, $"Must be greater than zero and at most {MaxTuneDuration}.");
         }
 
-        Log.TuneStarting(_logger, frequencyHz, duration);
-        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, ct);
+        Log.TuneStarting(_logger, frequencyHz, duration, family);
+        return PlayWithPttAsync(GenerateTone(frequencyHz, duration, sampleRate, ct), sampleRate, family, ct);
     }
 
-    public async Task<int> GetTxVolumePercentAsync(CancellationToken ct = default)
+    public async Task<int> GetTxVolumePercentAsync(TxLevelFamily family, CancellationToken ct = default)
     {
         var settings = await LoadAudioSettingsAsync(ct).ConfigureAwait(false);
 
@@ -82,10 +82,20 @@ public sealed partial class SstvSessionService
         // would reach PumpToPlaybackAsync's unclamped `sample * gain` directly, hard-clipping the
         // transmitted audio into a square wave (real-world splatter risk on an actual transmitter) or
         // inverting phase. Clamped here so every reader gets a safe value regardless of what's on disk.
-        return Math.Clamp(settings.TxVolumePercent ?? 100, 0, 100);
+        return ResolveTxVolumePercent(settings, family);
     }
 
-    public async Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default)
+    /// <summary>The clamped level of <paramref name="family"/>; an unset DRM level reads as the SSTV level.</summary>
+    private static int ResolveTxVolumePercent(AudioDeviceSettings? settings, TxLevelFamily family) => Math.Clamp(
+        family == TxLevelFamily.Drm
+            ? settings?.DrmTxVolumePercent ?? settings?.TxVolumePercent ?? DefaultTxVolumePercent
+            : settings?.TxVolumePercent ?? DefaultTxVolumePercent,
+        0,
+        100);
+
+    private const int DefaultTxVolumePercent = 100;
+
+    public async Task SetTxVolumePercentAsync(TxLevelFamily family, int percent, CancellationToken ct = default)
     {
         // Clamped on write too, not just on read -- GetTxVolumePercentAsync's own clamp already
         // makes an out-of-range value on disk safe to READ, but leaving it unclamped here would
@@ -103,65 +113,83 @@ public sealed partial class SstvSessionService
             version = Interlocked.Increment(ref _txVolumeVersion);
             var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)
                 ?? new AudioDeviceSettings();
-            return appSettings.WithSection(
-                AudioDeviceSettings.SectionKey,
-                current with { TxVolumePercent = percent },
-                AudioSettingsJsonContext.Default.AudioDeviceSettings);
+            var updated = family == TxLevelFamily.Drm
+                ? current with { DrmTxVolumePercent = percent }
+                : current with
+                {
+                    TxVolumePercent = percent,
+
+                    // An unset DRM level reads as SSTV; pin it at the pre-write value so an SSTV change never moves DRM.
+                    DrmTxVolumePercent = current.DrmTxVolumePercent ?? ResolveTxVolumePercent(current, TxLevelFamily.Sstv),
+                };
+            return appSettings.WithSection(AudioDeviceSettings.SectionKey, updated, AudioSettingsJsonContext.Default.AudioDeviceSettings);
         }, ct).ConfigureAwait(false);
 
         // Write-through to the live field _before_ Log/return -- so a caller awaiting this method's
         // completion (e.g. the Options window's debounced Pwr-slider persist) is guaranteed
         // PumpToPlaybackAsync's NEXT chunk read already sees the new value, not just "eventually".
         // See _liveTxGain's own doc comment for why a live in-flight transmission needs this at all.
-        ApplyLiveTxGain(percent, version);
+        ApplyLiveTxGain(family, percent, version);
 
-        Log.TxVolumeSet(_logger, percent);
-        RaiseTxVolumePercentChanged(new TxVolumeChange(percent, version));
+        Log.TxVolumeSet(_logger, family, percent);
+        RaiseTxVolumePercentChanged(new TxVolumeChange(family, percent, version));
     }
 
     public async Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default)
     {
-        var percent = 100;
-        long version = 0;
-        // Read and version under the same lock as SetTxVolumePercentAsync; returning the input
-        // unchanged makes UpdateAsync skip the write.
+        int sstvPercent = DefaultTxVolumePercent, drmPercent = DefaultTxVolumePercent;
+        long sstvVersion = 0, drmVersion = 0;
+        // Read both levels and version them under the same lock as SetTxVolumePercentAsync; returning the
+        // input unchanged makes UpdateAsync skip the write.
         await _settingsStore.UpdateAsync(appSettings =>
         {
-            version = Interlocked.Increment(ref _txVolumeVersion);
+            sstvVersion = Interlocked.Increment(ref _txVolumeVersion);
+            drmVersion = Interlocked.Increment(ref _txVolumeVersion);
             var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
-            percent = Math.Clamp(current?.TxVolumePercent ?? 100, 0, 100);
+            sstvPercent = ResolveTxVolumePercent(current, TxLevelFamily.Sstv);
+            drmPercent = ResolveTxVolumePercent(current, TxLevelFamily.Drm);
             return appSettings;
         }, ct).ConfigureAwait(false);
 
-        ApplyLiveTxGain(percent, version);
-        Log.TxVolumeResynced(_logger, percent);
-        RaiseTxVolumePercentChanged(new TxVolumeChange(percent, version));
+        // Only the transmitting family's call reaches the live gain.
+        ApplyLiveTxGain(TxLevelFamily.Sstv, sstvPercent, sstvVersion);
+        ApplyLiveTxGain(TxLevelFamily.Drm, drmPercent, drmVersion);
+        Log.TxVolumeResynced(_logger, sstvPercent, drmPercent);
+        RaiseTxVolumePercentChanged(new TxVolumeChange(TxLevelFamily.Sstv, sstvPercent, sstvVersion));
+        RaiseTxVolumePercentChanged(new TxVolumeChange(TxLevelFamily.Drm, drmPercent, drmVersion));
     }
 
-    /// <summary>Reads Pwr and samples the version under the settings lock: a write committed after this read
-    /// has a higher version, so <see cref="ApplyLiveTxGain"/> lets it win in either landing order. Relies on the
-    /// store skipping the write for a same-reference mutate, as JsonSettingsStore does.</summary>
-    private async Task SeedLiveTxGainAsync(CancellationToken ct)
+    /// <summary>Reads <paramref name="family"/>'s level and samples the version under the settings lock; the caller has
+    /// already made it the live family: a same-family write committed after this read has a higher version, so
+    /// <see cref="ApplyLiveTxGain"/> lets it win in either landing order, and an other-family write is dropped
+    /// whenever it lands. Relies on the store skipping the write for a same-reference mutate, as JsonSettingsStore
+    /// does.</summary>
+    private async Task SeedLiveTxGainAsync(TxLevelFamily family, CancellationToken ct)
     {
-        var percent = 100;
+        var percent = DefaultTxVolumePercent;
         long seenVersion = 0;
         await _settingsStore.UpdateAsync(appSettings =>
         {
             seenVersion = Interlocked.Read(ref _txVolumeVersion);
             var current = appSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings);
-            percent = Math.Clamp(current?.TxVolumePercent ?? 100, 0, 100);
+            percent = ResolveTxVolumePercent(current, family);
             return appSettings;
         }, ct).ConfigureAwait(false);
 
-        ApplyLiveTxGain(percent, seenVersion);
+        ApplyLiveTxGain(family, percent, seenVersion);
     }
 
-    /// <summary>Writes the live gain unless a newer version already did: writers resume after the
-    /// settings lock in no fixed order.</summary>
-    private void ApplyLiveTxGain(int percent, long version)
+    /// <summary>Writes the live gain unless it carries another family's level or a newer version already did:
+    /// writers resume after the settings lock in no fixed order.</summary>
+    private void ApplyLiveTxGain(TxLevelFamily family, int percent, long version)
     {
         lock (_liveTxGainGate)
         {
+            if (family != _liveTxFamily)
+            {
+                return;
+            }
+
             if (version < _liveTxGainVersion)
             {
                 return;
@@ -226,7 +254,7 @@ public sealed partial class SstvSessionService
     // now specifically so PumpToPlaybackAsync can consume batches directly -- see that method's own
     // comment for why flattening back to individual floats before this point would erase the entire
     // point of batching.
-    private async Task PlayWithPttAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, CancellationToken ct, long? totalSamplesEstimate = null)
+    private async Task PlayWithPttAsync(IAsyncEnumerable<ReadOnlyMemory<float>> samples, int sampleRate, TxLevelFamily family, CancellationToken ct, long? totalSamplesEstimate = null)
     {
         // Round-12 finding: single-flight guard, checked before ANYTHING else -- no RX pause, no
         // device resolution, no PTT touched. See _transmitInFlight's own doc comment for the failure
@@ -356,7 +384,14 @@ public sealed partial class SstvSessionService
                 // yet this process's life -- PumpToPlaybackAsync below reads the LIVE field per chunk,
                 // not this local, so a Pwr-slider change after this point (e.g. mid-Tune) still takes
                 // effect immediately. See _liveTxGain's own doc comment for the full reasoning.
-                await Task.Run(() => SeedLiveTxGainAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
+                // Set here, not inside the seed, so an orphaned seed after a timeout cannot flip the family of a later
+                // transmission; before the seed's read, so an other-family write applied after it sees the mismatch.
+                lock (_liveTxGainGate)
+                {
+                    _liveTxFamily = family;
+                }
+
+                await Task.Run(() => SeedLiveTxGainAsync(family, ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
                 var audioSettings = await Task.Run(() => LoadAudioSettingsAsync(ct), ct).WaitAsync(_cleanupTimeout, ct).ConfigureAwait(false);
 
                 // Guarded on RigId ("none" = the null-object "no radio" backend, spec/18-path-to-1.0.md

@@ -7,7 +7,7 @@ namespace ScanlineStudio.UI.Settings;
 /// out-of-range enum value, resolves to its <see cref="DrmSettingsDefaults"/> value at read time.
 /// Two writers each update only their own fields with <c>previous with { … }</c>: the TX pane owns
 /// <see cref="ActiveProfileIndex"/>, <see cref="SizePreset"/>, <see cref="TargetKb"/> and <see cref="Custom"/>;
-/// Options owns <see cref="Profiles"/>, <see cref="VoxTone"/> and <see cref="LevelOffsetDb"/>.</summary>
+/// Options owns <see cref="Profiles"/> and <see cref="VoxTone"/>. The DRM Pwr level lives in the Audio section.</summary>
 public sealed record DrmSettings
 {
     public const string SectionKey = "Drm";
@@ -28,9 +28,6 @@ public sealed record DrmSettings
 
     /// <summary>QSSTV's 1 s VOX tone before the DRM frames. Default off (txwidget.cpp:167).</summary>
     public bool? VoxTone { get; init; }
-
-    /// <summary>Our own DRM drive offset in dB, −20..0.</summary>
-    public double? LevelOffsetDb { get; init; }
 }
 
 /// <summary>One DRM profile as stored. A null or empty <see cref="Name"/> shows the localized default name.</summary>
@@ -90,8 +87,6 @@ public static class DrmSettingsDefaults
 
     public const bool DefaultVoxTone = false;
 
-    public const double DefaultLevelOffsetDb = 0;
-
     public static readonly DrmProfile Robust = new(
         DrmRobustnessMode.B, DrmBandwidth.Hz2500, DrmQamOrder.Qam4, DrmProtectionLevel.High, DrmInterleaving.LongInterleaver, DrmReedSolomonLevel.Rs2);
 
@@ -144,9 +139,6 @@ public static class DrmSettingsDefaults
         settings?.TargetKb is { } kb ? Math.Clamp(kb, MinTargetKb, MaxTargetKb) : DefaultTargetKb;
 
     public static bool ResolveVoxTone(DrmSettings? settings) => settings?.VoxTone ?? DefaultVoxTone;
-
-    public static double ResolveLevelOffsetDb(DrmSettings? settings) =>
-        DrmTxSettings.ClampLevelOffsetDb(settings?.LevelOffsetDb ?? DefaultLevelOffsetDb);
 
     private static DrmProfileSettings? StoredProfile(DrmSettings? settings, int index) =>
         settings?.Profiles is { } profiles && index >= 0 && index < profiles.Count ? profiles[index] : null;

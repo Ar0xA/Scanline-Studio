@@ -278,6 +278,25 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 }
             }
 
+            // A preset saved before the DRM Pwr level existed must not reset it: keep the live value.
+            if (preset.Sections.ContainsKey(AudioDeviceSettings.SectionKey))
+            {
+                try
+                {
+                    var liveDrmLevel = current.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)?.DrmTxVolumePercent;
+                    var mergedAudio = System.Text.Json.JsonSerializer.Deserialize(merged[AudioDeviceSettings.SectionKey], AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+                    if (mergedAudio.DrmTxVolumePercent is null && liveDrmLevel is not null)
+                    {
+                        merged[AudioDeviceSettings.SectionKey] = System.Text.Json.JsonSerializer.SerializeToElement(
+                            mergedAudio with { DrmTxVolumePercent = liveDrmLevel }, AudioSettingsJsonContext.Default.AudioDeviceSettings);
+                    }
+                }
+                catch (System.Text.Json.JsonException ex)
+                {
+                    Log.DrmTxLevelCarryForwardFailed(_logger, ex);
+                }
+            }
+
             // Step 5: re-set the active-preset marker, against the SAME snapshot the merge above just
             // built (current is a fresh AppSettings.UpdateAsync gave this lambda, not a stale outer
             // read -- that's what makes the two-round-trip precedent above obsolete).
@@ -475,6 +494,9 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: TX Pwr resync failed")]
         public static partial void SwitchTxVolumeResyncFailed(ILogger logger, string name, Exception exception);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Could not carry the live DRM Pwr level into the preset's Audio section")]
+        public static partial void DrmTxLevelCarryForwardFailed(ILogger logger, Exception exception);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Configuration preset switch to {Name}: decoder push failed")]
         public static partial void SwitchDecoderPushFailed(ILogger logger, string name, Exception exception);

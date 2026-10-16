@@ -730,7 +730,7 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         TimeProvider? timeProvider = null)
     {
         var time = timeProvider ?? TimeProvider.System;
-        _txVolumePersist = new Debouncer(TxVolumePersistDebounce, time, resumeOnCapturedContext: false);
+        _txVolumePersist = new KeyedDebouncer<TxLevelFamily>(TxVolumePersistDebounce, time, resumeOnCapturedContext: false);
         _soundFileIdValidation = new Debouncer(SoundFileIdValidationDebounce, time, resumeOnCapturedContext: false);
         _optionsSettingsService = optionsSettingsService;
         _localization = localization;
@@ -958,8 +958,16 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
     [NotifyPropertyChangedFor(nameof(TxVolumeDisplay))]
     private int _txVolumePercent = 100;
 
+    /// <summary>The DRM Pwr level, the twin of <see cref="TxVolumePercent"/> (the SSTV level): same live, debounced
+    /// write, to <see cref="TxLevelFamily.Drm"/>.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(DrmTxVolumeDisplay))]
+    private int _drmTxVolumePercent = 100;
+
     private bool _suppressTxVolumePersist;
-    private readonly Debouncer _txVolumePersist;
+
+    // Keyed by family, so a DRM drag never cancels a pending SSTV write.
+    private readonly KeyedDebouncer<TxLevelFamily> _txVolumePersist;
 
     /// <summary>Toggle state for <see cref="TuneCommand"/> -- <see langword="true"/> while a tone is
     /// keyed, drives the button's own label/affordance between "Tune" and "Stop" (mirrors WSJT-X's
@@ -1252,8 +1260,8 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading Pwr for the Radio/CAT tab failed; left at its default")]
         public static partial void LoadTxVolumeFailed(ILogger logger, Exception ex);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting Pwr={Percent} from the Radio/CAT tab failed")]
-        public static partial void PersistTxVolumeFailed(ILogger logger, int percent, Exception ex);
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Persisting Pwr ({Family}) = {Percent} from the Radio/CAT tab failed")]
+        public static partial void PersistTxVolumeFailed(ILogger logger, TxLevelFamily family, int percent, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Tune invoked: {FrequencyHz}Hz for up to {MaxSeconds}s")]
         public static partial void TuneInvoked(ILogger logger, double frequencyHz, double maxSeconds);

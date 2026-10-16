@@ -37,7 +37,6 @@ public sealed partial class TxControlsPaneViewModel
     private DrmProfile _drmCustom = DrmSettingsDefaults.CustomDefault;
 
     private bool _drmVoxTone = DrmSettingsDefaults.DefaultVoxTone;
-    private double _drmLevelOffsetDb = DrmSettingsDefaults.DefaultLevelOffsetDb;
     private string? _operatorCallsign;
 
     // Set while a profile writes its six fields, so those writes do not flip the profile to Custom.
@@ -235,7 +234,7 @@ public sealed partial class TxControlsPaneViewModel
         var profile = CurrentDrmProfile;
         return new DrmTxSettings(
             profile.Mode, profile.Bandwidth, profile.Qam, profile.Protection, profile.Interleave, profile.ReedSolomon,
-            _operatorCallsign ?? string.Empty, _drmVoxTone, (int)DrmTargetKb * 1000, _drmLevelOffsetDb);
+            _operatorCallsign ?? string.Empty, _drmVoxTone, (int)DrmTargetKb * 1000);
     }
 
     partial void OnDrmTargetKbChanged(double value)
@@ -430,7 +429,6 @@ public sealed partial class TxControlsPaneViewModel
         }
 
         _drmVoxTone = DrmSettingsDefaults.ResolveVoxTone(drm);
-        _drmLevelOffsetDb = DrmSettingsDefaults.ResolveLevelOffsetDb(drm);
         _operatorCallsign = callsign;
 
         // A new names list resets the ComboBox selection; re-raising the index puts it back.

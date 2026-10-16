@@ -251,11 +251,11 @@ internal sealed class FakeSstvSessionServiceForCorrelation : ISstvSessionService
 
     public void ForgetDrmTxFileName() => throw NotExercised();
 
-    public Task TuneAsync(double frequencyHz, TimeSpan duration, CancellationToken ct = default) => throw NotExercised();
+    public Task TuneAsync(TxLevelFamily family, double frequencyHz, TimeSpan duration, CancellationToken ct = default) => throw NotExercised();
 
-    public Task<int> GetTxVolumePercentAsync(CancellationToken ct = default) => throw NotExercised();
+    public Task<int> GetTxVolumePercentAsync(TxLevelFamily family, CancellationToken ct = default) => throw NotExercised();
 
-    public Task SetTxVolumePercentAsync(int percent, CancellationToken ct = default) => throw NotExercised();
+    public Task SetTxVolumePercentAsync(TxLevelFamily family, int percent, CancellationToken ct = default) => throw NotExercised();
 
     public Task ResyncTxVolumeFromSettingsAsync(CancellationToken ct = default) => throw NotExercised();
 

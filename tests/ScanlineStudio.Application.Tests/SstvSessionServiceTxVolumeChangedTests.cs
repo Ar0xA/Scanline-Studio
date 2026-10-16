@@ -36,8 +36,8 @@ public sealed class SstvSessionServiceTxVolumeChangedTests
         var changes = new List<TxVolumeChange>();
         service.TxVolumePercentChanged += changes.Add;
 
-        await service.SetTxVolumePercentAsync(150);
-        await service.SetTxVolumePercentAsync(40);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 150);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 40);
 
         Assert.Equal([100, 40], changes.Select(c => c.Percent));
         Assert.True(changes[1].Version > changes[0].Version);
@@ -51,7 +51,7 @@ public sealed class SstvSessionServiceTxVolumeChangedTests
         service.TxVolumePercentChanged += changes.Add;
         store.SaveAsyncExceptionOnce = new IOException("disk full");
 
-        await Assert.ThrowsAsync<IOException>(() => service.SetTxVolumePercentAsync(40));
+        await Assert.ThrowsAsync<IOException>(() => service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 40));
 
         Assert.Empty(changes);
     }
@@ -64,10 +64,10 @@ public sealed class SstvSessionServiceTxVolumeChangedTests
         service.TxVolumePercentChanged += _ => throw new InvalidOperationException("subscriber bug");
         service.TxVolumePercentChanged += c => seen.Add(c.Percent);
 
-        await service.SetTxVolumePercentAsync(25);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 25);
 
         Assert.Equal([25], seen);
-        Assert.Equal(25, await service.GetTxVolumePercentAsync());
+        Assert.Equal(25, await service.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
     }
 
     [Fact]
@@ -80,7 +80,9 @@ public sealed class SstvSessionServiceTxVolumeChangedTests
 
         await service.ResyncTxVolumeFromSettingsAsync();
 
-        Assert.Equal([30], changes.Select(c => c.Percent));
+        // Two family-tagged changes; the unset DRM level reads as SSTV.
+        Assert.Equal([(TxLevelFamily.Sstv, 30), (TxLevelFamily.Drm, 30)], changes.Select(c => (c.Family, c.Percent)));
+        Assert.True(changes[1].Version > changes[0].Version);
         Assert.Same(before, store.Settings);
     }
 
@@ -91,10 +93,48 @@ public sealed class SstvSessionServiceTxVolumeChangedTests
         var changes = new List<TxVolumeChange>();
         service.TxVolumePercentChanged += changes.Add;
 
-        await service.SetTxVolumePercentAsync(60);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 60);
         await service.ResyncTxVolumeFromSettingsAsync();
 
-        Assert.Equal([60, 60], changes.Select(c => c.Percent));
-        Assert.True(changes[1].Version > changes[0].Version);
+        var sstv = changes.Where(c => c.Family == TxLevelFamily.Sstv).ToList();
+        Assert.Equal([60, 60], sstv.Select(c => c.Percent));
+        Assert.True(sstv[1].Version > sstv[0].Version);
+    }
+
+    [Fact]
+    public async Task SstvWrite_WhileDrmIsUnset_LeavesTheEffectiveDrmLevelUnchanged()
+    {
+        var (service, store) = Create(persistedPercent: 30);
+        Assert.Equal(30, await service.GetTxVolumePercentAsync(TxLevelFamily.Drm));
+
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 80);
+
+        Assert.Equal(80, await service.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
+        Assert.Equal(30, await service.GetTxVolumePercentAsync(TxLevelFamily.Drm));
+        Assert.Equal(30, store.Settings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings)!.DrmTxVolumePercent);
+    }
+
+    [Fact]
+    public async Task SstvWrite_WithBothLevelsUnset_PinsDrmAtTheDefault()
+    {
+        var (service, _) = Create();
+
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 50);
+
+        Assert.Equal(100, await service.GetTxVolumePercentAsync(TxLevelFamily.Drm));
+    }
+
+    [Fact]
+    public async Task DrmWrite_LeavesSstvAlone_AndTagsTheChange()
+    {
+        var (service, _) = Create(persistedPercent: 70);
+        var changes = new List<TxVolumeChange>();
+        service.TxVolumePercentChanged += changes.Add;
+
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 35);
+
+        Assert.Equal(70, await service.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
+        Assert.Equal(35, await service.GetTxVolumePercentAsync(TxLevelFamily.Drm));
+        Assert.Equal((TxLevelFamily.Drm, 35), (Assert.Single(changes).Family, changes[0].Percent));
     }
 }

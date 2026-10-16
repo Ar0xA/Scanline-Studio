@@ -653,11 +653,16 @@
                                     <TextBlock Classes="IndustryGbTitle" Text="{loc:Translate Options.Radio.PwrHeader}" />
                                 </HeaderedContentControl.Header>
                                 <StackPanel Spacing="{StaticResource IndustrySpacingSnug}">
-                                    <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
-                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.PwrLabel}" VerticalAlignment="Center" />
+                                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="6" RowSpacing="4">
+                                        <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.PwrLabel.Sstv}" VerticalAlignment="Center" />
                                         <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}"
                                                 Value="{Binding TxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
                                         <TextBlock Grid.Column="2" Classes="IndustryRowValue" Text="{Binding TxVolumeDisplay}" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Row="1" Classes="IndustryRowLabel" Text="{loc:Translate Options.Radio.PwrLabel.Drm}" VerticalAlignment="Center"
+                                                   ToolTip.Tip="{loc:Translate Options.Radio.PwrLabel.Drm.Help}" />
+                                        <Slider Grid.Row="1" Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}"
+                                                Value="{Binding DrmTxVolumePercent}" Minimum="0" Maximum="100" VerticalAlignment="Center" />
+                                        <TextBlock Grid.Row="1" Grid.Column="2" Classes="IndustryRowValue" Text="{Binding DrmTxVolumeDisplay}" VerticalAlignment="Center" />
                                     </Grid>
                                     <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
                                         <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary"
@@ -799,14 +804,6 @@
                                               Content="{loc:Translate Options.Drm.VoxTone}"
                                               IsChecked="{Binding DrmVoxTone}"
                                               ToolTip.Tip="{loc:Translate Panes.TxControls.Drm.VoxTone.Help}" />
-                                    <Grid ColumnDefinitions="Auto,Auto" ColumnSpacing="6">
-                                        <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}">
-                                            <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Drm.LevelOffset}" />
-                                            <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Drm.LevelOffset.Help}" />
-                                        </StackPanel>
-                                        <NumericUpDown Grid.Column="1" Classes="Industry" Theme="{StaticResource IndustryStepperTheme}"
-                                                       Value="{Binding DrmLevelOffsetDb}" Increment="1" Minimum="-20" Maximum="0" FormatString="0" />
-                                    </Grid>
                                 </StackPanel>
                             </ContentControl>
 

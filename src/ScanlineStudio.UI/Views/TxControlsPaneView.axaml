@@ -248,7 +248,7 @@
              RadioStatus reference MainViewModel assigns onto this VM directly, not a second
              independent value - see TxControlsPaneViewModel.RadioStatus's own doc comment).
              TxVolumePercent is app-internal TX playback gain, same shape WSJT-X's/fldigi's own
-             Pwr controls use — Panes.TxControls.DriveLabel's own string was renamed off "Drive"
+             Pwr controls use — the label (RadioStatus.TxLevelLabel) was renamed off "Drive"
              to "Pwr" to match (a real OS-mixer-volume design briefly replaced this same-session,
              then was reverted; TxVolumeDisplay/TxIsMuted still show a real OS mute readout for
              the TX device independent of this gain, see RadioStatusViewModel.TxIsMuted) +
@@ -266,7 +266,7 @@
             </HeaderedContentControl.Header>
             <StackPanel Spacing="{StaticResource IndustrySpacingTight}">
                 <Border Classes="IndustryRow"><Grid ColumnDefinitions="Auto,*,Auto">
-                    <TextBlock Classes="IndustryRowLabel" Text="{loc:Translate Panes.TxControls.DriveLabel}" VerticalAlignment="Center" />
+                    <TextBlock Classes="IndustryRowLabel" Text="{Binding RadioStatus.TxLevelLabel, FallbackValue=''}" VerticalAlignment="Center" />
                     <Slider Grid.Column="1" Classes="Industry h6" Theme="{StaticResource IndustrySliderTheme}" Margin="6,0"
                             Value="{Binding RadioStatus.TxVolumePercent}"
                             Minimum="0" Maximum="100" VerticalAlignment="Center" />

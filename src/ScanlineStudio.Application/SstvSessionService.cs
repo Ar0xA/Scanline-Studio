@@ -150,6 +150,11 @@ public sealed partial class SstvSessionService : ISstvSessionService
     /// <see cref="_liveTxGainGate"/>.</summary>
     private long _liveTxGainVersion;
 
+    /// <summary>The family whose level <see cref="_liveTxGain"/> carries, guarded by <see cref="_liveTxGainGate"/>.
+    /// Set by each transmission before its seed reads settings; a write for the other family never touches the
+    /// live gain.</summary>
+    private TxLevelFamily _liveTxFamily = TxLevelFamily.Sstv;
+
     public event Action<TxVolumeChange>? TxVolumePercentChanged;
     // Ultracode audit finding #34's OnDecoderRestartCriticallyOverdue can now call StopReceivingAsync
     // (which writes this) from the audio drain thread, not just from a UI-thread-initiated
@@ -1153,14 +1158,14 @@ public sealed partial class SstvSessionService : ISstvSessionService
         [LoggerMessage(Level = LogLevel.Information, Message = "TX starting: mode={ModeId}, {Width}x{Height}")]
         public static partial void TxStarting(ILogger logger, string modeId, int width, int height);
 
-        [LoggerMessage(Level = LogLevel.Information, Message = "Tune starting: {FrequencyHz}Hz for {Duration}")]
-        public static partial void TuneStarting(ILogger logger, double frequencyHz, TimeSpan duration);
+        [LoggerMessage(Level = LogLevel.Information, Message = "Tune starting: {FrequencyHz}Hz for {Duration} at the {Family} Pwr level")]
+        public static partial void TuneStarting(ILogger logger, double frequencyHz, TimeSpan duration, TxLevelFamily family);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr set to {Percent}%")]
-        public static partial void TxVolumeSet(ILogger logger, int percent);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr ({Family}) set to {Percent}%")]
+        public static partial void TxVolumeSet(ILogger logger, TxLevelFamily family, int percent);
 
-        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr resynced from settings: {Percent}%")]
-        public static partial void TxVolumeResynced(ILogger logger, int percent);
+        [LoggerMessage(Level = LogLevel.Debug, Message = "TX Pwr resynced from settings: SSTV {SstvPercent}%, DRM {DrmPercent}%")]
+        public static partial void TxVolumeResynced(ILogger logger, int sstvPercent, int drmPercent);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "A TxVolumePercentChanged subscriber threw")]
         public static partial void TxVolumeChangedSubscriberFailed(ILogger logger, Exception ex);

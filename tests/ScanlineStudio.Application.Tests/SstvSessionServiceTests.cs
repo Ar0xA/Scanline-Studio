@@ -876,7 +876,7 @@ public sealed class SstvSessionServiceTests
         };
 
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
+            () => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromSeconds(5), ct: cts.Token));
 
         Assert.Equal([true, false], raised);
     }
@@ -951,7 +951,7 @@ public sealed class SstvSessionServiceTests
         };
 
         await Assert.ThrowsAsync<OperationCanceledException>(
-            () => service.TuneAsync(1750, TimeSpan.FromSeconds(5), ct: cts.Token));
+            () => service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromSeconds(5), ct: cts.Token));
 
         Assert.Equal(PttOnThenOff, radioSession.PttCalls);
         Assert.True(audioEngine.IsCapturing, "capture should have been restarted after a cancelled Tune");
@@ -963,7 +963,7 @@ public sealed class SstvSessionServiceTests
         var (service, audioEngine, _, _, radioSession, _, _) = CreateService();
         await service.StartReceivingAsync();
 
-        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(1));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(1));
 
         Assert.Equal(PttOnThenOff, radioSession.PttCalls);
         Assert.True(audioEngine.IsCapturing, "RX should have resumed once the tune tone finished");
@@ -993,7 +993,7 @@ public sealed class SstvSessionServiceTests
             audioEngine, deviceEnumerator, new FakeAudioDeviceMuteQuery(), settingsStore, new FakeSstvDecoder(), new FakeSstvEncoder(), new MacroTextResolver(),
             new FakeWaterfallSource(), new FakeReceivedImageBuffer(), new FakeRadioSessionService(), new FakeCwIdDecoder(), NullLogger<SstvSessionService>.Instance);
 
-        var percent = await service.GetTxVolumePercentAsync();
+        var percent = await service.GetTxVolumePercentAsync(TxLevelFamily.Sstv);
 
         Assert.Equal(100, percent);
     }
@@ -1021,7 +1021,7 @@ public sealed class SstvSessionServiceTests
     public async Task TuneAsync_PwrChangedMidTone_AppliesNewGainToLaterChunksNotEarlierOnes()
     {
         var (service, audioEngine, _, _, _, _, _) = CreateService();
-        await service.SetTxVolumePercentAsync(20);
+        await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 20);
 
         // Deterministic gate (FakeAudioEngine.OnPlaybackChunkEnqueued), not a race: fires
         // synchronously on the pump's own thread right after the FIRST 4096-sample chunk lands, so
@@ -1033,14 +1033,14 @@ public sealed class SstvSessionServiceTests
             if (!changedAfterFirstChunk)
             {
                 changedAfterFirstChunk = true;
-                await service.SetTxVolumePercentAsync(80);
+                await service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 80);
             }
         };
 
         // TuneAsync's tone runs at a fixed 48kHz (see its own `const int sampleRate = 48_000`) --
         // 500ms gives 24000 samples, i.e. 5 full 4096-sample chunks plus a partial one, comfortably
         // exercising the chunk-boundary re-read this test targets.
-        await service.TuneAsync(1750, TimeSpan.FromMilliseconds(500));
+        await service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(500));
 
         var firstChunk = audioEngine.PlaybackSamples.Take(4096).ToArray();
         var laterChunk = audioEngine.PlaybackSamples.Skip(4096).Take(4096).ToArray();

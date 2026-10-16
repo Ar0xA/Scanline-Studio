@@ -120,7 +120,7 @@ public sealed class SstvSessionServiceTransmitDrmTests
         };
 
         if (tune)
-            await h.Service.TuneAsync(1000, TimeSpan.FromSeconds(1));
+            await h.Service.TuneAsync(TxLevelFamily.Sstv, 1000, TimeSpan.FromSeconds(1));
         else
             await h.Service.TransmitAsync(SstvMode, Image);
 
@@ -168,57 +168,133 @@ public sealed class SstvSessionServiceTransmitDrmTests
 
     private static readonly float[] SstvSamples = Enumerable.Range(0, 9000).Select(i => MathF.Sin(i * 0.05f) * 0.5f).ToArray();
 
-    [Theory]
-    [InlineData(-6.0, -6.0)]
-    [InlineData(-30.0, -20.0)]
-    [InlineData(5.0, 0.0)]
-    [InlineData(double.NaN, 0.0)]
-    [InlineData(double.PositiveInfinity, 0.0)]
-    [InlineData(double.NegativeInfinity, 0.0)]
-    public async Task TransmitDrm_LevelOffset_ScalesTheDrmAudioOnly_ClampedAtTheServiceBoundary(double requestedDb, double appliedDb)
+    // Addendum A: each entry point plays at its own family's level (SSTV 100, DRM 40).
+    [Fact]
+    public async Task TransmitDrm_PlaysAtTheDrmLevel_AndSstvAndTuneAtTheirOwn()
     {
         var h = new Harness(sstvSamples: SstvSamples);
+        await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 100);
+        await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 40);
 
-        DrmTxResult result = await h.Service.TransmitDrmAsync(Image, "photo.png", Settings with { LevelOffsetDb = requestedDb });
+        DrmTxResult result = await h.Service.TransmitDrmAsync(Image, "photo.png", Settings);
 
-        float factor = (float)Math.Pow(10, appliedDb / 20);
-        float[] expected = (await ExpectedSamplesAsync()).Select(x => x * factor).ToArray();
+        float[] expected = (await ExpectedSamplesAsync()).Select(x => x * 0.4f).ToArray();
         float[] drm = [.. h.Audio.PlaybackSamples];
-        Assert.True(expected.AsSpan().SequenceEqual(drm), "DRM samples are not the Core output times the offset");
+        Assert.True(expected.AsSpan().SequenceEqual(drm), "DRM samples are not the Core output at the DRM level");
         Assert.Equal(FakeJp2.Length, result.Jp2Bytes);
         Assert.Equal("20260101120000-photo.rs1", result.OnAirName);
 
-        // The offset is per transmission: SSTV and Tune afterwards play at the plain Pwr gain.
         await h.Service.TransmitAsync(SstvMode, Image);
-        Assert.True(SstvSamples.AsSpan().SequenceEqual(h.Audio.PlaybackSamples.Skip(drm.Length).ToArray()), "SSTV samples changed after a DRM send");
+        Assert.True(SstvSamples.AsSpan().SequenceEqual(h.Audio.PlaybackSamples.Skip(drm.Length).ToArray()), "SSTV did not play at the SSTV level");
+
         int beforeTune = h.Audio.PlaybackSamples.Count;
-        await h.Service.TuneAsync(1750, TimeSpan.FromMilliseconds(200));
+        await h.Service.TuneAsync(TxLevelFamily.Sstv, 1750, TimeSpan.FromMilliseconds(200));
         Assert.InRange(h.Audio.PlaybackSamples.Skip(beforeTune).Max(Math.Abs), 0.999f, 1.001f);
+        beforeTune = h.Audio.PlaybackSamples.Count;
+        await h.Service.TuneAsync(TxLevelFamily.Drm, 1750, TimeSpan.FromMilliseconds(200));
+        Assert.InRange(h.Audio.PlaybackSamples.Skip(beforeTune).Max(Math.Abs), 0.399f, 0.401f);
     }
 
-    [Fact]
-    public async Task TransmitDrm_PwrChangedMidTransmission_StillAppliesOnTopOfTheLevelOffset()
+    [Theory]
+    [InlineData(TxLevelFamily.Drm, 0.5f)]
+    [InlineData(TxLevelFamily.Sstv, 1f)]
+    public async Task TransmitDrm_PwrChangedMidTransmission_OnlyTheDrmLevelReachesTheLiveGain(TxLevelFamily changed, float laterGain)
     {
         var h = new Harness();
-        bool changed = false;
+        bool set = false;
         h.Audio.OnPlaybackChunkEnqueued = async () =>
         {
-            if (!changed)
+            if (!set)
             {
-                changed = true;
-                await h.Service.SetTxVolumePercentAsync(50);
+                set = true;
+                await h.Service.SetTxVolumePercentAsync(changed, 50);
             }
         };
 
-        await h.Service.TransmitDrmAsync(Image, "photo.png", Settings with { LevelOffsetDb = -6 });
+        await h.Service.TransmitDrmAsync(Image, "photo.png", Settings);
 
-        float factor = (float)Math.Pow(10, -6.0 / 20);
         float[] core = await ExpectedSamplesAsync();
         float[] played = [.. h.Audio.PlaybackSamples];
         for (int i = 0; i < 4096; i++)
-            Assert.Equal(core[i] * factor, played[i]);
+            Assert.Equal(core[i], played[i]);
         for (int i = 4096; i < 3 * 4096; i++)
-            Assert.Equal(core[i] * factor * 0.5f, played[i]);
+            Assert.Equal(core[i] * laterGain, played[i]);
+    }
+
+    // Addendum A: an SSTV write committed before the DRM seed but applied after it must not reach the live gain,
+    // while a later DRM write still does. Gates: the write is held between its commit and its apply.
+    [Fact]
+    public async Task TransmitDrm_OtherFamilyWriteAppliedAfterTheSeed_DoesNotOverrideIt_ALaterDrmWriteStillWins()
+    {
+        var h = new Harness();
+        await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 40);
+        var applyGate = new TaskCompletionSource();
+        h.Store.AfterUpdate = () => applyGate.Task;
+        Task heldSstvWrite = h.Service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 20);
+        int chunk = 0;
+        h.Audio.OnPlaybackChunkEnqueued = async () =>
+        {
+            chunk++;
+            if (chunk == 1)
+            {
+                applyGate.SetResult();
+                await heldSstvWrite;
+            }
+            else if (chunk == 2)
+            {
+                await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 50);
+            }
+        };
+
+        await h.Service.TransmitDrmAsync(Image, "photo.png", Settings);
+
+        float[] core = await ExpectedSamplesAsync();
+        float[] played = [.. h.Audio.PlaybackSamples];
+        for (int i = 0; i < 2 * 4096; i++)
+            Assert.Equal(core[i] * 0.4f, played[i]);
+        for (int i = 2 * 4096; i < 3 * 4096; i++)
+            Assert.Equal(core[i] * 0.5f, played[i]);
+    }
+
+    // The seed makes DRM the live family before it reads settings, so an SSTV write landing between the read and
+    // the seed's own apply cannot take the live gain.
+    [Fact]
+    public async Task TransmitDrm_SstvWriteLandingInsideTheSeed_DoesNotTakeTheLiveGain()
+    {
+        var h = new Harness();
+        await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 40);
+        h.Store.AfterUpdate = () => h.Service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 20);
+
+        await h.Service.TransmitDrmAsync(Image, "photo.png", Settings);
+
+        float[] core = await ExpectedSamplesAsync();
+        float[] played = [.. h.Audio.PlaybackSamples];
+        for (int i = 0; i < 4096; i++)
+            Assert.Equal(core[i] * 0.4f, played[i]);
+    }
+
+    [Fact]
+    public async Task TuneForDrm_DragDuringTheTone_ChangesTheDrmLevelAndTheLiveGain()
+    {
+        var h = new Harness();
+        await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Sstv, 100);
+        bool set = false;
+        h.Audio.OnPlaybackChunkEnqueued = async () =>
+        {
+            if (!set)
+            {
+                set = true;
+                await h.Service.SetTxVolumePercentAsync(TxLevelFamily.Drm, 50);
+            }
+        };
+
+        await h.Service.TuneAsync(TxLevelFamily.Drm, 1750, TimeSpan.FromMilliseconds(200));
+
+        float[] played = [.. h.Audio.PlaybackSamples];
+        Assert.InRange(played.Take(4096).Max(Math.Abs), 0.999f, 1.001f);
+        Assert.InRange(played.Skip(4096).Max(Math.Abs), 0.499f, 0.501f);
+        Assert.Equal(50, await h.Service.GetTxVolumePercentAsync(TxLevelFamily.Drm));
+        Assert.Equal(100, await h.Service.GetTxVolumePercentAsync(TxLevelFamily.Sstv));
     }
 
     [Fact]
@@ -292,6 +368,7 @@ public sealed class SstvSessionServiceTransmitDrmTests
                     new AudioDeviceSettings { CaptureDeviceId = "capture-1", PlaybackDeviceId = "playback-1", SampleRate = 8000 },
                     AudioSettingsJsonContext.Default.AudioDeviceSettings),
             };
+            Store = settingsStore;
             Codec = new FakeJpeg2000Codec(codecAvailable);
             Transmitter = new RecordingTransmitter(new DrmTransmitter(new DrmTxNaming(Clock), new BsrTransportIdCounter()));
             IDrmTransmitter? transmitter = withDrm ? Transmitter : null;
@@ -303,6 +380,8 @@ public sealed class SstvSessionServiceTransmitDrmTests
         }
 
         public FakeAudioEngine Audio { get; } = new();
+
+        public FakeSettingsStore Store { get; }
 
         public FakeRadioSessionService Radio { get; } = new();
 

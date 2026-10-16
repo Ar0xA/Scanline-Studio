@@ -177,13 +177,13 @@ public sealed class TxControlsDrmTests
         }
     }
 
-    // Test 3: Apply & Transmit sends profile, raw callsign, size target, level offset and the file-name rule.
+    // Test 3: Apply & Transmit sends profile, raw callsign, size target and the file-name rule.
     [AvaloniaFact]
     public async Task ApplyAndTransmit_UnderDrm_ReachesTransmitDrmWithTheSelectedSettings()
     {
         var rig = new Rig();
         rig.Store(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "DLÄ1ABC/PORTABLE" }, OperatorSettingsJsonContext.Default.OperatorSettings);
-        rig.Store(DrmSettings.SectionKey, new DrmSettings { ActiveProfileIndex = 0, TargetKb = 30, LevelOffsetDb = -6, VoxTone = true }, DrmSettingsJsonContext.Default.DrmSettings);
+        rig.Store(DrmSettings.SectionKey, new DrmSettings { ActiveProfileIndex = 0, TargetKb = 30, VoxTone = true }, DrmSettingsJsonContext.Default.DrmSettings);
         var vm = rig.Create();
         SelectDrm(vm);
         await vm.SelectImageCommand.ExecuteAsync(null);
@@ -197,7 +197,7 @@ public sealed class TxControlsDrmTests
         Assert.Equal((640, 480), (image.Width, image.Height));
         Assert.Equal("holiday photo.png", fileName);
         var robust = DrmSettingsDefaults.Robust;
-        Assert.Equal(new DrmTxSettings(robust.Mode, robust.Bandwidth, robust.Qam, robust.Protection, robust.Interleave, robust.ReedSolomon, "DLÄ1ABC/PORTABLE", true, 30_000, -6), settings);
+        Assert.Equal(new DrmTxSettings(robust.Mode, robust.Bandwidth, robust.Qam, robust.Protection, robust.Interleave, robust.ReedSolomon, "DLÄ1ABC/PORTABLE", true, 30_000), settings);
         Assert.Equal("DLD1ABC/P", vm.DrmCallsignDisplay);
         Assert.True(vm.DrmCallsignDiffers);
     }
@@ -360,7 +360,6 @@ public sealed class TxControlsDrmTests
             ActiveProfileIndex = 7,
             SizePreset = (DrmSizePreset)42,
             TargetKb = 500,
-            LevelOffsetDb = double.NaN,
         };
 
         var robust = DrmSettingsDefaults.ResolveProfile(stored, 0);
@@ -371,7 +370,6 @@ public sealed class TxControlsDrmTests
         Assert.Equal(1, DrmSettingsDefaults.ResolveActiveProfileIndex(stored));
         Assert.Equal(DrmSizePreset.Size640x480, DrmSettingsDefaults.ResolveSizePreset(stored));
         Assert.Equal(100, DrmSettingsDefaults.ResolveTargetKb(stored));
-        Assert.Equal(0, DrmSettingsDefaults.ResolveLevelOffsetDb(stored));
         Assert.False(DrmSettingsDefaults.ResolveVoxTone(stored));
         Assert.Equal(DrmSettingsDefaults.Normal, DrmSettingsDefaults.ResolveProfile(null, 1));
     }
@@ -403,7 +401,7 @@ public sealed class TxControlsDrmTests
     public async Task OptionsSave_AndTxPaneSave_DoNotRevertEachOthersFields()
     {
         var rig = new Rig();
-        rig.Store(DrmSettings.SectionKey, new DrmSettings { ActiveProfileIndex = 2, SizePreset = DrmSizePreset.Size800x600, TargetKb = 50, VoxTone = true, LevelOffsetDb = -3 }, DrmSettingsJsonContext.Default.DrmSettings);
+        rig.Store(DrmSettings.SectionKey, new DrmSettings { ActiveProfileIndex = 2, SizePreset = DrmSizePreset.Size800x600, TargetKb = 50, VoxTone = true }, DrmSettingsJsonContext.Default.DrmSettings);
         var tx = rig.Create();
         var options = new OptionsWindowViewModel(TestOptionsSettings.Create(rig.Settings), new FakeLocalizationService(), new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), rig.Settings, new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
@@ -412,14 +410,13 @@ public sealed class TxControlsDrmTests
         tx.DrmSizeIndex = (int)DrmSizePreset.Size320x240;
         Dispatcher.UIThread.RunJobs();
         options.DrmVoxTone = false;
-        options.DrmLevelOffsetDb = -10;
         options.DrmProfiles[0].Name = "Contest";
         options.DrmProfiles[0].ReedSolomonIndex = (int)DrmReedSolomonLevel.Rs4;
         await options.ApplyCommand.ExecuteAsync(null);
 
         var afterOptions = rig.Settings.Settings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings)!;
         Assert.Equal((DrmSizePreset.Size320x240, 2, 50), (afterOptions.SizePreset, afterOptions.ActiveProfileIndex, afterOptions.TargetKb));
-        Assert.Equal((false, -10.0), (afterOptions.VoxTone, afterOptions.LevelOffsetDb));
+        Assert.False(afterOptions.VoxTone);
 
         await tx.ReloadDrmOptionsAsync();
         tx.DrmProfileIndex = 0;
@@ -427,7 +424,7 @@ public sealed class TxControlsDrmTests
 
         var afterTx = rig.Settings.Settings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings)!;
         Assert.Equal(0, afterTx.ActiveProfileIndex);
-        Assert.Equal((false, -10.0), (afterTx.VoxTone, afterTx.LevelOffsetDb));
+        Assert.False(afterTx.VoxTone);
         Assert.Equal("Contest", afterTx.Profiles![0]!.Name);
         Assert.Equal(DrmReedSolomonLevel.Rs4, tx.CurrentDrmProfile.ReedSolomon);
         Assert.Equal("Contest", tx.DrmProfileOptions[0]);
@@ -435,10 +432,10 @@ public sealed class TxControlsDrmTests
 
     // Test 12: history caption and resend.
     [AvaloniaFact]
-    public async Task DrmHistoryEntry_CaptionUsesTheSentJp2Size_AndResendReplaysWithTheCurrentLevelOffset()
+    public async Task DrmHistoryEntry_CaptionUsesTheSentJp2Size_AndResendReplaysTheStoredSettings()
     {
         var rig = new Rig();
-        rig.Store(DrmSettings.SectionKey, new DrmSettings { TargetKb = 20, LevelOffsetDb = -2 }, DrmSettingsJsonContext.Default.DrmSettings);
+        rig.Store(DrmSettings.SectionKey, new DrmSettings { TargetKb = 20 }, DrmSettingsJsonContext.Default.DrmSettings);
         rig.Session.DrmResultToReturn = new DrmTxResult(42_400, "20260101000000-holiday photo.jp2");
         var vm = rig.Create();
         SelectDrm(vm);
@@ -452,7 +449,7 @@ public sealed class TxControlsDrmTests
         var caption = rig.Localization.Calls.Last(c => c.Key == "Panes.TxControls.Drm.HistoryCaptionFormat");
         Assert.Equal(("B", "Drm.Qam.Short.Qam16", 42.4), ((string)caption.Args[0], (string)caption.Args[1], (double)caption.Args[2]));
 
-        rig.Store(DrmSettings.SectionKey, new DrmSettings { TargetKb = 20, LevelOffsetDb = -9 }, DrmSettingsJsonContext.Default.DrmSettings);
+        rig.Store(DrmSettings.SectionKey, new DrmSettings { TargetKb = 60 }, DrmSettingsJsonContext.Default.DrmSettings);
         await vm.ReloadDrmOptionsAsync();
         await vm.ResendSentFrameCommand.ExecuteAsync(entry);
 
@@ -460,8 +457,7 @@ public sealed class TxControlsDrmTests
         var resend = rig.Session.TransmitDrmCalls[1];
         Assert.Same(entry.Image, resend.Image);
         Assert.Equal("holiday photo.png", resend.FileName);
-        Assert.Equal(entry.DrmSettings! with { LevelOffsetDb = -9 }, resend.Settings);
-        Assert.Equal(-2, entry.DrmSettings!.LevelOffsetDb);
+        Assert.Equal(entry.DrmSettings, resend.Settings);
     }
 
     [AvaloniaFact]
@@ -697,6 +693,51 @@ public sealed class TxControlsDrmTests
         _ = profile.Heading;
         Assert.Equal(3, localization.Calls[^1].Args[0]);
         return localization.Calls[^1].Key;
+    }
+
+    // Addendum A: the header shows the selected target's Pwr family, pushed on assignment and on every target change.
+    [AvaloniaFact]
+    public void TxLevelFamily_IsPushedOnRadioStatusAssignment_AndOnTargetChange_WithoutAWrite()
+    {
+        var rig = new Rig();
+        var vm = rig.Create();
+        SelectDrm(vm);
+        var radioStatus = new RadioStatusViewModel(rig.Radio, rig.Session, rig.Localization, new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
+
+        vm.RadioStatus = radioStatus;
+        Assert.Equal(TxLevelFamily.Drm, radioStatus.ActiveTxLevelFamily);
+
+        vm.SelectedTarget = vm.AvailableTargets.OfType<SstvTarget>().First();
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(TxLevelFamily.Sstv, radioStatus.ActiveTxLevelFamily);
+        SelectDrm(vm);
+        Assert.Equal(TxLevelFamily.Drm, radioStatus.ActiveTxLevelFamily);
+        Assert.Equal(0, rig.Session.SetTxVolumePercentCallCount);
+    }
+
+    // Tune plays at the selected family's level, so the target cannot change while it runs.
+    [AvaloniaFact]
+    public async Task Target_IsLockedWhileTuning()
+    {
+        var rig = new Rig();
+        rig.Session.TuneGate = new TaskCompletionSource();
+        var vm = rig.Create();
+        var radioStatus = new RadioStatusViewModel(rig.Radio, rig.Session, rig.Localization, new FakeAppearanceSettingsService(), NullLogger<RadioStatusViewModel>.Instance);
+        vm.RadioStatus = radioStatus;
+        Assert.True(vm.CanChangeMode);
+        var raised = 0;
+        vm.PropertyChanged += (_, e) => raised += e.PropertyName == nameof(TxControlsPaneViewModel.CanChangeMode) ? 1 : 0;
+
+        var tune = radioStatus.TuneCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(vm.CanChangeMode);
+        Assert.False(vm.QuickSelectModeCommand.CanExecute(Small.Id));
+        Assert.Equal(1, raised);
+
+        rig.Session.TuneGate.SetResult();
+        await tune;
+        await WaitForAsync(() => raised == 2);
+        Assert.True(vm.CanChangeMode);
     }
 
     // The editor's frame is composed off the UI thread before the encode is requested.
