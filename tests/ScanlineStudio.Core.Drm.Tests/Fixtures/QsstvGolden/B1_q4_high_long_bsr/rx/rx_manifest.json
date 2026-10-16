@@ -1,0 +1,69 @@
+{
+ "blocks_4096": 280,
+ "bsr_received": [
+  {
+   "bytes": 21,
+   "file": "bsr_received_0.bin",
+   "sha256": "d036f64ac8f1e552ff2bbcadb77b480bcd17e1073966a08fba217ae5bc15486e"
+  }
+ ],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:bsr.bin",
+  "prepareFix:21",
+  "loadRXImage:bsr.bin",
+  "displayMBox:File <harness-work>/B1_q4_high_long_bsr/rx/saved/bsr.bin already received"
+ ],
+ "frames_seen": 57,
+ "input": "../out48k (tx output of this case)",
+ "input_samples_48k": 1113600,
+ "input_sha256": "92ee5956343b1ab64f612ca3e8d674733b726de10b5a14848a33012018c46154",
+ "saved_files": [],
+ "self_consistency": "bsr_payload_equal",
+ "stages": {
+  "rx_msc_bits": {
+   "block_size": 627,
+   "blocks": 52,
+   "bytes": 32604,
+   "description": "channel_decoded_data_buffer per frame where channel_decoded_data_buffer_data_valid==1 (length_decoded_data bits)",
+   "dtype": "bit_u8",
+   "elements": 32604,
+   "file": "rx_msc_bits.bin",
+   "sha256": "52605fefa8bc5bd4c4b43e8d4cf69cd954da30142a2d3cb81f45a8a8da835480",
+   "stored": "rx_msc_bits.bin.gz"
+  },
+  "rx_stripes_12k": {
+   "block_size": 1024,
+   "blocks": 280,
+   "bytes": 2293760,
+   "description": "downsampleFilter output, one 1024-sample stripe per 4096 input samples (int16 scale)",
+   "dtype": "f64",
+   "elements": 286720,
+   "file": "rx_stripes_12k.bin",
+   "sha256": "afbe124f27caa452a06725dc3d91702de19da8762ad220f323525d971b03fac3",
+   "stored": null
+  }
+ },
+ "tail_zero_blocks": 8,
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 21,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 0,
+   "fileName": "bsr.bin",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 1,
+   "segments_with_data": [
+    0
+   ],
+   "totalSegments": 1,
+   "transportID": 0
+  }
+ ],
+ "zero_input_samples_request_count": 0
+}

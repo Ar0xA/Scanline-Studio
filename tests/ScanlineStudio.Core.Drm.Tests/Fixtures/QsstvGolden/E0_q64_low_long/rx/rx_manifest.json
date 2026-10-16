@@ -1,0 +1,69 @@
+{
+ "blocks_4096": 252,
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:20260101120000-test.txt",
+  "displayText:\nHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGN\nBIPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAH\nVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUB\nPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOV\nJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIP\nDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJ\nXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIPWD\nRYFMTAHOVCJQXELSZGN"
+ ],
+ "frames_seen": 51,
+ "input": "../out48k (tx output of this case)",
+ "input_samples_48k": 998400,
+ "input_sha256": "f2a6d474541b551c9d44320ebf299c4ac6a930223a2fa335f250421026bdbf57",
+ "saved_files": [
+  {
+   "bytes": 300,
+   "name": "20260101120000-test.txt",
+   "sha256": "3189ba13f2b43830cf967be47d95a2a72e2cd1bf33e77677a5995ee85a586ef0"
+  }
+ ],
+ "self_consistency": "file_equal",
+ "stages": {
+  "rx_msc_bits": {
+   "block_size": 1198,
+   "blocks": 46,
+   "bytes": 55108,
+   "description": "channel_decoded_data_buffer per frame where channel_decoded_data_buffer_data_valid==1 (length_decoded_data bits)",
+   "dtype": "bit_u8",
+   "elements": 55108,
+   "file": "rx_msc_bits.bin",
+   "sha256": "a5b58c85f2d33ddb5436dcba0ab4c055957a0255d3c4314c898c024224f5a7cb",
+   "stored": "rx_msc_bits.bin.gz"
+  },
+  "rx_stripes_12k": {
+   "block_size": 1024,
+   "blocks": 252,
+   "bytes": 2064384,
+   "description": "downsampleFilter output, one 1024-sample stripe per 4096 input samples (int16 scale)",
+   "dtype": "f64",
+   "elements": 258048,
+   "file": "rx_stripes_12k.bin",
+   "sha256": "1976a4e83bdd4b83ed36c920246ff033662eb7be0016dc70dd07877a57092337",
+   "stored": null
+  }
+ },
+ "tail_zero_blocks": 8,
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 300,
+   "callsign": "PA0TST",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 135,
+   "fileName": "20260101120000-test.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 20120,
+   "segmentsReceived": 3,
+   "segments_with_data": [
+    0,
+    1,
+    2
+   ],
+   "totalSegments": 3,
+   "transportID": 8552
+  }
+ ],
+ "zero_input_samples_request_count": 0
+}

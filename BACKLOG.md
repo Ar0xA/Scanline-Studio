@@ -322,23 +322,30 @@ is touched anyway, not as one big change. Not started until AV12 ships.
 
 ---
 
+### DRM. DRM / EasyPal (HamDRM) port from QSSTV — IN PROGRESS
+
+User decision 2026-10-16: RX + TX, BSR/FIX last, hybrid FTP excluded, DRM RX in parallel with SSTV (Options toggle).
+Plan: `~/.claude/plans/drm-easypal-port.md` (2 plan-review rounds, ready to build). Ground truth is QSSTV's on-air
+output. easypal-toolkit is not interoperable (its carrier/pilot/FAC layout differs from QSSTV's). User can supply
+real QSSTV/EasyPal WAVs for P8.
+
+- **DRM-P0.** DONE — QSSTV golden-vector harness (`~/tools/qsstv-drm-harness`, unmodified QSSTV 9.5.11 sources) and
+  fixtures `tests/ScanlineStudio.Core.Drm.Tests/Fixtures/QsstvGolden/` (79 TX cases, bit-exact through the cell grid,
+  six full 48 kHz streams). Auditor: 2 code-review rounds, go.
+- **DRM-P1.** OPEN — Core.Drm foundations: tables, CRC, PRBS, complex, mixed-radix FFT, Latin-1.
+- **DRM-P2 / P3.** OPEN — TX source side / TX channel side, golden-checked.
+- **DRM-P4a / P4b.** OPEN — TX core + OpenJPEG binding / TX UI (own plan review).
+- **DRM-P5 / P6.** OPEN — RX demodulation / RX channel decoding. Before P5: the B0_q4_high_long perturbation probe
+  and the lost-frame attribution (fixture README).
+- **DRM-P7a / P7b.** OPEN — RX source + Application integration / RX UI (own plan review).
+- **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
+- **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).
+- **DRM-DOC.** OPEN — `docs/removed-features.md:808` revision; CLAUDE.md QSSTV-as-port-target wording (user decision).
+
 ### RESEARCH. Research list — not committed work
 
 Look into these before deciding whether to build anything. Each needs a user decision first.
 
-- **RES-DRM. DRM / EasyPal digital SSTV.** User decided "not now" (2026-10-16). Findings so far:
-  - `milesburton/easypal-toolkit` (TypeScript) is not a usable reference. Its README says MIT but the repo has no
-    LICENSE file. Its verify script only decodes its own encoder's WAVs, and its carrier/FAC/SDC layout does not
-    look like real DRM Mode B (round-trip-only, the Scottie trap).
-    Checked against QSSTV's HamDRM Mode B tables (2026-10-16): symbol timing matches (46.875 Hz spacing, Tg = Tu/4,
-    15 symbols/frame), but the toolkit uses 29 carriers k = -10..18 around 1500 Hz where QSSTV uses k = 1..45
-    (SO_0) or 1..51 (SO_1) from a 350 Hz offset; 5 time pilots vs QSSTV's 15; frequency pilots on 3 cells vs
-    QSSTV's continuous carriers 8/24/32; 2 FAC cells per frame vs QSSTV's 45. It cannot interoperate.
-  - QSSTV's DRM code (`QSSTV-main/src/drmrx`, `src/drmtx`, ~29k lines, Dream/Diorama-derived, GPL-2+; QSSTV is
-    GPL-3) is the working, EasyPal-compatible reference. The project moved to GPL-3.0-or-later on 2026-10-16,
-    so porting it is now licence-compatible. Alternatives (no longer needed for licensing): clean-room from ETSI ES 201 980 (HamDRM specifics are not in it), or a
-    separate GPL helper process.
-  - Interop proof needs real EasyPal/QSSTV recordings as golden vectors. Reverses `docs/removed-features.md:806`.
 - **RES-SSTVAE. SSTVAE neural image mode** (`arodland/SSTVAE`, C++, Artistic-2.0). Experimental: an autoencoder
   sends image latents as OFDM carrier amplitudes, inspired by FreeDV RADE. Working beta on real HF, but the on-air
   format is not frozen (both stations need the same commit and model checkpoint), and it has no integration with

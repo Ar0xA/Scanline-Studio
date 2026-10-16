@@ -1,0 +1,74 @@
+{
+ "blocks_4096": 257,
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "saveDRMImage:20260101120000-card.jp2"
+ ],
+ "frames_seen": 52,
+ "input": "../out48k (tx output of this case)",
+ "input_samples_48k": 1017600,
+ "input_sha256": "4a6816317b91ad930d155a0894e392886fc8d4d0ebcd85d912d72e09f80e2bb0",
+ "saved_files": [
+  {
+   "bytes": 415,
+   "name": "20260101120000-card.jp2",
+   "sha256": "02b58332d29c5759dd2037b511dabf6a3ba4e299e24d6d514f0f86c2196be651"
+  }
+ ],
+ "self_consistency": "file_equal",
+ "stages": {
+  "rx_msc_bits": {
+   "block_size": 627,
+   "blocks": 47,
+   "bytes": 29469,
+   "description": "channel_decoded_data_buffer per frame where channel_decoded_data_buffer_data_valid==1 (length_decoded_data bits)",
+   "dtype": "bit_u8",
+   "elements": 29469,
+   "file": "rx_msc_bits.bin",
+   "sha256": "c47e6873c7446b2aa2334bc53015d12c65385e1d39f51741a5ed1e277bf6ec9c",
+   "stored": "rx_msc_bits.bin.gz"
+  },
+  "rx_stripes_12k": {
+   "block_size": 1024,
+   "blocks": 257,
+   "bytes": 2105344,
+   "description": "downsampleFilter output, one 1024-sample stripe per 4096 input samples (int16 scale)",
+   "dtype": "f64",
+   "elements": 263168,
+   "file": "rx_stripes_12k.bin",
+   "sha256": "e3762444e65a5ef2323677d1c45b60f789e4af8ae3db78a6f10a413f3b24be20",
+   "stored": null
+  }
+ },
+ "tail_zero_blocks": 8,
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 510,
+   "callsign": "PA0TST",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 64,
+   "fileName": "20260101120000-card.rs1",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 8,
+   "segments_with_data": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "totalSegments": 8,
+   "transportID": 4386
+  }
+ ],
+ "zero_input_samples_request_count": 0
+}
