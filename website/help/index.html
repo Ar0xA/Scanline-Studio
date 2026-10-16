@@ -197,7 +197,7 @@
               <tr><td>Calibration</td><td>The loopback self-test and the tone generator. See <a href="#calibration-tools">Calibration and tools menu</a>.</td></tr>
               <tr><td>Tools</td><td>Decode a WAV file, export the logbook as ADIF, and the macros reference. See <a href="#calibration-tools">Calibration and tools menu</a>.</td></tr>
               <tr><td>Options</td><td>Opens the settings dialog directly. See the "Options reference" topics below.</td></tr>
-              <tr><td>Help</td><td>This user guide, the project website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), the project's GitHub page, the application log folder, and About (version and license).</td></tr>
+              <tr><td>Help</td><td>This user guide, the project website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), the project's GitHub page, the application log folder, Report a bug, Send feedback, Check for updates, and About (version and license).</td></tr>
             </tbody>
           </table>
         </div>
@@ -925,6 +925,9 @@
           <li>The QRZ.com password is kept in the system keyring (Windows Credential Manager or the Linux Secret Service) when one is available, so a copy of <code>settings.json</code> does not include it and a restored backup needs the password entered again. Without a system keyring it is stored without encryption in <code>settings.json</code>. On macOS this is always the case, because Scanline Studio currently does not use the macOS Keychain.</li>
           <li>An older Scanline Studio build started after the password moved to the keyring shows an empty QRZ.com password. Enter it again there, or keep using the newer build.</li>
           <li><strong>Help → Open application log</strong> opens the current diagnostic log location. Review a log before sharing it because paths, callsigns, hosts, or operating details may be present.</li>
+          <li><strong>Help → Report a bug…</strong> and <strong>Help → Send feedback…</strong> open a short form in your web browser. Nothing is sent until you press the form's send button. The form goes to the developer by email through the web3forms.com service, so an internet connection is required. It also includes the application version, operating system and .NET runtime version, which the form shows before you send. Your email address is sent only if you tick <em>Can we contact you by email</em>.</li>
+          <li>Each new version shows a short notice at startup with what is new and a request for bug reports and feedback; beta versions also show a beta warning. It shows at every start until you tick <em>Don't show this again for version …</em>, and then again only when a newer version is installed.</li>
+          <li><strong>Help → Check for updates…</strong> asks GitHub for newer Scanline Studio releases and shows a link to the download page, or tells you that you already have the newest version. A beta version is also told about newer betas. The same check runs once at each start, from the first launch on, and shows a message only when a newer version exists. It contacts <code>api.github.com</code>, which sees your IP address and the application version; nothing else is sent. Tick <em>Never show update notifications</em> in an update message to stop the startup check completely; <em>Don't show again for version …</em> hides one version only. Both can be changed again in any <strong>Check for updates…</strong> result.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
