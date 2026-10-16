@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Globalization;
 using System.Text;
 using System.Text.Json;
@@ -1022,6 +1023,15 @@ internal static partial class Program
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
         services.AddSingleton<IFeedbackFormLauncher, FeedbackFormLauncher>();
         services.AddSingleton<IVersionNoticeService, VersionNoticeService>();
+        services.AddSingleton<IUpdatePreferencesService, UpdatePreferencesService>();
+        services.AddHttpClient(GitHubUpdateChecker.HttpClientName, c =>
+        {
+            c.Timeout = GitHubUpdateChecker.RequestTimeout;
+            // GitHub's API rejects requests without a User-Agent; TryParseAdd so an odd version string cannot throw.
+            c.DefaultRequestHeaders.UserAgent.TryParseAdd("ScanlineStudio/" + VersionNoticeService.StripBuildMetadata(
+                typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unknown"));
+        }).ConfigurePrimaryHttpMessageHandler(() => new SocketsHttpHandler { ConnectTimeout = GitHubUpdateChecker.ConnectTimeout });
+        services.AddSingleton<IUpdateChecker, GitHubUpdateChecker>();
         services.AddSingleton<IClipboardImageService, ClipboardImageService>();
         // Singleton, not transient: OptionsWindowViewModel (writer) and RadioStatusViewModel
         // (reader) must share the SAME instance for DecodingIndicatorBlinksChanged to actually

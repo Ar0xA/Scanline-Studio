@@ -1686,6 +1686,45 @@ internal sealed class FakeVersionNoticeService : IVersionNoticeService
     }
 }
 
+internal sealed class FakeUpdateChecker : IUpdateChecker
+{
+    public UpdateCheckResult Result { get; set; } = new(UpdateCheckStatus.UpToDate);
+
+    public int Calls { get; private set; }
+
+    public Uri ReleasesPageUrl { get; } = new("https://github.com/Ar0xA/Scanline-Studio/releases");
+
+    /// <summary>When set, <see cref="CheckAsync"/> waits for it, so a test can observe the in-flight state.</summary>
+    public TaskCompletionSource? Gate { get; set; }
+
+    public async Task<UpdateCheckResult> CheckAsync(string currentVersion, CancellationToken ct = default)
+    {
+        Calls++;
+        if (Gate is not null)
+        {
+            await Gate.Task;
+        }
+
+        return Result;
+    }
+}
+
+internal sealed class FakeUpdatePreferencesService : IUpdatePreferencesService
+{
+    public UpdatePreferences Stored { get; set; } = new(false, null);
+
+    public List<UpdatePreferences> Saves { get; } = [];
+
+    public Task<UpdatePreferences> LoadAsync(CancellationToken ct = default) => Task.FromResult(Stored);
+
+    public Task SaveAsync(UpdatePreferences preferences, CancellationToken ct = default)
+    {
+        Saves.Add(preferences);
+        Stored = preferences;
+        return Task.CompletedTask;
+    }
+}
+
 internal sealed class FakeFeedbackFormLauncher : IFeedbackFormLauncher
 {
     public List<FeedbackForm> OpenedForms { get; } = [];

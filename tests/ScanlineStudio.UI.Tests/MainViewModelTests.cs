@@ -37,7 +37,7 @@ public sealed class MainViewModelTests
         ColorEncoding: ColorEncoding.RgbSequential, LineSegments: []);
 
     private static (MainViewModel ViewModel, FakeSstvSessionService SstvSession, FakeReceivedImageBuffer ReceivedImage, FakeReceiveHistoryStore ReceiveHistoryStore, FakeFilePickerService FilePicker, FakeUrlLauncher UrlLauncher)
-        CreateMainViewModel(FakeFeedbackFormLauncher? feedbackForms = null, FakeVersionNoticeService? versionNotice = null)
+        CreateMainViewModel(FakeFeedbackFormLauncher? feedbackForms = null, FakeVersionNoticeService? versionNotice = null, FakeUpdateChecker? updateChecker = null, FakeUpdatePreferencesService? updatePreferences = null)
     {
         var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
         var receiveHistoryStore = new FakeReceiveHistoryStore();
@@ -121,6 +121,8 @@ public sealed class MainViewModelTests
             urlLauncher,
             feedbackForms ?? new FakeFeedbackFormLauncher(),
             versionNotice ?? new FakeVersionNoticeService(),
+            updateChecker ?? new FakeUpdateChecker(),
+            updatePreferences ?? new FakeUpdatePreferencesService(),
             new FakeAppearanceSettingsService(),
             new FakeServiceProvider(),
             NullLogger<MainViewModel>.Instance,
@@ -328,6 +330,112 @@ public sealed class MainViewModelTests
 
         Assert.Equal(1, shown);
         Assert.Equal(expectedDismissCalls, versionNotice.DismissCalls);
+    }
+
+    private static UpdateCheckResult Available(string version) =>
+        new(UpdateCheckStatus.UpdateAvailable, AppVersion.TryParse(version), new Uri("https://github.com/Ar0xA/Scanline-Studio/releases/tag/v" + version));
+
+    [AvaloniaFact]
+    public async Task StartupUpdateCheck_NeverNotify_MakesNoRequest()
+    {
+        var checker = new FakeUpdateChecker { Result = Available("1.0.1-beta") };
+        var preferences = new FakeUpdatePreferencesService { Stored = new(true, null) };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updateChecker: checker, updatePreferences: preferences);
+        var shown = 0;
+        viewModel.UpdateCheckRequested = _ => { shown++; return Task.CompletedTask; };
+
+        await viewModel.CheckForUpdatesOnStartupAsync(CancellationToken.None);
+
+        Assert.Equal(0, checker.Calls);
+        Assert.Equal(0, shown);
+    }
+
+    [AvaloniaTheory]
+    [InlineData("1.0.1-beta", 0)]
+    [InlineData(null, 1)]
+    [InlineData("1.0.0-beta.9", 1)]
+    public async Task StartupUpdateCheck_SkippedVersionIsSilent_OthersShow(string? skipped, int expectedShown)
+    {
+        var checker = new FakeUpdateChecker { Result = Available("1.0.1-beta") };
+        var preferences = new FakeUpdatePreferencesService { Stored = new(false, skipped) };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updateChecker: checker, updatePreferences: preferences);
+        var shown = 0;
+        viewModel.UpdateCheckRequested = _ => { shown++; return Task.CompletedTask; };
+
+        await viewModel.CheckForUpdatesOnStartupAsync(CancellationToken.None);
+
+        Assert.Equal(expectedShown, shown);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(UpdateCheckStatus.UpToDate)]
+    [InlineData(UpdateCheckStatus.Failed)]
+    public async Task StartupUpdateCheck_NoUpdateOrFailure_IsSilent(UpdateCheckStatus status)
+    {
+        var checker = new FakeUpdateChecker { Result = new(status, Failure: UpdateCheckFailure.Offline) };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updateChecker: checker);
+        var shown = 0;
+        viewModel.UpdateCheckRequested = _ => { shown++; return Task.CompletedTask; };
+
+        await viewModel.CheckForUpdatesOnStartupAsync(CancellationToken.None);
+
+        Assert.Equal(1, checker.Calls);
+        Assert.Equal(0, shown);
+    }
+
+    [AvaloniaFact]
+    public async Task ManualUpdateCheck_AlwaysShows_AndSavesChangedCheckboxes()
+    {
+        var checker = new FakeUpdateChecker { Result = new(UpdateCheckStatus.UpToDate) };
+        var preferences = new FakeUpdatePreferencesService { Stored = new(true, "1.0.0-beta.2") };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updateChecker: checker, updatePreferences: preferences);
+        UpdateCheckDialogViewModel? shown = null;
+        viewModel.UpdateCheckRequested = dialog =>
+        {
+            shown = dialog;
+            Assert.True(dialog.NeverNotify);
+            Assert.False(dialog.ShowSkipVersion);
+            dialog.NeverNotify = false;
+            return Task.CompletedTask;
+        };
+
+        await viewModel.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        Assert.NotNull(shown);
+        Assert.Equal([new UpdatePreferences(false, "1.0.0-beta.2")], preferences.Saves);
+        Assert.False(viewModel.IsCheckingForUpdates);
+    }
+
+    [AvaloniaFact]
+    public async Task UpdateChecks_ShareOneGate_SoStartupAndManualNeverOverlap()
+    {
+        var checker = new FakeUpdateChecker { Gate = new TaskCompletionSource() };
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updateChecker: checker);
+        viewModel.UpdateCheckRequested = _ => Task.CompletedTask;
+
+        var manual = viewModel.CheckForUpdatesCommand.ExecuteAsync(null);
+        Assert.True(viewModel.IsCheckingForUpdates);
+        Assert.False(viewModel.CheckForUpdatesCommand.CanExecute(null));
+
+        await viewModel.CheckForUpdatesOnStartupAsync(CancellationToken.None);
+        Assert.Equal(1, checker.Calls);
+
+        checker.Gate.SetResult();
+        await manual;
+        Assert.False(viewModel.IsCheckingForUpdates);
+        Assert.True(viewModel.CheckForUpdatesCommand.CanExecute(null));
+    }
+
+    [AvaloniaFact]
+    public async Task ManualUpdateCheck_UnchangedCheckboxes_DoNotSave()
+    {
+        var preferences = new FakeUpdatePreferencesService();
+        var (viewModel, _, _, _, _, _) = CreateMainViewModel(updatePreferences: preferences);
+        viewModel.UpdateCheckRequested = _ => Task.CompletedTask;
+
+        await viewModel.CheckForUpdatesCommand.ExecuteAsync(null);
+
+        Assert.Empty(preferences.Saves);
     }
 
     [AvaloniaFact]

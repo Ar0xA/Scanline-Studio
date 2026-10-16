@@ -190,7 +190,7 @@
               <tr><td>Kalibrierung</td><td>Der Loopback-Selbsttest und der Tongenerator. Siehe <a href="#calibration-tools">Menü Kalibrierung und Extras</a>.</td></tr>
               <tr><td>Extras</td><td>Eine WAV-Datei decodieren, das Logbuch als ADIF exportieren und die Makro-Referenz. Siehe <a href="#calibration-tools">Menü Kalibrierung und Extras</a>.</td></tr>
               <tr><td>Optionen</td><td>Öffnet direkt den Einstellungsdialog. Siehe die Themen unter „Referenz der Optionen“ weiter unten.</td></tr>
-              <tr><td>Hilfe</td><td>Dieses Benutzerhandbuch, die Projekt-Website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), die GitHub-Seite des Projekts, der Ordner mit dem Anwendungsprotokoll und „Über“ (Version und Lizenz).</td></tr>
+              <tr><td>Hilfe</td><td>Dieses Benutzerhandbuch, die Projekt-Website (<a href="https://scanlinestudio.app">scanlinestudio.app</a>), die GitHub-Seite des Projekts, der Ordner mit dem Anwendungsprotokoll, Fehler melden, Feedback senden, Nach Updates suchen und „Über“ (Version und Lizenz).</td></tr>
             </tbody>
           </table>
         </div>
@@ -894,6 +894,7 @@
           <li><strong>Hilfe → Anwendungsprotokoll öffnen</strong> öffnet den aktuellen Speicherort des Diagnoseprotokolls. Ein Protokoll vor der Weitergabe durchsehen, da es Pfade, Rufzeichen, Hostnamen oder Betriebsdetails enthalten kann.</li>
           <li><strong>Hilfe → Fehler melden…</strong> und <strong>Hilfe → Feedback senden…</strong> öffnen ein kurzes Formular im Webbrowser. Gesendet wird erst, wenn die Senden-Schaltfläche des Formulars gedrückt wird. Das Formular geht über den Dienst web3forms.com per E-Mail an den Entwickler, daher ist eine Internetverbindung nötig. Es enthält außerdem Anwendungsversion, Betriebssystem und .NET-Laufzeitversion, die das Formular vor dem Senden anzeigt. Die E-Mail-Adresse wird nur gesendet, wenn <em>Can we contact you by email</em> angehakt ist. Die Formulare selbst sind derzeit nur auf Englisch verfügbar.</li>
           <li>Jede neue Version zeigt beim Start einen kurzen Hinweis mit den Neuerungen und der Bitte um Fehlerberichte und Feedback; Beta-Versionen zeigen zusätzlich einen Beta-Hinweis. Er erscheint bei jedem Start, bis <em>Für Version … nicht mehr anzeigen</em> angehakt ist, und danach erst wieder bei einer neueren Version.</li>
+          <li><strong>Hilfe → Nach Updates suchen…</strong> fragt bei GitHub nach neueren Scanline-Studio-Releases und zeigt einen Link zur Download-Seite oder meldet, dass bereits die neueste Version installiert ist. Eine Beta-Version erfährt auch von neueren Betas. Dieselbe Prüfung läuft bei jedem Start, ab dem ersten Start, und meldet sich nur, wenn eine neuere Version existiert. Sie kontaktiert <code>api.github.com</code>; GitHub sieht dabei die IP-Adresse und die Anwendungsversion, sonst wird nichts gesendet. <em>Nie über Updates informieren</em> in einer Update-Meldung beendet die Prüfung beim Start vollständig; <em>Für Version … nicht mehr anzeigen</em> blendet nur eine Version aus. Beides lässt sich in jedem Ergebnis von <strong>Nach Updates suchen…</strong> wieder ändern.</li>
         </ul>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>

@@ -5,7 +5,7 @@
         x:Class="ScanlineStudio.UI.Views.VersionNoticeDialogView"
         x:DataType="vm:VersionNoticeDialogViewModel"
         Title="{Binding Title}"
-        Width="480" SizeToContent="Height"
+        Width="580" SizeToContent="Height"
         MinWidth="360"
         CanResize="False"
         WindowStartupLocation="CenterOwner">

@@ -682,6 +682,26 @@ public partial class MainWindow : Window
 
                 // Subscribed here, after the constructor's own Opened handlers (geometry re-clamp),
                 // so CenterOwner centres on the final window position.
+                vm.UpdateCheckRequested = async updateViewModel =>
+                {
+                    try
+                    {
+                        await new UpdateCheckDialogView { DataContext = updateViewModel }.ShowDialog(this);
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.UpdateCheckWindowFailed(logger, ex);
+                        }
+                    }
+                };
+
+                // Cancels a startup update check still waiting on GitHub when the window closes,
+                // so a late result never opens a dialog on a closing owner.
+                var startupChecksCts = new CancellationTokenSource();
+                Closing += (_, _) => startupChecksCts.Cancel();
+
                 Opened += async (_, _) =>
                 {
                     try
@@ -693,6 +713,21 @@ public partial class MainWindow : Window
                         if (logger is not null)
                         {
                             Log.VersionNoticeWindowFailed(logger, ex);
+                        }
+                    }
+
+                    try
+                    {
+                        await vm.CheckForUpdatesOnStartupAsync(startupChecksCts.Token);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.StartupUpdateCheckFailed(logger, ex);
                         }
                     }
                 };
@@ -1421,6 +1456,20 @@ public partial class MainWindow : Window
         [LoggerMessage(Level = LogLevel.Error, Message = "Version notice window failed")]
 
         public static partial void VersionNoticeWindowFailed(ILogger logger, Exception ex);
+
+
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Update check window failed")]
+
+
+        public static partial void UpdateCheckWindowFailed(ILogger logger, Exception ex);
+
+
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Startup update check failed")]
+
+
+        public static partial void StartupUpdateCheckFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing RadioConnectionGaveUpWindowView")]
         public static partial void ConstructingConnectionGaveUpWindow(ILogger logger);

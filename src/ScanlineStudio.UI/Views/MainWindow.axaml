@@ -176,6 +176,7 @@
                 <Separator />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.ReportBug}" Command="{Binding ReportBugCommand}" />
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.SendFeedback}" Command="{Binding SendFeedbackCommand}" />
+                <MenuItem Header="{loc:Translate MainWindow.Menu.Help.CheckForUpdates}" Command="{Binding CheckForUpdatesCommand}" />
                 <!-- About stays the last item, per direct user request (2026-08-26). -->
                 <MenuItem Header="{loc:Translate MainWindow.Menu.Help.About}" Command="{Binding OpenAboutCommand}" />
             </MenuItem>

@@ -1,0 +1,45 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:loc="using:ScanlineStudio.UI.Localization"
+        xmlns:vm="using:ScanlineStudio.UI.ViewModels"
+        x:Class="ScanlineStudio.UI.Views.UpdateCheckDialogView"
+        x:DataType="vm:UpdateCheckDialogViewModel"
+        Title="{Binding Title}"
+        Width="440" SizeToContent="Height"
+        MinWidth="340"
+        CanResize="False"
+        WindowStartupLocation="CenterOwner">
+
+    <!-- Prose, not a settings-row value: IndustryRowValue right-aligns and uses the mono font. -->
+    <Window.Styles>
+        <Style Selector="TextBlock.UpdateBody">
+            <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+            <Setter Property="FontSize" Value="{DynamicResource IndustryNoticeLeadFontSize}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
+            <Setter Property="HorizontalAlignment" Value="Left" />
+            <Setter Property="TextAlignment" Value="Left" />
+            <Setter Property="TextWrapping" Value="Wrap" />
+        </Style>
+    </Window.Styles>
+
+    <Border Background="{DynamicResource IndustryBg}">
+        <Grid RowDefinitions="Auto,Auto,Auto,Auto,Auto" Margin="{StaticResource IndustryPaddingGroup}" RowSpacing="{StaticResource IndustrySpacingGroup}">
+            <TextBlock Grid.Row="0" Classes="UpdateBody" Text="{Binding Message}" />
+
+            <Button Grid.Row="1" HorizontalAlignment="Left" IsVisible="{Binding ShowOpenPage}"
+                    Classes="Industry IndustryBtn IndustryBtn24" Padding="7,0"
+                    Content="{Binding OpenPageLabel}" Command="{Binding OpenPageCommand}" />
+
+            <CheckBox Grid.Row="2" IsVisible="{Binding ShowSkipVersion}"
+                      Content="{Binding SkipVersionLabel}" IsChecked="{Binding SkipThisVersion}" />
+
+            <CheckBox Grid.Row="3" Content="{Binding NeverNotifyLabel}" IsChecked="{Binding NeverNotify}" />
+
+            <Grid Grid.Row="4" ColumnDefinitions="*,Auto">
+                <Button Grid.Column="1" Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnPrimary" Padding="7,0"
+                        Content="{loc:Translate UpdateCheck.OkButton}" Command="{Binding CloseCommand}"
+                        IsDefault="True" IsCancel="True" />
+            </Grid>
+        </Grid>
+    </Border>
+</Window>

@@ -40,6 +40,8 @@ public partial class MainViewModel : ViewModelBase
     private readonly IUrlLauncher _urlLauncher;
     private readonly IFeedbackFormLauncher _feedbackForms;
     private readonly IVersionNoticeService _versionNotice;
+    private readonly IUpdateChecker _updateChecker;
+    private readonly IUpdatePreferencesService _updatePreferences;
     private bool _versionNoticeChecked;
     private readonly ILogger<MainViewModel> _logger;
 
@@ -139,6 +141,8 @@ public partial class MainViewModel : ViewModelBase
         IUrlLauncher urlLauncher,
         IFeedbackFormLauncher feedbackForms,
         IVersionNoticeService versionNotice,
+        IUpdateChecker updateChecker,
+        IUpdatePreferencesService updatePreferences,
         IAppearanceSettingsService appearanceSettings,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
@@ -151,6 +155,8 @@ public partial class MainViewModel : ViewModelBase
         _urlLauncher = urlLauncher;
         _feedbackForms = feedbackForms;
         _versionNotice = versionNotice;
+        _updateChecker = updateChecker;
+        _updatePreferences = updatePreferences;
         _logger = logger;
 
         // Same Assembly.GetEntryAssembly() + attribute fallback chain AboutWindowViewModel already
@@ -396,6 +402,82 @@ public partial class MainViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Single-subscriber hook, same shape as <see cref="VersionNoticeRequested"/>.</summary>
+    public Func<UpdateCheckDialogViewModel, Task>? UpdateCheckRequested { get; set; }
+
+    /// <summary>Shared by the startup check and Help → Check for updates, so the two never run at once.</summary>
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(CheckForUpdatesCommand))]
+    private bool _isCheckingForUpdates;
+
+    /// <summary>Startup check, run after the version notice. Silent unless a not-skipped update exists; makes no
+    /// network request at all when the user chose "never". Stays on the UI thread (no ConfigureAwait(false)).</summary>
+    public async Task CheckForUpdatesOnStartupAsync(CancellationToken ct)
+    {
+        if (IsCheckingForUpdates || UpdateCheckRequested is null || AppVersion.TryParse(_versionNotice.CurrentVersion) is null)
+        {
+            return;
+        }
+
+        IsCheckingForUpdates = true;
+        try
+        {
+            var preferences = await _updatePreferences.LoadAsync(ct);
+            if (preferences.NeverNotify)
+            {
+                Log.StartupUpdateCheckDisabled(_logger);
+                return;
+            }
+
+            var result = await _updateChecker.CheckAsync(_versionNotice.CurrentVersion, ct);
+            if (result.Status != UpdateCheckStatus.UpdateAvailable || result.LatestVersion?.ToString() == preferences.SkippedVersion)
+            {
+                return;
+            }
+
+            await ShowUpdateDialogAsync(result, preferences);
+        }
+        finally
+        {
+            IsCheckingForUpdates = false;
+        }
+    }
+
+    [RelayCommand(CanExecute = nameof(CanCheckForUpdates))]
+    private async Task CheckForUpdatesAsync(CancellationToken ct)
+    {
+        Log.CheckForUpdatesInvoked(_logger);
+        IsCheckingForUpdates = true;
+        try
+        {
+            var preferences = await _updatePreferences.LoadAsync(ct);
+            var result = await _updateChecker.CheckAsync(_versionNotice.CurrentVersion, ct);
+            await ShowUpdateDialogAsync(result, preferences);
+        }
+        finally
+        {
+            IsCheckingForUpdates = false;
+        }
+    }
+
+    private bool CanCheckForUpdates() => !IsCheckingForUpdates;
+
+    private async Task ShowUpdateDialogAsync(UpdateCheckResult result, UpdatePreferences preferences)
+    {
+        if (UpdateCheckRequested is not { } showDialog)
+        {
+            return;
+        }
+
+        var dialog = new UpdateCheckDialogViewModel(_localization, _urlLauncher, result, _versionNotice.CurrentVersion, preferences);
+        await showDialog(dialog);
+        var updated = dialog.ToPreferences();
+        if (updated != preferences)
+        {
+            await _updatePreferences.SaveAsync(updated);
+        }
+    }
+
     [RelayCommand]
     private Task ReportBugAsync()
     {
@@ -542,6 +624,12 @@ public partial class MainViewModel : ViewModelBase
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Showing the version notice for {Version}")]
         public static partial void VersionNoticeShowing(ILogger logger, string version);
+
+        [LoggerMessage(Level = LogLevel.Debug, Message = "CheckForUpdates command invoked")]
+        public static partial void CheckForUpdatesInvoked(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Startup update check is turned off by the user")]
+        public static partial void StartupUpdateCheckDisabled(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "ReportBug command invoked")]
         public static partial void ReportBugInvoked(ILogger logger);

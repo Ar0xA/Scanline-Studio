@@ -526,3 +526,9 @@ Listed with evidence in the area reports. Pick them up only when already working
   version X" is ticked (key = version without `+sha`); beta box only for prerelease versions. Each `<Version>` needs a
   `VersionNotice.ReleaseSummary.<version>` key in `en.json`, enforced by `BundledLocale_HasReleaseSummaryForTheBuiltVersion`.
   Adds `ILocalizationService.TryGetString`. Presets exclude the `VersionNotice` section. Auditor plan review + code review: go.
+- **UPDATE-CHECK.** DONE — startup check of GitHub's release list (`/releases/latest` 404s while every release is a
+  prerelease) plus Help → Check for updates…; prerelease builds are offered newer betas and releases, release builds
+  only releases. "Don't show again for version X" and "Never show update notifications" (also stops the startup
+  request) are remembered in the `UpdateCheck` section, excluded from presets, and can be changed in every manual
+  check result. Network-supplied release URLs are validated before opening. Verified live with a 0.9.0-beta build
+  against real GitHub. Auditor plan review + code review: go.
