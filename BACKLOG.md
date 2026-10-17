@@ -379,11 +379,20 @@ real QSSTV/EasyPal WAVs for P8.
   de-dispersal); all 79 cases + noisy rx_chdec goldens exact. Seam for P7a: `IDrmMscSink`.
 - **DRM-P6b.** OPEN — RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
   exact port + goldens: decode the last frame (QSSTV always loses it), fix the knife-edge sync drop (B0_q4_high_long),
-  RS1 signed-char size bug, E0_q64_low_short first-frame bit errors. Each with proof + UI toggle; TX stays QSSTV-identical.
-- **DRM-P7a / P7b.** OPEN — RX source + Application integration / RX UI (own plan review).
+  E0_q64_low_short first-frame bit errors, PPI 8-bit byte-count wrap (files with a last packet ≥ 256 bytes never
+  complete, QSSTV→QSSTV too), stale code rates on a PL-only change, enough_frames on short→long interleave, type mask
+  &0x07. Each with proof + UI toggle; TX stays QSSTV-identical. Candidate list with citations: parent plan, notes at
+  the end. (RS1 signed-char fix already shipped in P7a-1, no toggle — user-agreed.)
+- **DRM-P7a-1.** DONE `60bb3cc7` — RX source decoding in Core (packets, MOT, RS erasure decode, name sanitizer);
+  79 cases + 17 rx_srcdec scenarios exact.
+- **DRM-P7a-2.** OPEN — Application integration (worker, file store, gallery/history, file-decode feed). Sub-plan
+  `~/.claude/plans/drm-p7a2-rx-integration.md`: plan review 2 rounds done, rev 3 fixes the RS and Start-await
+  paragraphs; needs a targeted auditor check of those, then build. User: keep every file raw in `<images>/drm` + PNG.
+- **DRM-P7b.** OPEN — RX UI (own plan review).
 - **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
 - **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).
-- **DRM-DOC.** OPEN — `docs/removed-features.md:808` revision; CLAUDE.md QSSTV-as-port-target wording (user decision).
+- **DRM-DOC.** OPEN — `docs/removed-features.md:808` revision. (CLAUDE.md QSSTV-as-port-target line added 2026-10-16,
+  user-approved; CLAUDE.md is gitignored.)
 
 ### RESEARCH. Research list — not committed work
 
