@@ -903,6 +903,14 @@
                                               ToolTip.Tip="{loc:Translate Options.Decode.MeasureSnr.Tooltip}"
                                               IsChecked="{Binding SnrMeasurementEnabled}" />
 
+                                    <!-- HamDRM receive: applied through ISstvSessionService on Save/Apply, live. -->
+                                    <StackPanel Orientation="Horizontal" Spacing="{StaticResource IndustrySpacingTight}" Margin="0,8,0,0">
+                                        <TextBlock Classes="IndustryRowLabel" VerticalAlignment="Center" Text="{loc:Translate Options.Decode.DrmReceive.Header}" />
+                                        <TextBlock Classes="IndustryHelpGlyph" Text="{loc:Translate Options.HelpGlyph}" ToolTip.Tip="{loc:Translate Options.Decode.DrmReceive.Help}" />
+                                    </StackPanel>
+                                    <CheckBox Classes="Industry" Theme="{StaticResource IndustryCheckBoxTheme}" Content="{loc:Translate Options.Decode.DrmReceive}"
+                                              IsChecked="{Binding DrmReceiveEnabled}" />
+
                                     <Button Classes="Industry IndustryBtn IndustryBtn24 IndustryBtnSecondary" Padding="7,0" Content="{loc:Translate Options.ResetSection}" Command="{Binding ResetDecodeToDefaultCommand}" />
                                 </StackPanel>
                             </ContentControl>

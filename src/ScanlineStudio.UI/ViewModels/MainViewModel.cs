@@ -146,7 +146,8 @@ public partial class MainViewModel : ViewModelBase
         IAppearanceSettingsService appearanceSettings,
         IServiceProvider services,
         ILogger<MainViewModel> logger,
-        ILogger<RadioStatusViewModel> radioStatusLogger)
+        ILogger<RadioStatusViewModel> radioStatusLogger,
+        OptionalDrmReceptionRecorder? drmRecorder = null)
     {
         _services = services;
         _optionsSettingsService = optionsSettingsService;
@@ -180,7 +181,7 @@ public partial class MainViewModel : ViewModelBase
         txControls.EditorOpened += editor => ActiveEditor = editor;
         txControls.EditorClosed += () => ActiveEditor = null;
 
-        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, appearanceSettings, radioStatusLogger);
+        RadioStatus = new RadioStatusViewModel(radioSession, sstvSession, localization, appearanceSettings, radioStatusLogger, drmRecorder: drmRecorder?.Recorder);
 
         // Plain reference hand-off, not an XAML ancestor-lookup binding -- see
         // TxControlsPaneViewModel.RadioStatus's own doc comment for why.

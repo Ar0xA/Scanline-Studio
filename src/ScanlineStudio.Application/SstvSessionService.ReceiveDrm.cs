@@ -49,6 +49,14 @@ public sealed partial class SstvSessionService
     public bool IsDrmReceiveActive => Volatile.Read(ref _drmWorker) is not null;
 
     /// <inheritdoc/>
+    public async Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default)
+    {
+        AppSettings appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        return appSettings.GetSection(DrmRxSettings.SectionKey, DrmRxSettingsJsonContext.Default.DrmRxSettings)?.RxEnabled
+            ?? DrmReceiveDefaults.Enabled;
+    }
+
+    /// <inheritdoc/>
     public async Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);

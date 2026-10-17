@@ -52,6 +52,7 @@ public sealed partial class OptionsWindowViewModel
             FontScale = appearanceSettings?.FontScale ?? AppFontScale.Normal;
             DecodingIndicatorBlinks = appearanceSettings?.DecodingIndicatorBlinks ?? AppearanceSettings.DefaultDecodingIndicatorBlinks;
             LoadDrmOptions(appSettings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings));
+            await LoadDrmReceiveAsync();
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -252,6 +253,10 @@ public sealed partial class OptionsWindowViewModel
             await ShowPostSaveWarningsAsync();
             RequestClose?.Invoke();
         }
+        else if (_onlyDrmReceiveApplyFailed)
+        {
+            await ShowPostSaveWarningsAsync();
+        }
     }
 
     /// <summary>ui_transition_plan.md step 7 (T2-3): saves via <see cref="SaveCoreAsync"/> like
@@ -261,7 +266,7 @@ public sealed partial class OptionsWindowViewModel
     [RelayCommand(CanExecute = nameof(CanSave))]
     private async Task ApplyAsync()
     {
-        if (await SaveCoreAsync())
+        if (await SaveCoreAsync() || _onlyDrmReceiveApplyFailed)
         {
             await ShowPostSaveWarningsAsync();
         }
@@ -311,6 +316,7 @@ public sealed partial class OptionsWindowViewModel
     /// <c>true</c>, identical to its own prior externally-observable behavior.</summary>
     private async Task<bool> SaveCoreAsync()
     {
+        _onlyDrmReceiveApplyFailed = false;
         await _saveGate.WaitAsync();
         try
         {
@@ -423,6 +429,7 @@ public sealed partial class OptionsWindowViewModel
             SoundFileMmvPath: SoundFileMmvPath,
             AdifUdpDestinations: AdifUdpDestinations.Select(row => row.ToDestination()).ToList());
 
+        bool drmReceiveApplied = true;
         try
         {
             // Keyring first: a failed keyring write aborts the whole Save before settings.json is touched.
@@ -518,6 +525,9 @@ public sealed partial class OptionsWindowViewModel
             _sstvSession.RequestAutoStopEnabled(AutoStopEnabled);
             _sstvSession.RequestAutoSlantEnabled(AutoSlantEnabled);
             _sstvSession.RequestSyncRestartEnabled(SyncRestartEnabled);
+
+            // Own failure path (QRZ keyring precedent): the remaining writes still run, then Save reports it and stays open.
+            drmReceiveApplied = await ApplyDrmReceiveIfChangedAsync();
             _sstvSession.RequestSnrMeasurementEnabled(SnrMeasurementEnabled);
 
             // RX BPF preset/Demod type/RX buffer mode (2026-08-27, restart-required-settings backlog
@@ -780,6 +790,13 @@ public sealed partial class OptionsWindowViewModel
             // not closing the dialog, with no message anywhere -- now every SaveCoreAsync caller
             // (Save, Apply, Connect's implicit save) can show the operator what actually went wrong.
             SaveErrorMessage = ex.Message;
+            return false;
+        }
+
+        if (!drmReceiveApplied)
+        {
+            SaveErrorMessage = _localization.GetString("Options.Decode.DrmReceive.ApplyFailed");
+            _onlyDrmReceiveApplyFailed = true;
             return false;
         }
 

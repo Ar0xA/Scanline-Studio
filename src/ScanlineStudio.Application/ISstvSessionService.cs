@@ -150,7 +150,7 @@ public interface ISstvSessionService : IAsyncDisposable
     event Action<CwIdDecodedInfo>? CwIdDecoded;
 
     /// <summary>The DRM receiver's signal state, raised synchronously: marshal to the UI with
-    /// <c>Dispatcher.UIThread.Post</c> and return at once. Live states come from the DRM worker thread (a slow
+    /// <c>Dispatcher.UIThread.Post</c>, or store it latest-wins for a UI-thread poll, and return at once. Live states come from the DRM worker thread (a slow
     /// subscriber backs audio up into its 2 s drop-oldest queue, never into capture) or the file-decode thread. The
     /// terminal state (<see cref="DrmSignalState.IsActive"/> false) comes from whichever thread stops the receiver:
     /// the RX stop caller, the <see cref="SetDrmReceiveEnabledAsync"/> caller, a pool thread, or the audio drain thread
@@ -169,6 +169,9 @@ public interface ISstvSessionService : IAsyncDisposable
 
     /// <summary>Whether a DRM receive worker is running now.</summary>
     bool IsDrmReceiveActive { get; }
+
+    /// <summary>The saved DRM RX setting, or <see cref="DrmReceiveDefaults.Enabled"/> when none is saved.</summary>
+    Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default);
 
     /// <summary>Turns DRM RX on or off: persists the setting and applies it to a running RX session as soon as the RX
     /// transition gate is free (at once, or when the current transition or file decode ends).</summary>

@@ -144,6 +144,8 @@ public sealed class DrmReceiver : IDrmReceiver
             SegmentsReceived: _sourceDecoder.BlockList.Count,
             TotalSegments: _sourceDecoder.BodyTotalSegments,
             ReceivingName: _receivingName,
-            Generation: 0);
+            Generation: 0,
+            ExpectedSegments: _sourceDecoder.CurrentExpectedSegments,
+            CurrentFileComplete: _sourceDecoder.CurrentFileComplete);
     }
 }

@@ -14,6 +14,11 @@ namespace ScanlineStudio.Abstractions.Drm;
 /// <param name="ReceivingName">The MOT ContentName being received; empty if none.</param>
 /// <param name="Generation">The session's receiver generation, newer is larger. A subscriber drops any state older
 /// than the newest generation it has seen, so a late state from a stopped receiver never overwrites a newer one.</param>
+/// <param name="ExpectedSegments">Body segments the current file has: exact once its last segment arrived, else from
+/// the header's body size over the segment size; 0 when unknown. Unlike <paramref name="TotalSegments"/> (the highest
+/// segment seen + 1 until the last one arrives), this is a real progress denominator.</param>
+/// <param name="CurrentFileComplete">The file the receiver is on was already stored (now or earlier), so a repeat or
+/// the sender's run-out is not a reception in progress.</param>
 public sealed record DrmSignalState(
     bool IsActive,
     bool TimeSync,
@@ -26,7 +31,9 @@ public sealed record DrmSignalState(
     int SegmentsReceived,
     int TotalSegments,
     string ReceivingName,
-    long Generation)
+    long Generation,
+    int ExpectedSegments = 0,
+    bool CurrentFileComplete = false)
 {
     /// <summary>The terminal "not receiving" state at <paramref name="generation"/>.</summary>
     public static DrmSignalState Inactive(long generation) =>

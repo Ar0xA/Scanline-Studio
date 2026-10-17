@@ -436,9 +436,18 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public List<bool> DrmReceiveEnabledCalls { get; } = [];
 
+    public bool SavedDrmReceiveEnabled { get; set; } = true;
+
+    public Exception? SetDrmReceiveEnabledFailure { get; set; }
+
+    public Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default) => Task.FromResult(SavedDrmReceiveEnabled);
+
     public Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default)
     {
         DrmReceiveEnabledCalls.Add(enabled);
+        if (SetDrmReceiveEnabledFailure is { } failure)
+            return Task.FromException(failure);
+        SavedDrmReceiveEnabled = enabled;
         return Task.CompletedTask;
     }
 

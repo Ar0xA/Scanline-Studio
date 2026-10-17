@@ -135,6 +135,7 @@ public sealed partial class OptionsWindowViewModel
         DemodType = defaults.DemodType;
         RxBpfPreset = defaults.RxBpfPreset;
         RxBufferMode = defaults.RxBufferMode;
+        DrmReceiveEnabled = DrmReceiveDefaults.Enabled;
     }
 
     /// <summary>Advanced tab's own "Reset section" button -- the first real, resettable content on

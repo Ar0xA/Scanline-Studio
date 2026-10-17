@@ -2000,6 +2000,10 @@
                     <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding RxImage.IsSnrChipVisible}">
                         <TextBlock Text="{Binding RxImage.SnrStatusBarDisplay}" />
                     </Border>
+                    <Border Classes="Industry IndustryMini" BorderThickness="1" IsVisible="{Binding RadioStatus.IsDrmChipVisible}"
+                            ToolTip.Tip="{Binding RadioStatus.DrmChipTooltip}">
+                        <TextBlock Text="{Binding RadioStatus.DrmChipText, FallbackValue=''}" MaxWidth="320" TextTrimming="CharacterEllipsis" />
+                    </Border>
                     <Border Classes="Industry IndustryMini" BorderThickness="1">
                         <TextBlock Text="{Binding RxImage.BufferedSampleCountStatusBarDisplay}" />
                     </Border>

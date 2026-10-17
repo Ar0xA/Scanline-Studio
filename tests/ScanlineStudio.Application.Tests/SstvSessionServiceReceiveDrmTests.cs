@@ -354,6 +354,19 @@ public sealed class SstvSessionServiceReceiveDrmTests
     // ---- toggle ---------------------------------------------------------------------------------------------------
 
     [Fact]
+    public async Task GetDrmReceiveEnabled_IsTheDefaultUntilSaved_ThenTheSavedValue()
+    {
+        var h = Create();
+        Assert.Equal(DrmReceiveDefaults.Enabled, await h.Service.GetDrmReceiveEnabledAsync());
+
+        await h.Service.SetDrmReceiveEnabledAsync(false);
+        Assert.False(await h.Service.GetDrmReceiveEnabledAsync());
+
+        await h.Service.SetDrmReceiveEnabledAsync(true);
+        Assert.True(await h.Service.GetDrmReceiveEnabledAsync());
+    }
+
+    [Fact]
     public async Task SetDrmReceiveEnabled_LiveAppliesWhenTheGateIsFree_AndPersists()
     {
         var h = Create();

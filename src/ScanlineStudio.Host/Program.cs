@@ -222,15 +222,8 @@ internal static partial class Program
         }
 
         // Eagerly resolved like ReceiveHistoryRecorder: its constructor subscribes to DrmFileReceived.
-        DrmReceptionRecorder? drmRecorder = null;
-        try
-        {
-            drmRecorder = host.Services.GetRequiredService<DrmReceptionRecorder>();
-        }
-        catch (Exception ex)
-        {
-            Log.DrmReceptionRecorderResolveFailed(logger, ex);
-        }
+        // The Optional wrapper logs a resolve failure itself, once.
+        IDrmReceptionRecorder? drmRecorder = host.Services.GetRequiredService<OptionalDrmReceptionRecorder>().Recorder;
 
         // ui_transition_plan.md step 12: same "eagerly resolved so its constructor's event
         // subscriptions actually happen" reasoning as ReceiveHistoryRecorder immediately above.
@@ -1143,6 +1136,18 @@ internal static partial class Program
         services.AddSingleton<ReceiveHistoryRecorder>();
         services.AddSingleton<DrmReceptionRecorder>();
         services.AddSingleton<IDrmReceptionRecorder>(sp => sp.GetRequiredService<DrmReceptionRecorder>());
+        services.AddSingleton(sp =>
+        {
+            try
+            {
+                return new OptionalDrmReceptionRecorder(sp.GetRequiredService<DrmReceptionRecorder>());
+            }
+            catch (Exception ex)
+            {
+                Log.DrmReceptionRecorderResolveFailed(sp.GetRequiredService<ILoggerFactory>().CreateLogger("ScanlineStudio.Host"), ex);
+                return new OptionalDrmReceptionRecorder(null);
+            }
+        });
 
         // ui_transition_plan.md step 12 (Auto-save RX audio): eagerly resolved just below (same
         // "resolved once, explicitly" shape as ReceiveHistoryRecorder immediately above) so its

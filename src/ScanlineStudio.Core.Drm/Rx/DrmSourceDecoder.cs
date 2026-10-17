@@ -191,6 +191,9 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
     private readonly ILogger _logger;
     private readonly byte[] _packetBuffer = new byte[PacketBufferLength];
     private readonly List<DrmTransportBlock> _transportBlocks = [];
+
+    // Not cleared by Init: transport blocks survive it, as in QSSTV.
+    private DrmTransportBlock? _currentBlock;
     private readonly List<int> _erasures = [];
     private readonly List<ushort> _blockList = [];
     private byte[] _holding = new byte[1024];
@@ -250,6 +253,19 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
 
     /// <summary>Bytes of the data group being reassembled, for tests.</summary>
     internal int HoldingLength => _holdingLength;
+
+    /// <summary>Body segments of the file the decoder is on (the block of the last header or body segment): exact once
+    /// the last segment arrived, else ceil(header body size / full segment size); 0 when unknown.</summary>
+    public int CurrentExpectedSegments => _currentBlock switch
+    {
+        null => 0,
+        { LastSegmentReceived: true } b => b.TotalSegments,
+        { BodySize: > 0, DefaultSegmentSize: > 0 } b => (int)((b.BodySize + b.DefaultSegmentSize - 1) / b.DefaultSegmentSize),
+        _ => 0,
+    };
+
+    /// <summary>Whether the file the decoder is on was already stored.</summary>
+    public bool CurrentFileComplete => _currentBlock?.AlreadyReceived ?? false;
 
     /// <summary><c>transportBlockPtrList</c>, oldest first.</summary>
     public IReadOnlyList<DrmTransportBlock> TransportBlocks => _transportBlocks;
@@ -741,7 +757,7 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
         foreach (DrmTransportBlock t in _transportBlocks)
         {
             if (t.TransportId == transportId)
-                return t;
+                return _currentBlock = t;
         }
 
         decoder.InvalidateCallsign();
@@ -766,7 +782,7 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
         tb.ModeCode = (uint)((robustnessMode * 10000) + (decoder.SpectrumOccupancyNew * 1000) + (protection * 100) + (mCode * 10)
             + decoder.InterleaverDepthNew);
         _transportBlocks.Add(tb);
-        return tb;
+        return _currentBlock = tb;
     }
 
     /// <summary>The body as <c>writeData</c> builds it: received segments as received, missing ones as

@@ -469,7 +469,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         RxAudioPeakLevel = _sstvSession.SignalPeakLevel;
         IsSstvTransmitting = _sstvSession.IsTransmitting;
 
-        IsDecodingImage = _sstvSession.ReceivedImage.Progress is { } progress && progress < 1.0;
+        // HamDRM shares the amber "Decoding" look, so the green/amber exclusivity and both labels follow it too.
+        bool drmReceiving = UpdateDrmStatus();
+        IsDecodingImage = (_sstvSession.ReceivedImage.Progress is { } progress && progress < 1.0) || drmReceiving;
 
         if (!IsDecodingImage)
         {
@@ -610,7 +612,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// <see cref="ISstvSessionService.ModeDetected"/>/<see cref="ISstvSessionService.DecodeRestarted"/>,
     /// since both fire synchronously on the decoder's own audio-drain thread (that interface's own
     /// concurrency doc comment) and a plain UI-thread poll of a snapshot value avoids adding a new
-    /// cross-thread marshal path for this.</summary>
+    /// cross-thread marshal path for this. Also true while a HamDRM file is being received
+    /// (<see cref="IsDrmReceiving"/>, set on the same tick).</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(ReceivingButtonLabel), nameof(RxStatusBarText), nameof(IsReceivingIdle))]
     private bool _isDecodingImage;
@@ -863,7 +866,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     /// this VM just needs a way to reach it.</summary>
     public TxControlsPaneViewModel? TxControls { get; set; }
 
-    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger, TimeProvider? timeProvider = null)
+    public RadioStatusViewModel(IRadioSessionService radioSession, ISstvSessionService sstvSession, ILocalizationService localization, IAppearanceSettingsService appearanceSettings, ILogger<RadioStatusViewModel> logger, TimeProvider? timeProvider = null, IDrmReceptionRecorder? drmRecorder = null)
     {
         _txVolumePersist = new KeyedDebouncer<TxLevelFamily>(VolumePersistDebounce, timeProvider ?? TimeProvider.System, resumeOnCapturedContext: false);
         _radioSession = radioSession;
@@ -901,6 +904,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         sstvSession.CapturePausedForTransmitChanged += OnCapturePausedForTransmitChanged;
         // App-lifetime VM, like the subscriptions above: never unsubscribed.
         sstvSession.TxVolumePercentChanged += OnSessionTxVolumePercentChanged;
+        sstvSession.DrmSignalStateChanged += OnDrmSignalState;
+        if (drmRecorder is not null)
+            drmRecorder.FileStored += OnDrmFileStored;
 
         _ = LoadPresetsSafeAsync();
         _ = LoadTxStateSafeAsync();

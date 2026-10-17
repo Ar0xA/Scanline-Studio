@@ -331,7 +331,7 @@
           <li>Select <strong>Record</strong> on the Receive tab before or during the signal you want to preserve.</li>
           <li>Select <strong>Stop recording</strong> when finished.</li>
           <li>Choose <strong>Tools → Decode WAV file…</strong> or the frame's <strong>Decode WAV…</strong> action.</li>
-          <li>Select the WAV file and monitor the Receive tab as the decoder replays it.</li>
+          <li>Select the WAV file and monitor the Receive tab as the decoder replays it. When HamDRM receive is on, the same replay also decodes any HamDRM transmission in the file.</li>
         </ol>
         <p>Try a forced quick mode only when you know the transmitted mode and the replay does not acquire it automatically. If the original recording clipped or omitted the signal, re-decoding cannot restore the missing audio.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
@@ -363,10 +363,10 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone pwr drive level alc papr callsign">
+      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm receive receiving rx segments sync lost qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone pwr drive level alc papr callsign">
         <p class="topic-category">Transmitting</p>
         <h2>Send a picture with HamDRM (EasyPal)</h2>
-        <p><a class="term" href="#glossary-drm">HamDRM</a> sends the picture as a compressed JPEG 2000 file instead of as analogue SSTV tones. It is compatible with EasyPal and QSSTV. A HamDRM picture arrives without noise or slant, or not at all, so it suits good paths and higher resolutions. Scanline Studio sends HamDRM only; receiving HamDRM is not available yet.</p>
+        <p><a class="term" href="#glossary-drm">HamDRM</a> sends the picture as a compressed JPEG 2000 file instead of as analogue SSTV tones. It is compatible with EasyPal and QSSTV. A HamDRM picture arrives without noise or slant, or not at all, so it suits good paths and higher resolutions. Scanline Studio sends and receives HamDRM; see <a href="#receive-drm">Receive a HamDRM picture</a> below.</p>
 
         <ol class="workflow">
           <li>On <strong>Transmit</strong>, select <strong>HamDRM (EasyPal)</strong> at the end of the mode list.</li>
@@ -401,6 +401,16 @@
           <li>Expect an average output of only about 20-30 % of the radio's rated power on HamDRM. That is normal; the peaks still reach full output.</li>
         </ol>
         <div class="safety"><strong>Drive level.</strong> Overdriving a HamDRM signal ruins it for every receiver. Keep ALC action low on HamDRM even if the power meter looks weak.</div>
+        <h3 id="receive-drm">Receive a HamDRM picture</h3>
+        <p>HamDRM receive is on by default. It listens to the same audio as SSTV receive, so you do not select a mode. A HamDRM transmission from EasyPal or QSSTV is received while SSTV receive runs.</p>
+        <ul>
+          <li>While a file arrives, the <strong>Receiving</strong> toggle turns amber and reads <strong>Decoding</strong>, as for SSTV. A status-bar chip shows <strong>HamDRM</strong>, the robustness mode, the sender's callsign and the progress in segments, for example <strong>HamDRM B · PA0ABC · 12/40</strong>. Hover over the chip for the file name.</li>
+          <li><strong>HamDRM · sync lost</strong> shows for 5 seconds when the signal drops before the file is complete. If the signal comes back in that time, reception continues.</li>
+          <li><strong>HamDRM · received</strong> and the file name show for 8 seconds when a file is complete.</li>
+        </ul>
+        <p>Every received file is saved unchanged in the <code>drm</code> subfolder of the RX images folder. A picture also appears in the Gallery and in the receive history with the sender's callsign.</p>
+        <p>To switch HamDRM receive off, clear <strong>Receive HamDRM alongside SSTV</strong> in <a href="#decode-options">Options → Decode</a>. Not available yet: requests for missing segments (BSR) and waterfall text.</p>
+
         <div class="note"><strong>What HamDRM does not use.</strong> Auto mode following picks SSTV modes only, so it never switches away from HamDRM. The loopback self-test, VIS header, leader tone and tone map apply to SSTV only. Stop TX, SWR cutoff, Sent frames and Resend work as for SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -698,7 +708,7 @@
       <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant snr signal to noise measure">
         <p class="topic-category">Options reference</p>
         <h2>Decode options</h2>
-        <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. These are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing it in either place changes both.</p>
+        <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. Most of these are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing one in either place changes both. HamDRM receive is set here only.</p>
 
         <div class="table-wrap">
           <table>
@@ -711,6 +721,7 @@
               <tr><td>Auto-stop</td><td>Can abandon an erratic or weak reception.</td></tr>
               <tr><td>Auto-restart</td><td>Can restart on a stronger sync detected during reception.</td></tr>
               <tr><td>Auto-sync</td><td>Attempts to re-establish synchronization during decode.</td></tr>
+              <tr><td>HamDRM receive</td><td>Decodes <a class="term" href="#glossary-drm">HamDRM</a> pictures from the same audio while SSTV receive runs. On by default. Applies when you save. See <a href="#receive-drm">Receive a HamDRM picture</a>.</td></tr>
               <tr><td>Auto-slant</td><td>Corrects sound-clock slant while receiving. Requires RX buffering.</td></tr>
               <tr><td>Measure reception SNR</td><td>Measures the signal-to-noise ratio on each line's sync pulse and shows it live and per picture (see <a href="#receive-controls">Signal quality: SNR</a>). On by default. Measurement only. It applies from the next received line.</td></tr>
             </tbody>
@@ -867,7 +878,7 @@
 
         <h3>Tools</h3>
         <ul>
-          <li><strong>Decode WAV file…</strong> replays a compatible audio recording through the SSTV decoder.</li>
+          <li><strong>Decode WAV file…</strong> replays a compatible audio recording through the SSTV decoder and, when HamDRM receive is on, the HamDRM decoder.</li>
           <li><strong>Export logbook as ADIF…</strong> exports QSO log data in ADIF format.</li>
           <li><strong>Macros</strong> opens the token reference and a preview resolver.</li>
         </ul>
@@ -897,7 +908,7 @@
           </table>
         </div>
         <p>The MODE card's quick-mode buttons on the Receive tab (see <a href="#receive-first-picture">Receive your first picture</a>) hold a working subset of these. Right-click a slot to reassign it to any mode from the full list above.</p>
-        <p>The Transmit tab's mode selector also offers <strong>HamDRM (EasyPal)</strong>, a digital mode that is not SSTV: transmit only for now, and not on the quick-mode buttons. See <a href="#transmit-drm">Send a picture with HamDRM (EasyPal)</a>.</p>
+        <p>The Transmit tab's mode selector also offers <strong>HamDRM (EasyPal)</strong>, a digital mode that is not SSTV and not on the quick-mode buttons. HamDRM pictures are received automatically beside SSTV (see <a href="#receive-drm">Receive a HamDRM picture</a>). See <a href="#transmit-drm">Send a picture with HamDRM (EasyPal)</a>.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
