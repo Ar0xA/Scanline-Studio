@@ -182,7 +182,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="workspace" class="help-topic" data-help-topic data-category="Getting started" data-keywords="main window layout menu header frequency favourites presets rx level power status tabs receive transmit gallery logbook file configurations calibration tools options help website github about application log menu bar">
+      <article id="workspace" class="help-topic" data-help-topic data-category="Getting started" data-keywords="main window layout menu header frequency favourites presets rx level power status tabs receive transmit gallery logbook file configurations calibration tools options help website github about application log menu bar calling frequencies easypal drm hamdrm">
         <p class="topic-category">Getting started</p>
         <h2>Tour of the workspace</h2>
         <p>The fixed main window keeps station state at the top and task-specific tools in four tabs below.</p>
@@ -206,8 +206,9 @@
         <ul>
           <li><strong>Frequency and mode</strong> show the connected radio's current state. You can request a frequency or supported radio mode when CAT is linked.</li>
           <li><strong>Favourites</strong> recall a stored frequency, mode and filter bandwidth in one action. Use <strong>Store current</strong> or <strong>Edit list…</strong> to manage them. See <a href="#radio-cat">Radio and CAT control</a> for how the bandwidth part behaves.</li>
+          <li><strong>Calling frequencies</strong> (the <strong>▾</strong> button right of the frequency) lists popular SSTV and HamDRM calling frequencies by band. Picking one tunes the radio and sets its mode and filter width. See <a href="#radio-cat">Radio and CAT control</a>.</li>
           <li><strong>RX level</strong> shows live capture level. Avoid a permanently low reading and avoid red clipping.</li>
-          <li><strong>Pwr</strong> is the application's TX playback gain. It is not the operating system's device volume, and not the radio's RF power setting.</li>
+          <li><strong>Pwr</strong> is the application's TX playback gain. It is not the operating system's device volume, and not the radio's RF power setting. It keeps a separate level for SSTV and for HamDRM: the label (<strong>Pwr · SSTV</strong> or <strong>Pwr · HamDRM</strong>) follows the mode selected on the Transmit tab and shows which level you are setting.</li>
           <li><strong>Receiving</strong> starts or pauses SSTV search. Capture pauses automatically during a Scanline Studio transmission and resumes afterwards. The label reads <strong>Transmitting</strong> for that whole window (a real Transmit or a Tune tone), then returns to <strong>Receiving</strong> once it finishes. Otherwise the label switches to <strong>RX Muted</strong> whenever capture is stopped. It blinks amber and reads <strong>Decoding</strong> while an image is being decoded. The blink can be turned off in <a href="#appearance-options">Appearance options</a>. The matching status-bar chip does the same, so the transmitting and decoding state is visible from any tab, not only Receive.</li>
           <li><strong>Stop TX</strong>, next to <strong>Receiving</strong>, cancels an in-progress transmission immediately. It is always visible, regardless of which tab you're on, so it is reachable without switching to the Transmit tab first.</li>
         </ul>
@@ -334,16 +335,16 @@
           <li>Select <strong>Record</strong> on the Receive tab before or during the signal you want to preserve.</li>
           <li>Select <strong>Stop recording</strong> when finished.</li>
           <li>Choose <strong>Tools → Decode WAV file…</strong> or the frame's <strong>Decode WAV…</strong> action.</li>
-          <li>Select the WAV file and monitor the Receive tab as the decoder replays it.</li>
+          <li>Select the WAV file and monitor the Receive tab as the decoder replays it. When HamDRM receive is on, the same replay also decodes any HamDRM transmission in the file.</li>
         </ol>
         <p>Try a forced quick mode only when you know the transmitted mode and the replay does not acquire it automatically. If the original recording clipped or omitted the signal, re-decoding cannot restore the missing audio.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr">
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="tx transmit first image browse stock mode auto manual switch change resize reflow duration geometry vis output device ptt halt power alc swr drm hamdrm easypal">
         <p class="topic-category">Transmitting</p>
         <h2>Transmit a picture</h2>
-        <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode.</p>
+        <p>Prepare the picture and radio before keying. The editor produces the exact pixel dimensions required by the selected SSTV mode. To send digitally with HamDRM (EasyPal) instead, see <a href="#transmit-drm">Send a picture with HamDRM (EasyPal)</a>.</p>
 
         <ol class="workflow">
           <li>On <strong>Transmit</strong>, select a mode (see <a href="#sstv-modes">Supported SSTV modes</a> for the full list) or leave mode following on Auto to reply in the last received mode.</li>
@@ -363,6 +364,58 @@
 
         <h3>Sent frames</h3>
         <p>A "Sent frames" list on the Transmit tab keeps a short history of this session's transmissions. Each entry shows its outcome (Sent, Stopped, or Failed). Right-click a frame for <strong>Resend</strong> (transmit the same frame again) or <strong>Save…</strong> (export a copy of it). This history is session-only. It does not persist between application restarts the way the Gallery's receive history does.</p>
+        <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
+      </article>
+
+      <article id="transmit-drm" class="help-topic" data-help-topic data-category="Transmitting" data-keywords="drm easypal digital sstv hamdrm receive receiving rx segments sync lost qsstv jpeg 2000 jp2 profile robust normal fast custom file size kb estimate mode a b e qam bandwidth protection interleave reed solomon rs vox tone pwr drive level alc papr callsign">
+        <p class="topic-category">Transmitting</p>
+        <h2>Send a picture with HamDRM (EasyPal)</h2>
+        <p><a class="term" href="#glossary-drm">HamDRM</a> sends the picture as a compressed JPEG 2000 file instead of as analogue SSTV tones. It is compatible with EasyPal and QSSTV. A HamDRM picture arrives without noise or slant, or not at all, so it suits good paths and higher resolutions. Scanline Studio sends and receives HamDRM; see <a href="#receive-drm">Receive a HamDRM picture</a> below.</p>
+
+        <ol class="workflow">
+          <li>On <strong>Transmit</strong>, select <strong>HamDRM (EasyPal)</strong> at the end of the mode list.</li>
+          <li>Pick a <strong>Profile</strong>: <strong>Robust</strong> for weak or fading signals, <strong>Normal</strong> for typical HF paths, or <strong>Fast</strong> for a strong, clean channel.</li>
+          <li>Pick a <strong>Size</strong> (320 × 240, 640 × 480 or 800 × 600) and a <strong>File size</strong> (4–100 KB). The editor composes at the chosen size, exactly as it does for an SSTV mode.</li>
+          <li>Prepare the picture in the editor, check the <strong>Estimated</strong> row, and select <strong>TRANSMIT</strong>.</li>
+        </ol>
+
+        <h3>File size and airtime</h3>
+        <p>The picture is compressed to roughly the chosen file size. A larger file looks better but takes longer to send. The <strong>Estimated</strong> row shows the real compressed size and the airtime for the current picture and settings; it updates a moment after you change something. Each transmission gets a new time-stamped file name, so receivers never mistake a repeat for a picture they already have. The name is taken from the background picture's file, or "image" for a blank canvas.</p>
+
+        <h3>Transmission settings</h3>
+        <p>Open <strong>Transmission settings</strong> to see what the profile sends. Changing any field switches the profile to <strong>Custom</strong>, which keeps your values.</p>
+        <dl>
+          <dt>Mode</dt><dd>A is the most stable, B is the standard choice, E is the fastest.</dd>
+          <dt>Bandwidth</dt><dd>2.2 kHz or 2.5 kHz occupied bandwidth. Use 2.2 kHz if your transmitter filter is narrow.</dd>
+          <dt>Modulation</dt><dd>4-QAM is the most robust, 64-QAM the fastest.</dd>
+          <dt>Protection</dt><dd>High adds more error protection than Normal.</dd>
+          <dt>Interleave</dt><dd>Long spreads errors over more time and is recommended. The labels describe what is actually sent.</dd>
+          <dt>Error correction</dt><dd>Extra Reed-Solomon data (RS 1 to RS 4) lets a receiver rebuild the file when some segments are lost. Higher values send more data.</dd>
+        </dl>
+
+        <h3>Callsign and VOX tone</h3>
+        <p>HamDRM sends your callsign from <a href="#station-options">Station options</a> in a short 9-character label using plain Latin letters. The <strong>Callsign</strong> row shows what goes on air; it turns red, with a hint, when that differs from what you entered. The <strong>VOX tone</strong> (a 1 s tone before the signal, for VOX keying) is set in <a href="#station-options">Station options</a>.</p>
+
+        <h3>Setting the HamDRM level</h3>
+        <p>SSTV is a constant tone, while HamDRM has a high <a class="term" href="#glossary-papr">PAPR</a>: its peaks are about 12-14 dB above its average. So Scanline Studio keeps a separate Pwr level for HamDRM. With HamDRM selected, the header and Transmit-tab Pwr slider read <strong>Pwr · HamDRM</strong> and set only the HamDRM level; your SSTV level stays as it is. The Radio / CAT tab in Options shows both levels.</p>
+        <ol class="steps">
+          <li>Select HamDRM on the Transmit tab, ideally into a dummy load.</li>
+          <li>Select <strong>Tune</strong> on the Transmit tab or in the Tone generator. With HamDRM selected, the tone plays at the HamDRM level.</li>
+          <li>Raise Pwr until the radio's <a class="term" href="#glossary-alc">ALC</a> just starts to move, then back off a little. The tone sits slightly above HamDRM's real peaks, so this is a safe ceiling.</li>
+          <li>Expect an average output of only about 20-30 % of the radio's rated power on HamDRM. That is normal; the peaks still reach full output.</li>
+        </ol>
+        <div class="safety"><strong>Drive level.</strong> Overdriving a HamDRM signal ruins it for every receiver. Keep ALC action low on HamDRM even if the power meter looks weak.</div>
+        <h3 id="receive-drm">Receive a HamDRM picture</h3>
+        <p>HamDRM receive is on by default. It listens to the same audio as SSTV receive, so you do not select a mode. A HamDRM transmission from EasyPal or QSSTV is received while SSTV receive runs.</p>
+        <ul>
+          <li>While a file arrives, the <strong>Receiving</strong> toggle turns amber and reads <strong>Decoding</strong>, as for SSTV. A status-bar chip shows <strong>HamDRM</strong>, the robustness mode, the sender's callsign and the progress in segments, for example <strong>HamDRM B · PA0ABC · 12/40</strong>. Hover over the chip for the file name.</li>
+          <li><strong>HamDRM · sync lost</strong> shows for 5 seconds when the signal drops before the file is complete. If the signal comes back in that time, reception continues.</li>
+          <li><strong>HamDRM · received</strong> and the file name show for 8 seconds when a file is complete.</li>
+        </ul>
+        <p>Every received file is saved unchanged in the <code>drm</code> subfolder of the RX images folder. A picture also appears in the Gallery and in the receive history with the sender's callsign.</p>
+        <p>To switch HamDRM receive off, clear <strong>Receive HamDRM alongside SSTV</strong> in <a href="#decode-options">Options → Decode</a>. Not available yet: requests for missing segments (BSR) and waterfall text.</p>
+
+        <div class="note"><strong>What HamDRM does not use.</strong> Auto mode following picks SSTV modes only, so it never switches away from HamDRM. The loopback self-test, VIS header, leader tone and tone map apply to SSTV only. Stop TX, SWR cutoff, Sent frames and Resend work as for SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
@@ -569,7 +622,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="radio-cat" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="radio cat backend none rigctld hamlib linked flrig host port serial model baud ptt vox cat rts dtr connect test connection bandwidth filter passband preset 1800 2400 2800 favourite favourites per-favourite 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm store current">
+      <article id="radio-cat" class="help-topic" data-help-topic data-category="Radio and audio" data-keywords="radio cat backend none rigctld hamlib linked flrig host port serial model baud ptt vox cat rts dtr connect test connection bandwidth filter passband preset 1800 2400 2800 favourite favourites per-favourite 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm store current calling frequency frequencies call easypal drm hamdrm digital sstv band plan 14.230 14.233 iss ariss 145.800 region eu us au">
         <p class="topic-category">Radio and audio</p>
         <h2>Radio and CAT setup</h2>
         <p>Open <strong>Options → Radio / CAT</strong>, choose one backend, enter its connection details, test it, save it, and then connect the real radio session. <strong>Test connection</strong>, <strong>Connect</strong>, and <strong>Disconnect</strong> are all on this same tab, below the backend settings, not in the main window's transceiver header.</p>
@@ -610,6 +663,12 @@
         <p>A Favourite stored before this feature existed has no stored bandwidth. It uses 2400 Hz on SSB and data modes, and 15000 Hz on FM modes.</p>
         <div class="warning"><strong>Selecting a Favourite overwrites a filter you set by hand.</strong> Backends that cannot set bandwidth, such as flrig and OmniRig, skip that step and leave the radio's filter alone.</div>
 
+        <h3>Calling frequencies</h3>
+        <p>The <strong>▾</strong> button to the right of the frequency readout opens a list of popular SSTV and HamDRM (EasyPal) calling frequencies, grouped by band from 160 m to 70 cm. Each entry shows its frequency, the sideband its source gives (USB, LSB or FM) and whether it carries analog SSTV, HamDRM or both. <strong>EU</strong>, <strong>US</strong> or <strong>AU</strong> marks a regional calling frequency.</p>
+        <p>Picking an entry works like selecting a Favourite: it sends the frequency, then the mode, then a filter width through CAT. HamDRM entries request 2800 Hz, because a 2.5 kHz HamDRM signal is wider than the 2400 Hz SSB default. Other entries use 2400 Hz on USB and LSB, and 15000 Hz on FM. When <strong>SSB as PKT</strong> is checked, USB and LSB entries are sent as their data variants (PKTUSB, PKTLSB), the same as the USB and LSB buttons. FM entries are not changed.</p>
+        <p>The list comes from pd2tx.com, vk6ysf.com and the Wikipedia article on slow-scan television. Check your own licence and band plan before you transmit.</p>
+        <div class="warning"><strong>145.800 MHz is the ISS downlink.</strong> It is marked <strong>ISS downlink</strong>. Use it to receive SSTV images from the International Space Station only. Do not transmit there.</div>
+
         <h3>Which modes a Favourite can use</h3>
         <p>The <strong>Edit list…</strong> dialog offers six modes: USB, LSB, FM, DATA-U, DATA-L and DATA-FM. The DATA modes use the radio's data connector rather than its microphone path, which is normally what you want for soundcard SSTV. Not every radio has DATA-FM.</p>
         <p>Modes not used for SSTV (AM, CW and RTTY) are not offered. <strong>Store current</strong> is unavailable while the radio sits on a mode outside those six, so it cannot create a Favourite that the dialog could not display.</p>
@@ -627,6 +686,7 @@
           <li>Slowly raise <strong>Pwr</strong> while watching the radio's RF power and <a class="term" href="#glossary-alc">ALC</a> indications.</li>
           <li>Stop before ALC becomes excessive. Select <strong>Stop tune</strong> or let the time limit stop it.</li>
         </ol>
+        <p>The Radio / CAT tab has two Pwr sliders, <strong>Pwr · SSTV</strong> and <strong>Pwr · HamDRM</strong>, and its Tune always plays at the SSTV level. To tune for HamDRM, select HamDRM on the Transmit tab and use Tune there; see <a href="#transmit-drm">Setting the HamDRM level</a>.</p>
 
         <p><strong>Stop TX if <a class="term" href="#glossary-swr">SWR</a> too high</strong> cancels an active transmission after the connected radio reports a value over the chosen threshold for two consecutive polls. The option cannot work if the radio or backend does not report SWR.</p>
         <div class="safety"><strong>Not primary protection.</strong> Software polling and CAT can fail or lag. The SWR cutoff is a convenience backstop, not a substitute for the transceiver's hardware protection, a suitable antenna system, or operator monitoring.</div>
@@ -652,7 +712,7 @@
       <article id="decode-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="decode options sense squelch bpf demodulator hilbert pll zero crossing buffer off on extended auto stop restart sync slant snr signal to noise measure">
         <p class="topic-category">Options reference</p>
         <h2>Decode options</h2>
-        <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. These are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing it in either place changes both.</p>
+        <p>The Decode tab changes receiver behavior. Start with defaults and change one item at a time when solving a specific reception problem. Most of these are the same settings shown on the Receive tab's <a href="#receive-controls">input chain</a>. Changing one in either place changes both. HamDRM receive is set here only.</p>
 
         <div class="table-wrap">
           <table>
@@ -665,6 +725,7 @@
               <tr><td>Auto-stop</td><td>Can abandon an erratic or weak reception.</td></tr>
               <tr><td>Auto-restart</td><td>Can restart on a stronger sync detected during reception.</td></tr>
               <tr><td>Auto-sync</td><td>Attempts to re-establish synchronization during decode.</td></tr>
+              <tr><td>HamDRM receive</td><td>Decodes <a class="term" href="#glossary-drm">HamDRM</a> pictures from the same audio while SSTV receive runs. On by default. Applies when you save. See <a href="#receive-drm">Receive a HamDRM picture</a>.</td></tr>
               <tr><td>Auto-slant</td><td>Corrects sound-clock slant while receiving. Requires RX buffering.</td></tr>
               <tr><td>Measure reception SNR</td><td>Measures the signal-to-noise ratio on each line's sync pulse and shows it live and per picture (see <a href="#receive-controls">Signal quality: SNR</a>). On by default. Measurement only. It applies from the next received line.</td></tr>
             </tbody>
@@ -776,16 +837,18 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log">
+      <article id="station-options" class="help-topic" data-help-topic data-category="Options reference" data-keywords="station options callsign operator name grid square default rst signal report macros overlay cw fsk log drm hamdrm profile robust normal fast vox tone">
         <p class="topic-category">Options reference</p>
         <h2>Station options</h2>
         <p>The Station tab holds the identity values other features quietly rely on: template macros, identification, and the logbook all read from here rather than asking you to retype them.</p>
 
         <dl>
-          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, and every QSO you log. Leaving this blank breaks all four at once, so it's worth setting before anything else. An empty field shows <strong>N0CALL</strong> as grey placeholder text — a template's "MY CALL" field or CW-ID falls back to that placeholder too if you transmit without setting a real callsign, but FSK identification and your logged QSOs still record it as blank.</dd>
+          <dt>Your callsign</dt><dd>Feeds the TX overlay editor's "MY CALL" insert-field, CW-ID text, FSK station identification, the HamDRM station label, and every QSO you log. Leaving this blank breaks all five at once, so it's worth setting before anything else. An empty field shows <strong>N0CALL</strong> as grey placeholder text — a template's "MY CALL" field or CW-ID falls back to that placeholder too if you transmit without setting a real callsign, but FSK identification, HamDRM transmissions and your logged QSOs still send or record it as blank.</dd>
           <dt>Your name</dt><dd>Available to template overlays as a "MY NAME" insert-field. Purely cosmetic. Nothing else in the application reads it. An empty field shows <strong>NONAME</strong> as grey placeholder text, and a template's "MY NAME" field falls back to it the same way.</dd>
           <dt>Your grid square</dt><dd>Your <a class="term" href="#glossary-maidenhead-grid">Maidenhead grid</a> locator. The field is not validated, so any free-text location you prefer also works. Used for a "MY GRID" overlay field and, together with a contact's grid, to calculate distance and bearing for template fields. An empty field shows <strong>XX00</strong> as grey placeholder text, and a template's "MY GRID" field falls back to it — but <strong>XX00</strong> is not a real grid square, so distance/bearing calculation still needs a real one set here.</dd>
           <dt>Default RST</dt><dd>Prefills the Sent and Received fields when you start logging a new QSO. Defaults to <strong>595</strong>, shown as grey placeholder text until you type your own. SSTV operators exchange Readability/Strength/<em>Video</em>, not the classic Readability/Strength/<em>Tone</em> report used elsewhere in amateur radio, so 599 would be the wrong report to prefill. Clear the field if you would rather prefill nothing and enter it by hand every time.</dd>
+          <dt>HamDRM transmit profiles</dt><dd>The three profiles the Transmit tab offers for <a href="#transmit-drm">HamDRM (EasyPal)</a>: a name and the six transmission fields each. Leave a name empty to use the default (Robust, Normal, Fast). The Transmit tab's own Custom profile is kept separately.</dd>
+          <dt>Send a VOX tone before HamDRM</dt><dd>Sends a 1 s, 1700 Hz tone before each HamDRM transmission so a <a class="term" href="#glossary-vox">VOX</a>-keyed transmitter is already on when the signal starts. Off by default.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
@@ -819,7 +882,7 @@
 
         <h3>Tools</h3>
         <ul>
-          <li><strong>Decode WAV file…</strong> replays a compatible audio recording through the SSTV decoder.</li>
+          <li><strong>Decode WAV file…</strong> replays a compatible audio recording through the SSTV decoder and, when HamDRM receive is on, the HamDRM decoder.</li>
           <li><strong>Export logbook as ADIF…</strong> exports QSO log data in ADIF format.</li>
           <li><strong>Macros</strong> opens the token reference and a preview resolver.</li>
         </ul>
@@ -849,6 +912,7 @@
           </table>
         </div>
         <p>The MODE card's quick-mode buttons on the Receive tab (see <a href="#receive-first-picture">Receive your first picture</a>) hold a working subset of these. Right-click a slot to reassign it to any mode from the full list above.</p>
+        <p>The Transmit tab's mode selector also offers <strong>HamDRM (EasyPal)</strong>, a digital mode that is not SSTV and not on the quick-mode buttons. HamDRM pictures are received automatically beside SSTV (see <a href="#receive-drm">Receive a HamDRM picture</a>). See <a href="#transmit-drm">Send a picture with HamDRM (EasyPal)</a>.</p>
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
@@ -900,7 +964,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="files folders paths settings json history db sqlite wal shm write ahead logging journal images logs backup restore privacy telemetry password qrz windows linux macos appdata config">
+      <article id="files-backup-privacy" class="help-topic" data-help-topic data-category="Support" data-keywords="files folders paths settings json bak backup corrupt recovery restore defaults history db sqlite wal shm write ahead logging journal images logs backup restore privacy telemetry password qrz windows linux macos appdata config">
         <p class="topic-category">Support</p>
         <h2>Files, backups, and privacy</h2>
         <p>Your active locations are shown under <strong>Options → General → Storage</strong>. Defaults follow the operating system's application-data convention.</p>
@@ -918,11 +982,12 @@
         </div>
 
         <p>Close Scanline Studio before making a consistent manual backup of the database and settings. Back up the database and RX images together if you want Gallery references to remain useful.</p>
+        <p><strong>Automatic settings backup.</strong> Each time Scanline Studio saves its settings, it keeps the previous version next to it as <code>settings.json.bak</code>. If <code>settings.json</code> is later found damaged (for example after a power cut) or missing, Scanline Studio moves the damaged file aside as <code>settings.json.corrupt-&lt;date&gt;</code>, restores the backup, and tells you at startup. The restored copy is from before your last settings change, so check that change, especially TX power (Pwr), the SWR cut-off and your QRZ.com login. If no usable backup exists, it starts with default settings and tells you so. If a settings file cannot be read or repaired at all (for example because of the permissions of the file or its folder), Scanline Studio uses default or backed-up settings, does not save any setting changes, and tells you at startup; fix the permissions and restart. To reset all settings on purpose, close Scanline Studio and delete both <code>settings.json</code> and <code>settings.json.bak</code>.</p>
         <div class="warning"><strong>While the application runs, <code>history.db</code> is not the whole database.</strong> Scanline Studio uses SQLite write-ahead logging, so recent contacts and receive history can still be sitting in the <code>history.db-wal</code> file next to it. Copying <code>history.db</code> on its own at that moment loses them. Either close the application first, which folds those changes back into <code>history.db</code> and removes the two extra files, or copy <code>history.db</code>, <code>history.db-wal</code> and <code>history.db-shm</code> together as a set. This applies to backup tools and file-sync folders as much as to a manual copy.</div>
         <ul>
           <li>Scanline Studio does not require product telemetry or a cloud account for core use.</li>
           <li>QRZ.com and configured UDP forwarding send data only when you enable and use those integrations.</li>
-          <li>The QRZ.com password is kept in the system keyring (Windows Credential Manager or the Linux Secret Service) when one is available, so a copy of <code>settings.json</code> does not include it and a restored backup needs the password entered again. Without a system keyring it is stored without encryption in <code>settings.json</code>. On macOS this is always the case, because Scanline Studio currently does not use the macOS Keychain.</li>
+          <li>The QRZ.com password is kept in the system keyring (Windows Credential Manager or the Linux Secret Service) when one is available, so a copy of <code>settings.json</code> does not include it and a restored backup needs the password entered again. Without a system keyring it is stored without encryption in <code>settings.json</code>. On macOS this is always the case, because Scanline Studio currently does not use the macOS Keychain. Where the password is in <code>settings.json</code>, it is also in <code>settings.json.bak</code> and any <code>settings.json.corrupt-…</code> file. After the password moves to the keyring or is deleted, <code>settings.json.bak</code> still holds it until the next settings save; a <code>settings.json.corrupt-…</code> file keeps it until you delete that file.</li>
           <li>An older Scanline Studio build started after the password moved to the keyring shows an empty QRZ.com password. Enter it again there, or keep using the newer build.</li>
           <li><strong>Help → Open application log</strong> opens the current diagnostic log location. Review a log before sharing it because paths, callsigns, hosts, or operating details may be present.</li>
           <li><strong>Help → Report a bug…</strong> and <strong>Help → Send feedback…</strong> open a short form in your web browser. Nothing is sent until you press the form's send button. The form goes to the developer by email through the web3forms.com service, so an internet connection is required. It also includes the application version, operating system and .NET runtime version, which the form shows before you send. Your email address is sent only if you tick <em>Can we contact you by email</em>.</li>
@@ -1018,7 +1083,7 @@
         <footer class="article-footer"><a href="#guide-title">Back to top</a></footer>
       </article>
 
-      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossary terms afc agc cat dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead grid nr utc wpm">
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossary terms afc agc cat drm hamdrm papr dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead grid nr utc wpm">
         <p class="topic-category">Support</p>
         <h2>Glossary</h2>
         <p>Hover or focus a dotted-underlined term anywhere in this guide to see its definition without leaving the page. Each term links to the single definition here.</p>
@@ -1030,6 +1095,7 @@
           <dt id="glossary-avt-training">AVT training</dt><dd>A decoder state for the AVT SSTV mode family, which needs to measure the incoming signal before it can lock onto and decode the picture. This is distinct from the normal searching/locked states other modes use.</dd>
           <dt id="glossary-bpf">BPF</dt><dd>Band-pass filter; passes a chosen frequency range and rejects everything outside it.</dd>
           <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver control: frequency, mode, PTT, and telemetry communication with a radio.</dd>
+          <dt id="glossary-drm">HamDRM</dt><dd>The amateur variant of DRM (Digital Radio Mondiale) that EasyPal and QSSTV use to send a picture as a compressed file over a voice channel. A picture either arrives complete and clean, or not at all.</dd>
           <dt id="glossary-dsp">DSP</dt><dd>Digital signal processing.</dd>
           <dt id="glossary-fir">FIR</dt><dd>Finite impulse response; one of two common digital filter designs (see also IIR). Always stable, at the cost of needing more computation for the same sharpness.</dd>
           <dt id="glossary-fsk-id">FSK ID</dt><dd>Frequency-shift keyed station identification data sent around an SSTV transmission.</dd>
@@ -1041,6 +1107,7 @@
           <dt id="glossary-nr">NR</dt><dd>A serial/reference number, here the optional numeric sub-packet FSK identification can carry alongside your callsign.</dd>
           <dt id="glossary-pll">PLL</dt><dd>Phase-locked loop; one of the demodulator methods Scanline Studio can use to track the incoming picture tone and recover brightness from it.</dd>
           <dt id="glossary-ppm">PPM</dt><dd>Parts per million; here, a small audio-clock error that can produce image slant.</dd>
+          <dt id="glossary-papr">PAPR</dt><dd>Peak-to-average power ratio; how far a signal's peaks rise above its average power. HamDRM's is high, so its peaks reach full output long before the average does.</dd>
           <dt id="glossary-ptt">PTT</dt><dd>Push to talk; the control that keys the transmitter.</dd>
           <dt id="glossary-qso">QSO</dt><dd>A radio contact between stations.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Confirmation of a radio contact; often represented by a designed card or SSTV picture.</dd>
