@@ -148,12 +148,12 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
         Assert.Equal(1024, st.RsBufWidx);
     }
 
-    /// <summary>CPU of the whole RX so far (P5a front end, P5b acquisition, P5c channel estimation, P6 channel decoding) per 1024-sample
-    /// stripe at 11025 and 44100 Hz, on a DRM signal and on noise. Plan budget: below 10 % of one core.</summary>
+    /// <summary>CPU of the whole RX so far (P5a front end, P5b acquisition, P5c channel estimation, P6 channel decoding, P7a source
+    /// decoding) per 1024-sample stripe at 11025 and 44100 Hz, on a DRM signal and on noise. Plan budget: below 10 % of one core.</summary>
     [Theory]
     [InlineData(11025)]
     [InlineData(44100)]
-    public void Cpu_WholeRxThroughChannelDecoding(int rate)
+    public void Cpu_WholeRxThroughSourceDecoding(int rate)
     {
         short[] pcm = RxAcquisitionGoldenTests.LoadInput("B1_q16_high_long", out _);
         var toRate = new PolyphaseResampler(48000, rate);
@@ -170,13 +170,13 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
         {
             for (int w = 0; w < 3; w++)
             {
-                Measure(rate, x, out _, out _, out _, out _);
+                Measure(rate, x, out _, out _, out _, out _, out _);
                 Thread.Sleep(150);
             }
 
-            Measure(rate, x, out double meanUs, out double maxUs, out double maxFrameUs, out int valid);
+            Measure(rate, x, out double meanUs, out double maxUs, out double maxFrameUs, out int valid, out int files);
             double stripeUs = 1024.0 / 12000 * 1e6;
-            output.WriteLine($"R={rate} {name}: mean {meanUs:F1} µs/stripe ({meanUs / stripeUs * 100:F3} % of one core), worst stripe {maxUs:F1} µs ({maxUs / stripeUs * 100:F2} %), worst stripe with a frame {maxFrameUs:F1} µs, decoded MSC frames {valid}");
+            output.WriteLine($"R={rate} {name}: mean {meanUs:F1} µs/stripe ({meanUs / stripeUs * 100:F3} % of one core), worst stripe {maxUs:F1} µs ({maxUs / stripeUs * 100:F2} %), worst stripe with a frame {maxFrameUs:F1} µs, decoded MSC frames {valid}, files {files}");
 #if DEBUG
             const double limit = 30; // unoptimized JIT; the Release build is the real measurement
 #else
@@ -184,16 +184,26 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
 #endif
             Assert.True(meanUs / stripeUs * 100 < limit, $"{name}: {meanUs / stripeUs * 100:F2} % of one core");
             if (name == "drm")
+            {
                 Assert.True(valid > 30, $"only {valid} decoded MSC frames after resampling to {rate} Hz");
+                Assert.Equal(1, files);
+            }
+            else
+            {
+                Assert.Equal(0, files);
+            }
         }
     }
 
-    private static void Measure(int rate, float[] x, out double meanUs, out double maxUs, out double maxFrameUs, out int valid)
+    private static void Measure(int rate, float[] x, out double meanUs, out double maxUs, out double maxFrameUs, out int valid, out int files)
     {
         var fe = new DrmRxFrontEnd(rate);
         var estimator = new DrmChannelEstimator();
         var decoder = new DrmChannelDecoder();
-        var demod = new DrmDemodulator(new DrmRxFrameStage(estimator, decoder));
+        var source = new DrmSourceDecoder();
+        int received = 0;
+        source.FileReceived += _ => received++;
+        var demod = new DrmDemodulator(new DrmRxFrameStage(estimator, decoder, source));
         double max = 0, maxFrame = 0;
         int stripes = 0, v = 0;
         DrmStripeHandler h = s =>
@@ -218,6 +228,7 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
         maxUs = max;
         maxFrameUs = maxFrame;
         valid = v;
+        files = received;
     }
 
     private static double Sinc(double x) => x == 0 ? 1 : Math.Sin(Math.PI * x) / (Math.PI * x);

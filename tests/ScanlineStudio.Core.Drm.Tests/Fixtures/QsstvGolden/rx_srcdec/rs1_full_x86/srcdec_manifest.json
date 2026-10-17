@@ -1,0 +1,42 @@
+{
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:20260101120000-test.rs1",
+  "displayText:\nHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGN\nBIPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAH\nVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUB\nPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOV\nJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIP\nDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJ\nXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIPWD\nRYFMTAHOVCJQXELSZGN"
+ ],
+ "saved_files": [
+  {
+   "bytes": 441,
+   "name": "20260101120000-test.txt",
+   "sha256": "1b16b5defd5e29bd5f23733cc315f9713c62b4d3d5d0ff94e60932099f4df4b4"
+  }
+ ],
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 510,
+   "callsign": "PA0TST",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 64,
+   "fileName": "20260101120000-test.rs1",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 8,
+   "segments_with_data": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7
+   ],
+   "totalSegments": 8,
+   "transportID": 7456
+  }
+ ]
+}

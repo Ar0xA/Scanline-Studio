@@ -50,8 +50,8 @@ internal sealed class DrmDemodulator
 
     public DrmDemodState State { get; } = new();
 
-    /// <summary><c>drmRx::init</c> up to the source decoder (drmrx.cpp:20-35): <c>demodulator::init</c>, the
-    /// sample-rate estimate, then the frame stage's channel-decoding reset. The Hilbert history is not touched, as in QSSTV.</summary>
+    /// <summary><c>drmRx::init</c> (drmrx.cpp:20-36): <c>demodulator::init</c>, the
+    /// sample-rate estimate, then the frame stage's channel- and source-decoding reset. The Hilbert history is not touched, as in QSSTV.</summary>
     public void Reset()
     {
         Init();

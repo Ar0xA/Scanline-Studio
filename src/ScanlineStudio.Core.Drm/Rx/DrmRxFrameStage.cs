@@ -9,6 +9,9 @@ internal interface IDrmMscSink
     /// by the next frame, so copy what must outlive the call. <paramref name="state"/> carries the globals source
     /// decoding also reads, such as <c>robustness_mode</c> (sourcedecoder.cpp:830-841).</summary>
     void OnChannelDecoded(DrmChannelDecoder decoder, DrmDemodState state);
+
+    /// <summary><c>srcDecoder-&gt;init()</c>, the last step of drmRx::init (drmrx.cpp:36).</summary>
+    void Init();
 }
 
 /// <summary>The frame stage after acquisition: QSSTV's <c>channelEstimation()</c>, and when it equalized a frame
@@ -32,8 +35,12 @@ internal sealed class DrmRxFrameStage : IDrmFrameStage
 
     public IDrmMscSink? Sink { get; }
 
-    /// <summary>drmRx::init's channel-decoding part (drmrx.cpp:30-33), after <see cref="DrmDemodulator.Reset"/>.</summary>
-    public void ResetReceiver(DrmDemodState st) => Decoder.Reset(st);
+    /// <summary>drmRx::init's channel- and source-decoding part (drmrx.cpp:30-36), after <see cref="DrmDemodulator.Reset"/>.</summary>
+    public void ResetReceiver(DrmDemodState st)
+    {
+        Decoder.Reset(st);
+        Sink?.Init();
+    }
 
     /// <inheritdoc/>
     public void Reset() => Estimator.Reset();

@@ -7,10 +7,10 @@ namespace ScanlineStudio.Core.Drm.Tests;
 /// <summary>One golden case run through our P5a front end and the real receiver (acquisition plus
 /// <see cref="DrmChannelEstimator"/>), recording the state after every stripe and every equalized frame. Runs
 /// are cached per case so the P5b and P5c golden tests share them.</summary>
-/// <remarks>The frame stage is the real <see cref="DrmRxFrameStage"/> (channel estimation and channel decoding). Source
-/// decoding (P7a) does not exist yet; its one write into channel decoding's state, clearing <c>callsignValid</c> when a
-/// data group opens a new transport block (sourcedecoder.cpp:794-810), is applied from the golden rx_frames row
-/// (<see cref="SourceDecoderStandIn"/>).</remarks>
+/// <remarks>The frame stage is the real <see cref="DrmRxFrameStage"/> (channel estimation, channel decoding and source
+/// decoding). Two source decoders share the frames (<see cref="TeeSink"/>): <see cref="Result.Legacy"/> reads the RS
+/// size byte signed as x86 QSSTV does, so every output can be compared with the golden byte for byte;
+/// <see cref="Result.Fixed"/> is the production setting, with that bug fixed.</remarks>
 internal static class RxGoldenRun
 {
     /// <summary>B0_q4_high_long is knife-edge (probes/pre-p5.md): frame-by-frame comparison stops here.</summary>
@@ -74,9 +74,10 @@ internal static class RxGoldenRun
         };
         estimator.Tracker.ForceRunnerUpAtCalls = forcedCalls.Count > 0 ? forcedCalls : null;
         var decoder = new DrmChannelDecoder();
-        var stage = new CountingStage(new DrmRxFrameStage(estimator, decoder));
+        var legacy = new SourceRecorder(new DrmSourceDecoder { ReproduceQsstvSignedSurplus = true });
+        var fixedSource = new SourceRecorder(new DrmSourceDecoder());
+        var stage = new CountingStage(new DrmRxFrameStage(estimator, decoder, new TeeSink(legacy.Decoder, fixedSource.Decoder)));
         var demod = new DrmDemodulator(stage);
-        var source = new SourceDecoderStandIn(Csv(caseId, "rx/rx_frames.csv.gz"));
         var snaps = new List<StripeSnapshot>(sync.Length);
         var frames = new List<FrameRecord>();
         var decoded = new List<DecodedFrame>();
@@ -97,8 +98,7 @@ internal static class RxGoldenRun
 
             if (st.TransmissionFrameBufferDataValid == 1)
             {
-                source.AfterChannelDecoding(decoded.Count, decoder);
-                decoded.Add(DecodedFrame.Capture(b, st, decoder));
+                decoded.Add(DecodedFrame.Capture(b, st, decoder, legacy.Decoder));
             }
 
             snaps.Add(new StripeSnapshot(st.TimeSyncFlag, st.FrequencySyncFlag, st.FrameSyncFlag, st.RobustnessMode, st.SpectrumOccupancyEstimation,
@@ -110,7 +110,7 @@ internal static class RxGoldenRun
 
         (int last, string? cut, int? tieCall) = TieCut(caseId, planned, frames, margins);
         return new Result(caseId, FullStreamCases.Contains(caseId), txShaEqual, snaps, frames, stage.ZeroRequestCalls, last, cut, tieCall,
-            forcedCalls.ToArray(), frames.Count(f => f.Stripe <= last && f.MinPeakMargin <= TieMargin), decoded);
+            forcedCalls.ToArray(), frames.Count(f => f.Stripe <= last && f.MinPeakMargin <= TieMargin), decoded, legacy, fixedSource);
     }
 
     /// <summary>The compare range after the tie rule: frames are followed until the first frame whose tracking
@@ -179,7 +179,8 @@ internal static class RxGoldenRun
     }
 
     public sealed record Result(string CaseId, bool ExactInput, bool TxShaEqual, List<StripeSnapshot> Stripes, List<FrameRecord> Frames, int ZeroRequestCalls,
-        int LastStripe, string? TieCutReason, int? TieCall, int[] ForcedCalls, int NearTieFrames, List<DecodedFrame> Decoded);
+        int LastStripe, string? TieCutReason, int? TieCall, int[] ForcedCalls, int NearTieFrames, List<DecodedFrame> Decoded,
+        SourceRecorder Legacy, SourceRecorder Fixed);
 
     public readonly record struct StripeSnapshot(
         bool TimeSync, bool FreqSync, bool FrameSync, int Mode, int SoEstimate, int SpectrumOccupancy, float FreqOffset, float WMerFac,
@@ -230,9 +231,10 @@ internal static class RxGoldenRun
     /// <summary>One rx_frames row: the state after a stripe whose frame was data-valid (harness rx.cpp:340-372).</summary>
     public sealed record DecodedFrame(
         int Stripe, int FacValid, int Mode, int SoNew, int MscModeNew, int InterleaverDepthNew, int PlPartA, int PlPartB, int HmLength,
-        bool CallsignValid, string Callsign, int MscDataValid, int Length, int CrcOk, int First, int Last, byte[]? Bits)
+        bool CallsignValid, string Callsign, int MscDataValid, int Length, int CrcOk, int First, int Last, byte[]? Bits,
+        int MscValid, string DataGroup, int CurrentSegmentNumber, uint RxTransportId, int BodyTotalSegments, int RxSegments)
     {
-        public static DecodedFrame Capture(int stripe, DrmDemodState st, DrmChannelDecoder d)
+        public static DecodedFrame Capture(int stripe, DrmDemodState st, DrmChannelDecoder d, DrmSourceDecoder src)
         {
             int crcOk = -1, first = -1, last = -1;
             byte[]? bits = null;
@@ -250,26 +252,67 @@ internal static class RxGoldenRun
                 last = (bytes[0] & 0x40) != 0 ? 1 : 0;
             }
 
+            // The harness prints currentDataPacket only for a CRC-valid last packet (rx.cpp:356-361), stale or not.
+            string dg = ",,,,,";
+            if (crcOk == 1 && last == 1)
+            {
+                DrmDataGroup p = src.CurrentDataGroup;
+                dg = string.Join(',', S(p.DataGroupType), S(p.SegmentNumber), p.LastSegment ? "1" : "0", S(p.TransportId), S(p.SegmentSize), S(p.Lenght));
+            }
+
             return new DecodedFrame(stripe, st.FacValid, st.RobustnessMode, d.SpectrumOccupancyNew, d.MscModeNew, d.InterleaverDepthNew,
-                d.PlPartA, d.PlPartB, d.HmLength, d.CallsignValid, d.Callsign, d.MscDataValid, d.LengthDecodedData, crcOk, first, last, bits);
+                d.PlPartA, d.PlPartB, d.HmLength, d.CallsignValid, d.Callsign, d.MscDataValid, d.LengthDecodedData, crcOk, first, last, bits,
+                (int)src.MscValid, dg, src.CurrentSegmentNumber, src.RxTransportId, src.BodyTotalSegments, src.RxSegments);
+        }
+
+        private static string S(int v) => v.ToString(CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Feeds one frame to several source decoders. Each clears <c>callsignValid</c> when it opens a transport
+    /// block; they open the same blocks at the same frame, so the decoder state matches a single one.</summary>
+    internal sealed class TeeSink(params IDrmMscSink[] sinks) : IDrmMscSink
+    {
+        public void OnChannelDecoded(DrmChannelDecoder decoder, DrmDemodState state)
+        {
+            foreach (IDrmMscSink s in sinks)
+                s.OnChannelDecoded(decoder, state);
+        }
+
+        public void Init()
+        {
+            foreach (IDrmMscSink s in sinks)
+                s.Init();
         }
     }
 
-    /// <summary>Stands in for P7a's one write into channel decoding: a completed MOT header (3) or body (4) data group
-    /// with an unseen transport ID creates a transport block, which clears <c>callsignValid</c> (sourcedecoder.cpp:300,409,794-810).
-    /// It runs after channel decoding in the same frame, as srcDecoder->decode() does (demodulator.cpp:160-161).</summary>
-    internal sealed class SourceDecoderStandIn(string[][] goldenFrames)
+    /// <summary>A source decoder and everything it raised, as harness-style event strings (harness main.cpp:16-40):
+    /// "rxDRMStatus:&lt;name&gt;", "file:&lt;QSSTV name&gt;", "prepareFix:&lt;bytes&gt;", "alreadyReceived:&lt;name&gt;".</summary>
+    internal sealed class SourceRecorder
     {
-        private readonly HashSet<string> _transportIds = [];
-
-        public void AfterChannelDecoding(int row, DrmChannelDecoder decoder)
+        public SourceRecorder(DrmSourceDecoder decoder)
         {
-            if (row >= goldenFrames.Length)
-                return;
-            string[] g = goldenFrames[row];
-            if ((g[18] == "3" || g[18] == "4") && _transportIds.Add(g[21]))
-                decoder.InvalidateCallsign();
+            Decoder = decoder;
+            decoder.ReceivingNameChanged += n => Events.Add("rxDRMStatus:" + n);
+            decoder.FileReceived += f =>
+            {
+                Files.Add(f);
+                Events.Add("file:" + f.QsstvFileName);
+            };
+            decoder.BsrReceived += b =>
+            {
+                Bsr.Add(b.ToArray());
+                Events.Add("prepareFix:" + b.Length.ToString(CultureInfo.InvariantCulture));
+            };
+            decoder.AlreadyReceived += n => Events.Add("alreadyReceived:" + n);
         }
+
+        public DrmSourceDecoder Decoder { get; }
+
+        public List<string> Events { get; } = [];
+
+        public List<DrmReceivedFile> Files { get; } = [];
+
+        public List<byte[]> Bsr { get; } = [];
     }
 
     /// <summary>The real frame stage, counting frames that leave input_samples_buffer_request at 0.</summary>

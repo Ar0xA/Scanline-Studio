@@ -1,0 +1,40 @@
+{
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1",
+  "rxDRMStatus:20260101120000-card.rs1"
+ ],
+ "saved_files": [],
+ "transport_blocks": [
+  {
+   "alreadyReceived": false,
+   "bodySize": 510,
+   "callsign": "PA0TST",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 64,
+   "fileName": "20260101120000-card.rs1",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 7,
+   "segments_with_data": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    6,
+    7
+   ],
+   "totalSegments": 8,
+   "transportID": 4386
+  }
+ ]
+}

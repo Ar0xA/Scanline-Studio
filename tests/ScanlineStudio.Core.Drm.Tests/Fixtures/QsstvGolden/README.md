@@ -159,6 +159,7 @@ reuse the stale buffer tail there; that only affects audio after the signal has 
 | `rx_frames`, `rx_msc_bits`, saved files | exact |
 | `rx_cells` (P5c) | integer state exact; Wiener weights bit-exact; tracking and cells per `RxChannelEstimationGoldenTests` (FFTW vs our float FFT, about 10× the measured worst). Two cases diverge at one bit-equal peak-search tie; with the tracker forced to the other bin at that symbol they match to the end |
 | `rx_chdec` (P6) | exact: every per-frame field, both sha256 (MSC demapper, transmission_frame_buffer) and every decoded bit, data_valid 1 and 2 |
+| `rx_srcdec` (P7a) | exact: every per-frame source-decoder field, transport blocks, files (sha256), bsr payloads and events; the RS size byte read signed as x86 QSSTV does (test-only switch) |
 
 **Why 0.1 for `rx_stripes_12k` in a float port:**
 - **Worst case:** the decimator is a 180-tap FIR over int16 input, and the normalized taps have
@@ -201,6 +202,8 @@ are printed to 9 significant digits.
     trailing bytes: `B1_q4_high_long_rs1` (300 bytes) is saved as 441 bytes, with the first 300 correct.
   - With `card.jp2` (surplus 33), RS1 decodes exactly.
   - This is RX interpretation, so it is not wire behaviour.
+  - Scanline Studio RX reads the byte unsigned (P7a, an interpretation-side fix). Its golden tests reproduce the x86 value
+    with a test-only switch to compare with these files.
 - **4-QAM ignores protection** in the MSC chain: high and low give identical packets, coded bits and
   cells. Only the FAC protection bit differs, and with it the cell grid and the audio.
 - **`bsr.bin` transport ID:** the ID comes from a static that starts at 2 and advances mod 3 on every
@@ -220,6 +223,9 @@ python3 -I make_rx_acq.py      # then rx_acq/ (P5b): RX acquisition state, see r
 python3 -I make_rx_cells.py    # then rx_cells/ (P5c): RX channel estimation per frame, see rx_cells/README.md
 python3 -I make_rx_chdec.py    # then rx_chdec/ (P6): channel_decoding on synthetic noisy frames, see rx_chdec/README.md;
                                # it also re-runs all 79 TX/RX cases and requires rx_sync/rx_frames/rx_msc_bits byte-identical
+python3 -I make_rx_srcdec.py   # then rx_srcdec/ (P7a): sourceDecoder::decode on packet sequences, see rx_srcdec/README.md;
+                               # it checks its MOT/packet/RS builders against the TX goldens, then re-runs all 79 cases and
+                               # requires rx_sync/rx_frames/rx_msc_bits and the rx_manifest blocks/files/events byte-identical
 ```
 
 ## Cases

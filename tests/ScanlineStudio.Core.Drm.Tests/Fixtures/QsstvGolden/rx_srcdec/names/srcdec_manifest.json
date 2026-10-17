@@ -1,0 +1,210 @@
+{
+ "bsr_received": [
+  {
+   "bytes": 17,
+   "file": "bsr_received_0.bin",
+   "sha256": "e1f812413c73ab8ec78303779ef987e170cc7f388cbf164f246bf1d3f952b79e"
+  }
+ ],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:../evil.txt",
+  "displayText:afkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxch",
+  "rxDRMStatus:",
+  "rxDRMStatus:ab",
+  "saveDRMImage:ab",
+  "rxDRMStatus:",
+  "rxDRMStatus:caf\u00e9.txt",
+  "displayText:chmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejot",
+  "rxDRMStatus:",
+  "rxDRMStatus:\u0001\u001f.txt",
+  "displayText:dinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuz",
+  "rxDRMStatus:",
+  "rxDRMStatus:CON.txt",
+  "displayText:ejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvaf",
+  "rxDRMStatus:",
+  "rxDRMStatus:",
+  "rxDRMStatus:",
+  "rxDRMStatus:",
+  "rxDRMStatus:",
+  "rxDRMStatus:.",
+  "rxDRMStatus:.",
+  "rxDRMStatus:",
+  "rxDRMStatus:x.TXT",
+  "saveDRMImage:x.TXT",
+  "rxDRMStatus:",
+  "rxDRMStatus:de_hybrid.jpg",
+  "rxDRMStatus:",
+  "rxDRMStatus:img.txt",
+  "saveDRMImage:img.txt",
+  "rxDRMStatus:",
+  "rxDRMStatus:dup.txt",
+  "displayText:lqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqv",
+  "rxDRMStatus:",
+  "rxDRMStatus:dup.txt",
+  "displayText:mrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwb",
+  "rxDRMStatus:",
+  "rxDRMStatus:bsr.bin",
+  "prepareFix:17",
+  "rxDRMStatus:",
+  "rxDRMStatus:after.txt",
+  "displayText:otydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydin",
+  "rxDRMStatus:",
+  "rxDRMStatus:tail.txt",
+  "displayText:puzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejotydinsxchmrwbglqvafkpuzejot"
+ ],
+ "saved_files": [
+  {
+   "bytes": 70,
+   "name": "../evil.txt",
+   "sha256": "812f5093dcf3aa1ee7048e2ebf42d92914bda714b20a6165bfafe24fe5260b0c"
+  },
+  {
+   "bytes": 73,
+   "name": "\u0001\u001f.txt",
+   "sha256": "3b7523bc39576bca66ce9b4c94123ddc2891b65b2d59cca91d6d4161bee654d1"
+  },
+  {
+   "bytes": 74,
+   "name": "CON.txt",
+   "sha256": "f251b94cdb6e12144712ed68dd49300f29327192f09bc233801c5954f9ed2851"
+  },
+  {
+   "bytes": 71,
+   "name": "ab",
+   "sha256": "32a4106040efcf2258d3142543dbd0d44e0e3de1eba932bbd3c7f2bf3899212f"
+  },
+  {
+   "bytes": 84,
+   "name": "after.txt",
+   "sha256": "9da417a02e7a90ba6e39c6a2a04a1374bc84f9c1e152fcf006d6b3d1b6acffbf"
+  },
+  {
+   "bytes": 72,
+   "name": "caf\u00e9.txt",
+   "sha256": "3a6569abd52618b0abd7284e495fa1b700922498582432937826544d49fab1f2"
+  },
+  {
+   "bytes": 79,
+   "name": "de_hybrid.jpg",
+   "sha256": "91e91b091ef2b846560a2b09e7b2fcb6d7867d397303de3b373785f1632e62f0"
+  },
+  {
+   "bytes": 82,
+   "name": "dup.txt",
+   "sha256": "09dee1c1879ee5c8766d84fe727b23f0a3e7ced3b349b78829246fa2ced63899"
+  },
+  {
+   "bytes": 69,
+   "name": "img.txt",
+   "sha256": "b1ff9c8ea3a780bad09b346c423d2d0e46815926879b18e841d928376a946640"
+  },
+  {
+   "bytes": 85,
+   "name": "tail.txt",
+   "sha256": "bcad1e184d373c243a88ce1fef130d384745f36b6a0ec252be25f99558ff514d"
+  },
+  {
+   "bytes": 78,
+   "name": "x.TXT",
+   "sha256": "a334197c751fea4d6da2426bf5e6fcb7b9bc66c9e6ee6cbfca2f2ebdbb878c30"
+  }
+ ],
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 69,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 50,
+   "fileName": "img.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 2,
+   "segments_with_data": [
+    0,
+    1
+   ],
+   "totalSegments": 2,
+   "transportID": 4106
+  },
+  {
+   "alreadyReceived": true,
+   "bodySize": 81,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 50,
+   "fileName": "dup.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 2,
+   "segments_with_data": [
+    0,
+    1
+   ],
+   "totalSegments": 2,
+   "transportID": 4107
+  },
+  {
+   "alreadyReceived": true,
+   "bodySize": 82,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 50,
+   "fileName": "dup.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 2,
+   "segments_with_data": [
+    0,
+    1
+   ],
+   "totalSegments": 2,
+   "transportID": 4108
+  },
+  {
+   "alreadyReceived": true,
+   "bodySize": 84,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 50,
+   "fileName": "after.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 2,
+   "segments_with_data": [
+    0,
+    1
+   ],
+   "totalSegments": 2,
+   "transportID": 4110
+  },
+  {
+   "alreadyReceived": true,
+   "bodySize": 85,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 50,
+   "fileName": "tail.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 2,
+   "segments_with_data": [
+    0,
+    1
+   ],
+   "totalSegments": 2,
+   "transportID": 4111
+  }
+ ]
+}

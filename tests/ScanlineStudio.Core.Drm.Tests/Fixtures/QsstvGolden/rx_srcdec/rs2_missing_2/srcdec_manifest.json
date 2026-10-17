@@ -1,0 +1,39 @@
+{
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2",
+  "rxDRMStatus:20260101120000-test.rs2"
+ ],
+ "saved_files": [],
+ "transport_blocks": [
+  {
+   "alreadyReceived": false,
+   "bodySize": 510,
+   "callsign": "PA0TST",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 64,
+   "fileName": "20260101120000-test.rs2",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 6,
+   "segments_with_data": [
+    0,
+    2,
+    3,
+    5,
+    6,
+    7
+   ],
+   "totalSegments": 8,
+   "transportID": 6691
+  }
+ ]
+}

@@ -1,0 +1,67 @@
+{
+ "bsr_received": [],
+ "events": [
+  "rxDRMStatus:",
+  "rxDRMStatus:a.txt",
+  "rxDRMStatus:",
+  "rxDRMStatus:b.txt",
+  "displayText:\nHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGN\nBIPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAH\nVCJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUB\nPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOV\nJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIP",
+  "displayText:YFMTAHOVCJQXELSZGNUB\nPWDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOV\nJQXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIP\nDKRYFMTAHOVCJQXELSZGNUBIPWDKRYFMTAHOVCJ\nXELSZGNUBIPWDKRYFMTAHOVCJQXELSZGNUBIPWD\nRYFMTAHOVCJQXELSZGN"
+ ],
+ "saved_files": [
+  {
+   "bytes": 200,
+   "name": "a.txt",
+   "sha256": "ea797ba3d7104d2423b4c4bb6ac62637332705a166f15b996a86a1a331737836"
+  },
+  {
+   "bytes": 200,
+   "name": "b.txt",
+   "sha256": "e49d843136e1da47e0e244502a0f0397be51678efe59cc691ae6ede708fd8c7b"
+  }
+ ],
+ "transport_blocks": [
+  {
+   "alreadyReceived": true,
+   "bodySize": 200,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 60,
+   "fileName": "a.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 4,
+   "segments_with_data": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "totalSegments": 4,
+   "transportID": 12289
+  },
+  {
+   "alreadyReceived": true,
+   "bodySize": 200,
+   "callsign": "",
+   "contentSubtype": 1,
+   "contentType": 2,
+   "defaultSegmentSize": 60,
+   "fileName": "b.txt",
+   "headerReceived": true,
+   "lastSegmentReceived": true,
+   "modeCode": 11000,
+   "segmentsReceived": 4,
+   "segments_with_data": [
+    0,
+    1,
+    2,
+    3
+   ],
+   "totalSegments": 4,
+   "transportID": 12290
+  }
+ ]
+}

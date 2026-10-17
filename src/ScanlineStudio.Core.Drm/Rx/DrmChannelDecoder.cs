@@ -39,7 +39,7 @@ namespace ScanlineStudio.Core.Drm.Rx;
 /// <para>Not thread-safe: one instance per receive worker. No allocation per frame, except the <see cref="Callsign"/>
 /// string when a callsign completes.</para>
 /// </remarks>
-internal sealed class DrmChannelDecoder
+internal sealed class DrmChannelDecoder : IDrmMscFrame
 {
     private const int MsdIter = 4;
     private const int FacDeinterleaverLength = 90;
