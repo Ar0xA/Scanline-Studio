@@ -103,6 +103,12 @@ internal sealed class DrmChannelEstimator : IDrmFrameStage
     /// <summary><c>delta_freq_offset</c>: the pilot phase drift fed to the tracker.</summary>
     public float DeltaFreqOffset => _deltaFreqOffset;
 
+    /// <summary>Start the read SNR counter full at init, as the source evidently meant (P6b-4 candidate; off = QSSTV).</summary>
+    internal bool SnrTimeoutStartsFull { get; init; }
+
+    /// <summary>Reset <c>fac_not_valid_counter</c> on every good frame (P6b-4 candidate; off = QSSTV).</summary>
+    internal bool FacCounterResetsOnGoodFrame { get; init; }
+
     /// <summary><c>SNR_timeout_counter</c>, the counter the resync rule reads.</summary>
     public int SnrTimeoutCounter => _snrTimeoutCounter;
 
@@ -152,7 +158,7 @@ internal sealed class DrmChannelEstimator : IDrmFrameStage
         _sigmaqNoiseList[1] = (float)Math.Pow(10.0, -14.0 / 10.0);
         _sigmaqNoiseList[2] = (float)Math.Pow(10.0, -14.0 / 10.0);
         _sigmaqNoiseList[3] = (float)Math.Pow(10.0, -12.0 / 10.0);
-        _snrTimeoutCounter = 0;
+        _snrTimeoutCounter = SnrTimeoutStartsFull ? DrmRxTables.SnrTimeout : 0;
         _deltaFreqOffset = 0;
     }
 
@@ -647,6 +653,8 @@ internal sealed class DrmChannelEstimator : IDrmFrameStage
         else
         {
             _snrTimeoutCounter = DrmRxTables.SnrTimeout;
+            if (FacCounterResetsOnGoodFrame)
+                _facNotValidCounter = DrmRxTables.FacValidCounter;
             st.TransmissionFrameBufferDataValid = 1;
             st.FacValid = 1;
         }

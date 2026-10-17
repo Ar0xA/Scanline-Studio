@@ -43,7 +43,10 @@ public sealed class DrmReceiver : IDrmReceiver
             ReproduceQsstvPpiWrap = options.ReproduceQsstvPpiWrap,
             ReproduceQsstvSignedSurplus = options.ReproduceQsstvSignedSurplus,
         };
-        _demodulator = new DrmDemodulator(new DrmRxFrameStage(new DrmChannelEstimator(), _channelDecoder, _sourceDecoder));
+        _demodulator = new DrmDemodulator(new DrmRxFrameStage(
+            new DrmChannelEstimator { SnrTimeoutStartsFull = options.SnrTimeoutStartsFull, FacCounterResetsOnGoodFrame = options.FacCounterResetsOnGoodFrame },
+            _channelDecoder,
+            _sourceDecoder));
         _onStripe = OnStripe;
         _sourceDecoder.FileReceived += f => FileReceived?.Invoke(f);
         _sourceDecoder.ReceivingNameChanged += n =>
@@ -75,6 +78,9 @@ public sealed class DrmReceiver : IDrmReceiver
 
     /// <summary>The demodulator state, for tests.</summary>
     internal DrmDemodState State => _demodulator.State;
+
+    /// <summary>The source decoder, for tests.</summary>
+    internal DrmSourceDecoder SourceDecoder => _sourceDecoder;
 
     /// <summary>Whether <paramref name="captureRate"/> is supported by the front end.</summary>
     public static bool IsSupportedRate(int captureRate) => DrmRxFrontEnd.IsSupportedRate(captureRate);
