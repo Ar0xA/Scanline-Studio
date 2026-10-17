@@ -405,11 +405,15 @@ real QSSTV/EasyPal WAVs for P8.
   RS1) received byte-identical by file decode (48 kHz and 11025 Hz, app at both rates) and by live capture; JP2 decode
   39.3 dB PSNR vs the source testcard.
 - **DRM-P7a-2 follow-ups (found while building).** (a) Re-measure the RS per-level worst case on a quiet machine
-  (`RsFileDecoder_WorstCaseCostPerLevel`; the build-time run was loaded). (b) ImageSharp 3.1.12 has NU1903 high
-  advisories (e.g. GHSA-j3p4-wp97-rph4) and now decodes untrusted received bytes: check for a patched release. User: keep every file raw in `<images>/drm` + PNG.
-  (c) When the PNG write succeeds and `RecordAsync` fails (`DrmReceptionRecorder.RecordImageAsync`), the
-  `*_drm_*.png` stays in the images folder; `SqliteReceiveHistoryStore.ReconcileWithDiskAsync` may later import it as a
-  history row (unchecked).
+  (`RsFileDecoder_WorstCaseCostPerLevel`; the build-time run was loaded). (b) CLOSED 2026-10-17 — ImageSharp NU1903 advisories:
+  all 7 of 2026-10-07 are unreachable from the received-file path on 3.1.12 (TIFF encoder/decoder and
+  HistogramEqualization unused, `DrmImageDecoder` registers JPEG/PNG/BMP/GIF only; the ICC CLUT parser is reachable
+  in v3 only through `IccProfile.Entries`, never read; ICC conversion and EXR are v4-only). The patched 4.1.2+ needs a
+  Six Labors licence key for Release builds (Drawing 3.1.3 targets) and breaks `RectangularPolygon`: stay on 3.1.12.
+  Re-check on each new advisory. User: keep every file raw in `<images>/drm` + PNG.
+  (c) CLOSED 2026-10-17 — an orphan `*_drm_*.png` (PNG written,
+  `RecordAsync` failed) is imported by `ReconcileWithDiskAsync` as a "drm" row (its filename regex matches) without
+  callsign/frequency: a recovery, same as the SSTV recorder. No change.
 - **DRM-P7b.** OPEN — RX UI (own plan review).
 - **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
 - **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).
