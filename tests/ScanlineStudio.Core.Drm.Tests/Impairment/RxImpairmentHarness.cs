@@ -315,14 +315,15 @@ public sealed class RxImpairmentHarness(ITestOutputHelper output)
                         DrmRunResult r = Receive(rx, w.rate, start, payload, options, truth.Segments);
                         rows.Add(string.Join(',', config.Name, channel.Name, w.rate, w.snr.ToString("F1", CultureInfo.InvariantCulture), w.seed, label,
                             r.Complete ? 1 : 0, r.CompleteButWrong ? 1 : 0, double.IsNaN(r.SecondsToComplete) ? string.Empty : r.SecondsToComplete.ToString("F1", CultureInfo.InvariantCulture),
-                            r.Segments, r.TotalSegments, r.Missing.Count, r.HeaderSeen ? 1 : 0, OneItemShort(r, truth) ? 1 : 0));
+                            r.Segments, r.TotalSegments, r.Missing.Count, r.HeaderSeen ? 1 : 0, OneItemShort(r, truth) ? 1 : 0,
+                            r.Missing.Count is > 0 and <= 40 ? string.Join(';', r.Missing) : string.Empty));
                     }
                 });
             }
         }
 
         string[] sorted = [.. rows.OrderBy(r => r, StringComparer.Ordinal)];
-        File.WriteAllLines(outPath, ["config,channel,rate,snr,seed,rx,complete,wrong,seconds,segments,total,missing,header,oneItemShort", .. sorted]);
+        File.WriteAllLines(outPath, ["config,channel,rate,snr,seed,rx,complete,wrong,seconds,segments,total,missing,header,oneItemShort,missingIds", .. sorted]);
         string summary = Summarize(sorted);
         output.WriteLine(summary);
         File.WriteAllText(Path.ChangeExtension(outPath, ".summary.txt"), summary);
@@ -332,7 +333,7 @@ public sealed class RxImpairmentHarness(ITestOutputHelper output)
     /// <summary>Pre-scan with the receiver under test at 48 kHz (the baseline never completes a wrapped file), 2 seeds:
     /// 0..40 dB in 4 dB steps, then 1 dB steps inside the bracket. Six points from the highest SNR with no completion to
     /// the lowest with full completion; distinct, so a collapsed bracket gives one point, not six copies of one.</summary>
-    private static double[] SnrGrid(DrmSweepConfig config, HfChannel channel, float[] tx, byte[] payload, int segments, ParallelOptions po)
+    internal static double[] SnrGrid(DrmSweepConfig config, HfChannel channel, float[] tx, byte[] payload, int segments, ParallelOptions po)
     {
         (double lo, double hi) = Bracket(config, channel, tx, payload, segments, po, [.. Enumerable.Range(0, 11).Select(i => i * 4.0)], 0, 40);
         (lo, hi) = Bracket(config, channel, tx, payload, segments, po, [.. Enumerable.Range(0, (int)(hi - lo) + 1).Select(i => lo + i)], lo, hi);
