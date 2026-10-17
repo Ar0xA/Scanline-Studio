@@ -6,6 +6,34 @@
              x:Class="ScanlineStudio.UI.Views.RadioHeaderView"
              x:DataType="vm:RadioStatusViewModel">
 
+    <UserControl.Resources>
+        <!-- Calling-frequency menu. MenuFlyout has no presenter class hook, so the presenter gets its own theme; the
+             MenuItems use container themes, never an ItemTemplate (that nests a MenuItem in a MenuItem, see Atoms.axaml
+             QuickModeGridMenuItemTheme). Submenu popups keep Fluent's background, same as the main Menu.Industry. -->
+        <ControlTheme x:Key="CallingFrequencyPresenterTheme" TargetType="MenuFlyoutPresenter" BasedOn="{StaticResource {x:Type MenuFlyoutPresenter}}">
+            <Setter Property="Background" Value="{DynamicResource IndustryBg}" />
+            <Setter Property="Padding" Value="{StaticResource IndustryMenuPadding}" />
+        </ControlTheme>
+        <ControlTheme x:Key="CallingFrequencyEntryMenuItemTheme" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="{Binding Display}" />
+            <Setter Property="Command" Value="{Binding SelectCommand}" />
+            <Setter Property="CommandParameter" Value="{Binding}" />
+            <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
+            <Setter Property="FontFamily" Value="{StaticResource IndustryMonoFontFamily}" />
+            <Setter Property="FontSize" Value="{DynamicResource IndustryContextMenuItemFontSize}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
+        </ControlTheme>
+        <ControlTheme x:Key="CallingFrequencyBandMenuItemTheme" TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
+            <Setter Property="Header" Value="{Binding Band}" />
+            <Setter Property="ItemsSource" Value="{Binding Items}" />
+            <Setter Property="ItemContainerTheme" Value="{StaticResource CallingFrequencyEntryMenuItemTheme}" />
+            <Setter Property="Padding" Value="{StaticResource IndustryMenuItemPadding}" />
+            <Setter Property="FontFamily" Value="{StaticResource IndustryBodyFontFamily}" />
+            <Setter Property="FontSize" Value="{DynamicResource IndustryContextMenuItemFontSize}" />
+            <Setter Property="Foreground" Value="{DynamicResource IndustryText}" />
+        </ControlTheme>
+    </UserControl.Resources>
+
     <!-- VFO / Favourites / Transceiver header cards (spec/09-ui.md, mock2's own 3-column
          header row): MainWindow chrome, not a dockable pane. Connecting happens once at
          ScanlineStudio.Host startup from persisted settings, not from this strip; always visible
@@ -99,6 +127,20 @@
                                  KeyDown="OnFrequencyEntryKeyDown"
                                  LostFocus="OnFrequencyEntryLostFocus" />
                     </StackPanel>
+                    <!-- An action menu, not a ComboBox: no selected state to drift from a hand-tuned rig, and the same entry can
+                         be picked twice. Glyph-only so the Auto-width VFO card stays narrow next to Favourites. -->
+                    <Button x:Name="CallingFrequenciesButton"
+                            Classes="Industry IndustryBtn IndustryBtn26 IndustryBtnSecondary" VerticalAlignment="Center"
+                            Content="{loc:Translate RadioStatus.CallingFrequencies.Glyph}"
+                            ToolTip.Tip="{loc:Translate RadioStatus.CallingFrequencies.Button.Help}"
+                            AutomationProperties.Name="{loc:Translate RadioStatus.CallingFrequencies.AutomationName}">
+                        <Button.Flyout>
+                            <MenuFlyout Placement="BottomEdgeAlignedLeft"
+                                        ItemsSource="{Binding CallingFrequencyBands}"
+                                        ItemContainerTheme="{StaticResource CallingFrequencyBandMenuItemTheme}"
+                                        FlyoutPresenterTheme="{StaticResource CallingFrequencyPresenterTheme}" />
+                        </Button.Flyout>
+                    </Button>
                     <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="Auto,Auto"
                           ColumnSpacing="14" RowSpacing="4" VerticalAlignment="Center">
                         <!-- Stub survey Tier 4 (2026-08-26): now bound to SelectedRadioMode via

@@ -65,7 +65,7 @@ public sealed class PaneViewModelTests
         // Regression guard (auditor nit): asserting only the locale KEY would still pass if
         // DateTimeOffset.Now (local offset) were passed instead of UtcNow -- assert the actual arg's
         // offset is zero, proving this is really UTC.
-        var passedInstant = Assert.IsType<DateTimeOffset>(localization.LastArgs[0]);
+        var passedInstant = Assert.IsType<DateTimeOffset>(localization.Calls.Last(c => c.Key == "RadioStatus.UtcValueFormat").Args[0]);
         Assert.Equal(TimeSpan.Zero, passedInstant.Offset);
     }
 

@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using Avalonia.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
@@ -982,6 +983,8 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         // constructor, not a new leak risk. Last statement, deliberately -- see MainViewModel's own
         // identical reasoning for why (a throw earlier in this constructor must not leave a
         // half-constructed instance subscribed).
+        _callingFrequencyBands = BuildCallingFrequencyBands();
+        ((INotifyPropertyChanged)ApplyPresetCommand).PropertyChanged += OnApplyPresetCommandPropertyChanged;
         localization.CultureChanged += OnCultureChanged;
     }
 
@@ -997,6 +1000,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
     private void OnCultureChanged()
     {
         OnPropertyChanged(string.Empty);
+        CallingFrequencyBands = BuildCallingFrequencyBands();
 
         FrequencyDisplay = _currentFrequencyHz > 0
             ? _localization.GetString("RadioStatus.FrequencyDisplayFormat", $"{_currentFrequencyHz / 1_000_000.0:0.000000}")
@@ -1473,6 +1477,85 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
             Log.ApplyPresetFailed(_logger, preset.Label, ex);
             Dispatcher.UIThread.Post(() => ErrorMessage = _localization.GetString("RadioStatus.Error.NoRadioConnected"));
         }
+    }
+
+    /// <summary>The header's calling-frequency menu: <see cref="CallingFrequencies.All"/> grouped by band, display text
+    /// in the current language (rebuilt on a culture change).</summary>
+    [ObservableProperty]
+    private IReadOnlyList<CallingFrequencyBandViewModel> _callingFrequencyBands;
+
+    private CallingFrequencyBandViewModel[] BuildCallingFrequencyBands() =>
+        [.. CallingFrequencies.All.GroupBy(f => f.Band).Select(band => new CallingFrequencyBandViewModel(
+            band.Key, [.. band.Select(f => new CallingFrequencyItemViewModel(f, FormatCallingFrequency(f), ApplyCallingFrequencyCommand))]))];
+
+    internal string FormatCallingFrequency(CallingFrequency entry)
+    {
+        string frequency = _localization.GetString("RadioStatus.FrequencyDisplayFormat", $"{entry.FrequencyHz / 1_000_000.0:0.000000}");
+        string mode = entry.Mode switch
+        {
+            RadioMode.Usb => _localization.GetString("RadioStatus.SidebandUsb"),
+            RadioMode.Lsb => _localization.GetString("RadioStatus.SidebandLsb"),
+            _ => _localization.GetString("RadioStatus.SidebandFm"),
+        };
+        string kind = entry.Kind switch
+        {
+            CallingFrequencyKind.Drm => _localization.GetString("RadioStatus.CallingFrequencies.Kind.Drm"),
+            CallingFrequencyKind.Sstv | CallingFrequencyKind.Drm => _localization.GetString("RadioStatus.CallingFrequencies.Kind.SstvDrm"),
+            _ => _localization.GetString("RadioStatus.CallingFrequencies.Kind.Sstv"),
+        };
+
+        // Fixed order EU, AU, US, then tags; joined into the single {3} slot.
+        var notes = new List<string>();
+        if (entry.Region.HasFlag(CallingFrequencyRegion.Eu))
+            notes.Add(_localization.GetString("RadioStatus.CallingFrequencies.Region.Eu"));
+        if (entry.Region.HasFlag(CallingFrequencyRegion.Au))
+            notes.Add(_localization.GetString("RadioStatus.CallingFrequencies.Region.Au"));
+        if (entry.Region.HasFlag(CallingFrequencyRegion.Us))
+            notes.Add(_localization.GetString("RadioStatus.CallingFrequencies.Region.Us"));
+        if (entry.Tag.HasFlag(CallingFrequencyTag.Iss))
+            notes.Add(_localization.GetString("RadioStatus.CallingFrequencies.Tag.Iss"));
+
+        return notes.Count == 0
+            ? _localization.GetString("RadioStatus.CallingFrequencies.ItemFormat", frequency, mode, kind)
+            : _localization.GetString("RadioStatus.CallingFrequencies.ItemFormatWithNote", frequency, mode, kind,
+                string.Join(_localization.GetString("RadioStatus.CallingFrequencies.NoteSeparator"), notes));
+    }
+
+    private bool CanApplyCallingFrequency(CallingFrequencyItemViewModel? item) => item is not null && !ApplyPresetCommand.IsRunning;
+
+    // Raised wherever the toolkit completes the run; CanExecuteChanged must reach the UI thread.
+    private void OnApplyPresetCommandPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(IAsyncRelayCommand.IsRunning))
+            return;
+        if (Dispatcher.UIThread.CheckAccess())
+            ApplyCallingFrequencyCommand.NotifyCanExecuteChanged();
+        else
+            Dispatcher.UIThread.Post(ApplyCallingFrequencyCommand.NotifyCanExecuteChanged);
+    }
+
+    /// <summary>Applies a calling-frequency menu pick through <see cref="ApplyPresetCommand"/>, so a Favourite click and a
+    /// pick never interleave. The catalog stores plain sidebands, so USB/LSB follow <see cref="SsbAsPkt"/> here exactly as
+    /// the sideband buttons do (<see cref="IsSidebandUsb"/>); FM is left alone. Favourites store an explicit mode and are
+    /// not mapped.</summary>
+    [RelayCommand(CanExecute = nameof(CanApplyCallingFrequency))]
+    private async Task ApplyCallingFrequencyAsync(CallingFrequencyItemViewModel? item)
+    {
+        if (item is null)
+            return;
+
+        CallingFrequency entry = item.Entry;
+        RadioMode mode = entry.Mode;
+        if (mode is RadioMode.Usb or RadioMode.Lsb)
+        {
+            // Claimed before SsbAsPkt is read, same as IsSidebandUsb/Lsb.
+            _ssbAsPktOperatorOwned = true;
+            if (SsbAsPkt)
+                mode = mode == RadioMode.Usb ? RadioMode.Data : RadioMode.DataR;
+        }
+
+        Log.CallingFrequencyPicked(_logger, entry.FrequencyHz, entry.Mode, mode, entry.BandwidthHz);
+        await ApplyPresetCommand.ExecuteAsync(new FrequencyPreset(item.Display, entry.FrequencyHz, mode, entry.BandwidthHz));
     }
 
     /// <summary>The width <see cref="ApplyPresetAsync"/> sends, or <see langword="null"/> to send no
@@ -2055,6 +2138,9 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
         [LoggerMessage(Level = LogLevel.Warning, Message = "SavePresets rejected bandwidth: {Label} ({BandwidthHz}Hz)")]
         public static partial void SavePresetsInvalidBandwidth(ILogger logger, string label, double bandwidthHz);
 
+        [LoggerMessage(Level = LogLevel.Information, Message = "Calling frequency picked: {FrequencyHz}Hz {CatalogMode} (sent as {Mode}), {BandwidthHz}Hz BW")]
+        public static partial void CallingFrequencyPicked(ILogger logger, long frequencyHz, RadioMode catalogMode, RadioMode mode, int? bandwidthHz);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "ApplyPreset failed: {Label}")]
         public static partial void ApplyPresetFailed(ILogger logger, string label, Exception ex);
 
@@ -2139,6 +2225,13 @@ public sealed record FrequencyPresetButtonViewModel(FrequencyPreset Preset, Syst
     /// member casing, e.g. "Usb", is not).</summary>
     public string FrequencyWithMode => $"{Preset.FrequencyHz / 1_000_000.0:0.000000} {Preset.Mode.ToString().ToUpperInvariant()}";
 }
+
+/// <summary>One band of the calling-frequency menu.</summary>
+public sealed record CallingFrequencyBandViewModel(string Band, IReadOnlyList<CallingFrequencyItemViewModel> Items);
+
+/// <summary>One calling-frequency menu entry; carries its own command, same reason as
+/// <see cref="FrequencyPresetButtonViewModel"/>.</summary>
+public sealed record CallingFrequencyItemViewModel(CallingFrequency Entry, string Display, System.Windows.Input.ICommand SelectCommand);
 
 /// <summary>One editable row in the "Edit presets..." flyout. A plain mutable view-model (not a
 /// record like <see cref="FrequencyPresetButtonViewModel"/>) since its fields are two-way bound
