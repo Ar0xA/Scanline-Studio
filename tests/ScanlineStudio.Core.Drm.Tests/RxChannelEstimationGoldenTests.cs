@@ -146,6 +146,7 @@ public sealed class RxChannelEstimationGoldenTests(ITestOutputHelper output)
             string[] g = gRows[f];
             int b = I(g[1]);
             Ex(s, f, "stripe", b, o.Stripe);
+            Ex(s, f, "transmission_frame_buffer_wptr", I(g[2]), o.WptrBefore);
             Ex(s, f, "symbol_counter", I(g[3]), o.SymbolCounter);
             Ex(s, f, "rsbufwidx", I(g[4]), o.RsBufWidx);
             Ex(s, f, "symbufwidx", I(g[5]), o.SymBufWidx);

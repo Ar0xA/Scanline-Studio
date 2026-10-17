@@ -196,7 +196,7 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
                 st.SpectrumOccupancyEstimation, st.SpectrumOccupancy, st.FreqOffset, st.WMerFac,
                 st.IterationCounter, st.Counter, st.RsBufWidx, st.SymBufWidx, st.SymbolCounter, st.InputSamplesBufferRequest,
                 st.TimeOffset, st.TimeOffsetInteger, st.SamplerateOffsetEstimation, st.FrequencyOffsetFractionalInit, st.FreqOffsetInteger,
-                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone(), stage.Frames));
+                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone(), stage.Frames, st.FacValid));
         }
 
         Assert.Equal(0, stage.ZeroRequestCalls);
@@ -254,6 +254,7 @@ public sealed class RxAcquisitionGoldenTests(ITestOutputHelper output)
             if (realStage)
             {
                 Exact(s, b, "spectrum_occupancy", I(g[6]), o.SpectrumOccupancy);
+                Exact(s, b, "fac_valid", I(g[8]), o.FacValid);
                 s.Tracking(b, "freqOffset", F(g[7]), o.FreqOffset, RxChannelEstimationGoldenTests.FreqOffsetToleranceHz, false);
                 s.Tracking(b, "WMERFAC", F(g[9]), o.WMerFac, RxChannelEstimationGoldenTests.WMerFacToleranceDb, false);
             }

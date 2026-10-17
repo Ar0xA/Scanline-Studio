@@ -148,12 +148,12 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
         Assert.Equal(1024, st.RsBufWidx);
     }
 
-    /// <summary>CPU of the whole RX so far (P5a front end, P5b acquisition, P5c channel estimation) per 1024-sample
+    /// <summary>CPU of the whole RX so far (P5a front end, P5b acquisition, P5c channel estimation, P6 channel decoding) per 1024-sample
     /// stripe at 11025 and 44100 Hz, on a DRM signal and on noise. Plan budget: below 10 % of one core.</summary>
     [Theory]
     [InlineData(11025)]
     [InlineData(44100)]
-    public void Cpu_FrontEndAcquisitionAndChannelEstimation(int rate)
+    public void Cpu_WholeRxThroughChannelDecoding(int rate)
     {
         short[] pcm = RxAcquisitionGoldenTests.LoadInput("B1_q16_high_long", out _);
         var toRate = new PolyphaseResampler(48000, rate);
@@ -176,7 +176,7 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
 
             Measure(rate, x, out double meanUs, out double maxUs, out double maxFrameUs, out int valid);
             double stripeUs = 1024.0 / 12000 * 1e6;
-            output.WriteLine($"R={rate} {name}: mean {meanUs:F1} µs/stripe ({meanUs / stripeUs * 100:F3} % of one core), worst stripe {maxUs:F1} µs ({maxUs / stripeUs * 100:F2} %), worst stripe with a frame {maxFrameUs:F1} µs, data-valid frames {valid}");
+            output.WriteLine($"R={rate} {name}: mean {meanUs:F1} µs/stripe ({meanUs / stripeUs * 100:F3} % of one core), worst stripe {maxUs:F1} µs ({maxUs / stripeUs * 100:F2} %), worst stripe with a frame {maxFrameUs:F1} µs, decoded MSC frames {valid}");
 #if DEBUG
             const double limit = 30; // unoptimized JIT; the Release build is the real measurement
 #else
@@ -184,7 +184,7 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
 #endif
             Assert.True(meanUs / stripeUs * 100 < limit, $"{name}: {meanUs / stripeUs * 100:F2} % of one core");
             if (name == "drm")
-                Assert.True(valid > 30, $"only {valid} data-valid frames after resampling to {rate} Hz");
+                Assert.True(valid > 30, $"only {valid} decoded MSC frames after resampling to {rate} Hz");
         }
     }
 
@@ -192,7 +192,8 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
     {
         var fe = new DrmRxFrontEnd(rate);
         var estimator = new DrmChannelEstimator();
-        var demod = new DrmDemodulator(estimator);
+        var decoder = new DrmChannelDecoder();
+        var demod = new DrmDemodulator(new DrmRxFrameStage(estimator, decoder));
         double max = 0, maxFrame = 0;
         int stripes = 0, v = 0;
         DrmStripeHandler h = s =>
@@ -205,7 +206,7 @@ public sealed class DrmChannelEstimatorUnitTests(ITestOutputHelper output)
             if (estimator.FramesProcessed != frames)
             {
                 maxFrame = Math.Max(maxFrame, us);
-                v += demod.State.TransmissionFrameBufferDataValid;
+                v += decoder.MscDataValid == 1 ? 1 : 0;
             }
 
             stripes++;

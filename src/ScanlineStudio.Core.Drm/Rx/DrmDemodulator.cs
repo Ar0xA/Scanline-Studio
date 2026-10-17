@@ -3,7 +3,7 @@ namespace ScanlineStudio.Core.Drm.Rx;
 /// <summary>QSSTV's DRM receiver per-stripe path up to frame sync: <c>drmRx::run</c> (Hilbert, the empty
 /// pre-call) and <c>demodulator::demodulate</c> with <c>init</c>, <c>timeSync</c>, <c>frequencySync</c> and
 /// <c>frameSync</c> (drmrx/drmrx.cpp:20-74, drmrx/demodulator.cpp:40-520). Everything after frame sync is
-/// the <see cref="IDrmFrameStage"/> (P5c: channelEstimation; then P6 channel decoding).</summary>
+/// the <see cref="IDrmFrameStage"/> (channelEstimation, channel decoding: <see cref="DrmRxFrameStage"/>).</summary>
 /// <remarks>
 /// <para><b>Stages.</b> timeSync: wait for 20×320 samples, <see cref="DrmModeDetector"/> fixes the mode,
 /// fractional time/frequency offset and sample-rate offset, then the buffer is symbol-aligned.
@@ -35,9 +35,9 @@ internal sealed class DrmDemodulator
     private readonly float[] _resampSignal = new float[2 * StripeSize];
     private readonly float[] _symbolTemp = new float[2 * DrmRxTables.TuMax];
 
-    /// <summary>The receiver with QSSTV's channel estimator as the frame stage.</summary>
+    /// <summary>The receiver with QSSTV's channel estimator and channel decoder as the frame stage.</summary>
     public DrmDemodulator()
-        : this(new DrmChannelEstimator())
+        : this(new DrmRxFrameStage(new DrmChannelEstimator(), new DrmChannelDecoder()))
     {
     }
 
@@ -50,12 +50,13 @@ internal sealed class DrmDemodulator
 
     public DrmDemodState State { get; } = new();
 
-    /// <summary><c>drmRx::init</c>'s demodulator part (drmrx.cpp:20-29): <c>demodulator::init</c> and the
-    /// sample-rate estimate. The Hilbert history is not touched, as in QSSTV.</summary>
+    /// <summary><c>drmRx::init</c> up to the source decoder (drmrx.cpp:20-35): <c>demodulator::init</c>, the
+    /// sample-rate estimate, then the frame stage's channel-decoding reset. The Hilbert history is not touched, as in QSSTV.</summary>
     public void Reset()
     {
         Init();
         State.SamplerateOffsetEstimation = 0.0f;
+        _frameStage.ResetReceiver(State);
     }
 
     /// <summary><c>drmRx::run</c> (drmrx.cpp:41-74) on one 1024-sample 12 kHz stripe at int16 scale.</summary>
@@ -97,7 +98,7 @@ internal sealed class DrmDemodulator
         if (!FrameSync())
             return false;
 
-        // When this is true QSSTV runs channel_decoding() and srcDecoder->decode() (demodulator.cpp:158-162), P6.
+        // The frame stage also runs channel_decoding() and srcDecoder->decode() (demodulator.cpp:158-162).
         _frameStage.ProcessFrame(st);
         return true;
     }

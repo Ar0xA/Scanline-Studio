@@ -158,6 +158,7 @@ reuse the stale buffer tail there; that only affects audio after the signal has 
 | `rx_sync` | discrete fields exact; `freqOffset` \|Δ\| ≤ 0.01 Hz; `WMERFAC` \|Δ\| ≤ 0.1 dB |
 | `rx_frames`, `rx_msc_bits`, saved files | exact |
 | `rx_cells` (P5c) | integer state exact; Wiener weights bit-exact; tracking and cells per `RxChannelEstimationGoldenTests` (FFTW vs our float FFT, about 10× the measured worst). Two cases diverge at one bit-equal peak-search tie; with the tracker forced to the other bin at that symbol they match to the end |
+| `rx_chdec` (P6) | exact: every per-frame field, both sha256 (MSC demapper, transmission_frame_buffer) and every decoded bit, data_valid 1 and 2 |
 
 **Why 0.1 for `rx_stripes_12k` in a float port:**
 - **Worst case:** the decimator is a 180-tap FIR over int16 input, and the normalized taps have
@@ -217,6 +218,8 @@ python3 -I make_fixtures.py   # rewrites this directory, including this README a
 python3 -I make_rx_hilbert.py  # then rx_hilbert/ (P5a); make_fixtures.py deletes it
 python3 -I make_rx_acq.py      # then rx_acq/ (P5b): RX acquisition state, see rx_acq/README.md
 python3 -I make_rx_cells.py    # then rx_cells/ (P5c): RX channel estimation per frame, see rx_cells/README.md
+python3 -I make_rx_chdec.py    # then rx_chdec/ (P6): channel_decoding on synthetic noisy frames, see rx_chdec/README.md;
+                               # it also re-runs all 79 TX/RX cases and requires rx_sync/rx_frames/rx_msc_bits byte-identical
 ```
 
 ## Cases

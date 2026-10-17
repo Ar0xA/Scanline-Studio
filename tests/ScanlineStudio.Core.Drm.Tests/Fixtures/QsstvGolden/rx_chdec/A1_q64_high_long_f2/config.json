@@ -1,0 +1,73 @@
+{
+ "K_max": 58,
+ "K_min": 2,
+ "case": "A1_q64_high_long",
+ "first_tx_frame": 2,
+ "frames": [
+  {
+   "data_valid": 1,
+   "sigma": 0.0,
+   "tx_frame": 2
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.05,
+   "tx_frame": 3
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.1,
+   "tx_frame": 4
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.15,
+   "tx_frame": 5
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.2,
+   "tx_frame": 6
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.3,
+   "tx_frame": 7
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.12,
+   "tx_frame": 8
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.08,
+   "tx_frame": 9
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.25,
+   "tx_frame": 10
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.85,
+   "tx_frame": 11
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.18,
+   "tx_frame": 12
+  },
+  {
+   "data_valid": 1,
+   "sigma": 0.06,
+   "tx_frame": 13
+  }
+ ],
+ "invalid": [],
+ "robustness_mode": 0,
+ "seed": 4,
+ "so_est": 1,
+ "symbols_per_frame": 15
+}

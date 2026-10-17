@@ -7,10 +7,10 @@ namespace ScanlineStudio.Core.Drm.Tests;
 /// <summary>One golden case run through our P5a front end and the real receiver (acquisition plus
 /// <see cref="DrmChannelEstimator"/>), recording the state after every stripe and every equalized frame. Runs
 /// are cached per case so the P5b and P5c golden tests share them.</summary>
-/// <remarks>Channel decoding (P6) does not exist yet. QSSTV's channel_decoding writes <c>spectrum_occupancy</c>
-/// after every data-valid frame (channeldecode.cpp:381,414,437), and channelEstimation reads it on the next
-/// frame (demodulator.cpp:573-586). <see cref="InjectingStage"/> stands in for that one write: after a
-/// data-valid frame it stores QSSTV's post-stripe value from rx_sync (−1 where QSSTV's FAC failed its CRC).</remarks>
+/// <remarks>The frame stage is the real <see cref="DrmRxFrameStage"/> (channel estimation and channel decoding). Source
+/// decoding (P7a) does not exist yet; its one write into channel decoding's state, clearing <c>callsignValid</c> when a
+/// data group opens a new transport block (sourcedecoder.cpp:794-810), is applied from the golden rx_frames row
+/// (<see cref="SourceDecoderStandIn"/>).</remarks>
 internal static class RxGoldenRun
 {
     /// <summary>B0_q4_high_long is knife-edge (probes/pre-p5.md): frame-by-frame comparison stops here.</summary>
@@ -73,35 +73,44 @@ internal static class RxGoldenRun
             frameMinMargin = Math.Min(frameMinMargin, m);
         };
         estimator.Tracker.ForceRunnerUpAtCalls = forcedCalls.Count > 0 ? forcedCalls : null;
-        var stage = new InjectingStage(estimator, b => int.Parse(sync[b][6], CultureInfo.InvariantCulture));
+        var decoder = new DrmChannelDecoder();
+        var stage = new CountingStage(new DrmRxFrameStage(estimator, decoder));
         var demod = new DrmDemodulator(stage);
+        var source = new SourceDecoderStandIn(Csv(caseId, "rx/rx_frames.csv.gz"));
         var snaps = new List<StripeSnapshot>(sync.Length);
         var frames = new List<FrameRecord>();
+        var decoded = new List<DecodedFrame>();
         for (int b = 0; b < sync.Length; b++)
         {
-            stage.CurrentStripe = b;
             int before = estimator.FramesProcessed;
             int firstCall = estimator.Tracker.Calls;
+            int wptrBefore = demod.State.TransmissionFrameBufferWptr;
             demod.RunStripe(stripes.AsSpan(b * 1024, 1024));
             DrmDemodState st = demod.State;
             if (estimator.FramesProcessed != before)
             {
                 if (estimator.FramesProcessed != before + 1)
                     throw new InvalidOperationException($"{caseId}: two frames in stripe {b}");
-                frames.Add(FrameRecord.Capture(b, st, estimator, full, frameMinMargin, firstCall));
+                frames.Add(FrameRecord.Capture(b, wptrBefore, st, estimator, full, frameMinMargin, firstCall));
                 frameMinMargin = double.MaxValue;
+            }
+
+            if (st.TransmissionFrameBufferDataValid == 1)
+            {
+                source.AfterChannelDecoding(decoded.Count, decoder);
+                decoded.Add(DecodedFrame.Capture(b, st, decoder));
             }
 
             snaps.Add(new StripeSnapshot(st.TimeSyncFlag, st.FrequencySyncFlag, st.FrameSyncFlag, st.RobustnessMode, st.SpectrumOccupancyEstimation,
                 st.SpectrumOccupancy, st.FreqOffset, st.WMerFac,
                 st.IterationCounter, st.Counter, st.RsBufWidx, st.SymBufWidx, st.SymbolCounter, st.InputSamplesBufferRequest,
                 st.TimeOffset, st.TimeOffsetInteger, st.SamplerateOffsetEstimation, st.FrequencyOffsetFractionalInit, st.FreqOffsetInteger,
-                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone(), estimator.FramesProcessed));
+                st.FreqOffsetInit, st.TimeOffsetFractionalInit, st.DeltaTimeOffsetIInit, (float[])st.Zi.Clone(), estimator.FramesProcessed, st.FacValid));
         }
 
         (int last, string? cut, int? tieCall) = TieCut(caseId, planned, frames, margins);
         return new Result(caseId, FullStreamCases.Contains(caseId), txShaEqual, snaps, frames, stage.ZeroRequestCalls, last, cut, tieCall,
-            forcedCalls.ToArray(), frames.Count(f => f.Stripe <= last && f.MinPeakMargin <= TieMargin));
+            forcedCalls.ToArray(), frames.Count(f => f.Stripe <= last && f.MinPeakMargin <= TieMargin), decoded);
     }
 
     /// <summary>The compare range after the tie rule: frames are followed until the first frame whose tracking
@@ -170,22 +179,22 @@ internal static class RxGoldenRun
     }
 
     public sealed record Result(string CaseId, bool ExactInput, bool TxShaEqual, List<StripeSnapshot> Stripes, List<FrameRecord> Frames, int ZeroRequestCalls,
-        int LastStripe, string? TieCutReason, int? TieCall, int[] ForcedCalls, int NearTieFrames);
+        int LastStripe, string? TieCutReason, int? TieCall, int[] ForcedCalls, int NearTieFrames, List<DecodedFrame> Decoded);
 
     public readonly record struct StripeSnapshot(
         bool TimeSync, bool FreqSync, bool FrameSync, int Mode, int SoEstimate, int SpectrumOccupancy, float FreqOffset, float WMerFac,
         int IterationCounter, int Counter, int RsBufWidx, int SymBufWidx, int SymbolCounter, int Request,
         float TimeOffset, int TimeOffsetInteger, float SroEstimate, float FreqFractInit, float FreqOffsetInteger,
-        float FreqOffsetInit, float TimeFractInit, float DtoIInit, float[] Zi, int FramesProcessed);
+        float FreqOffsetInit, float TimeFractInit, float DtoIInit, float[] Zi, int FramesProcessed, int FacValid);
 
     public sealed record FrameRecord(
-        int Stripe, int SymbolCounter, int RsBufWidx, int SymBufWidx, int Request, int IterationCounter, float[] Zi,
+        int Stripe, int WptrBefore, int SymbolCounter, int RsBufWidx, int SymBufWidx, int Request, int IterationCounter, float[] Zi,
         float DeltaFreqOffset, float FreqOffset, float DeltaFs, float SamplerateOffset, float WMerFac, float MeanEnergy, int LFac,
         int Moc, int MocLast, int SnrTimeoutCounter, int SnrTimeOutCounter, int FacNotValidCounter, bool DoSynchronize, int DataValid,
         int PhaseDiff, float PhaseOffset, int InOutDelay, int KMin, int KMax, int SpectrumOccupancy, double CellsEnergy, double HEnergy,
         float[] FacCells, float[]? Cells, float[]? H, double MinPeakMargin, int FirstCall)
     {
-        public static FrameRecord Capture(int stripe, DrmDemodState st, DrmChannelEstimator ce, bool full, double minPeakMargin, int firstCall)
+        public static FrameRecord Capture(int stripe, int wptrBefore, DrmDemodState st, DrmChannelEstimator ce, bool full, double minPeakMargin, int firstCall)
         {
             int lH = ce.KMax - ce.KMin + 1;
             var cells = new float[2 * st.SymbolsPerFrame * lH];
@@ -196,7 +205,7 @@ internal static class RxGoldenRun
             {
                 for (int j = ce.KMin; j <= ce.KMax; j++)
                 {
-                    int t = st.TransmissionFrameBufferWptr + i * st.KModulo + st.KDc + j;
+                    int t = wptrBefore + i * st.KModulo + st.KDc + j;
                     float cr = st.TransmissionFrameBuffer[2 * t], ci = st.TransmissionFrameBuffer[2 * t + 1];
                     float hr = st.ChannelTransferFunctionBuffer[2 * t], hi = st.ChannelTransferFunctionBuffer[2 * t + 1];
                     ec += (double)cr * cr + (double)ci * ci;
@@ -209,7 +218,7 @@ internal static class RxGoldenRun
                 }
             }
 
-            return new FrameRecord(stripe, st.SymbolCounter, st.RsBufWidx, st.SymBufWidx, st.InputSamplesBufferRequest, st.IterationCounter,
+            return new FrameRecord(stripe, wptrBefore, st.SymbolCounter, st.RsBufWidx, st.SymBufWidx, st.InputSamplesBufferRequest, st.IterationCounter,
                 (float[])st.Zi.Clone(), ce.DeltaFreqOffset, st.FreqOffset, st.DeltaFs, st.SamplerateOffset, st.WMerFac, st.MeanEnergyOfUsedCells,
                 st.LFac, ce.ModeAndOccupancyCode, ce.ModeAndOccupancyCodeLast, ce.SnrTimeoutCounter, ce.SnrTimeOutCounter, ce.FacNotValidCounter,
                 st.DoSynchronize, st.TransmissionFrameBufferDataValid, ce.SmpRateConvFftPhaseDiff, ce.SmpRateConvFftPhaseOffset,
@@ -218,11 +227,54 @@ internal static class RxGoldenRun
         }
     }
 
-    /// <summary>The real estimator plus P6's one write that it depends on (see the class remarks).</summary>
-    internal sealed class InjectingStage(DrmChannelEstimator inner, Func<int, int> spectrumOccupancyAfterDecoding) : IDrmFrameStage
+    /// <summary>One rx_frames row: the state after a stripe whose frame was data-valid (harness rx.cpp:340-372).</summary>
+    public sealed record DecodedFrame(
+        int Stripe, int FacValid, int Mode, int SoNew, int MscModeNew, int InterleaverDepthNew, int PlPartA, int PlPartB, int HmLength,
+        bool CallsignValid, string Callsign, int MscDataValid, int Length, int CrcOk, int First, int Last, byte[]? Bits)
     {
-        public int CurrentStripe { get; set; }
+        public static DecodedFrame Capture(int stripe, DrmDemodState st, DrmChannelDecoder d)
+        {
+            int crcOk = -1, first = -1, last = -1;
+            byte[]? bits = null;
+            if (d.MscDataValid == 1)
+            {
+                ReadOnlySpan<double> data = d.ChannelDecodedData;
+                bits = new byte[data.Length];
+                for (int i = 0; i < data.Length; i++)
+                    bits[i] = data[i] != 0 ? (byte)1 : (byte)0;
+                int nb = data.Length / 8;
+                var bytes = new byte[nb + 1];
+                DrmRxBits.BitsToBytes(data[..(nb * 8)], bytes);
+                crcOk = ScanlineStudio.Core.Drm.Util.RxCrc.Crc16Bytewise(bytes.AsSpan(0, nb)) == 0 ? 1 : 0;
+                first = (bytes[0] & 0x80) != 0 ? 1 : 0;
+                last = (bytes[0] & 0x40) != 0 ? 1 : 0;
+            }
 
+            return new DecodedFrame(stripe, st.FacValid, st.RobustnessMode, d.SpectrumOccupancyNew, d.MscModeNew, d.InterleaverDepthNew,
+                d.PlPartA, d.PlPartB, d.HmLength, d.CallsignValid, d.Callsign, d.MscDataValid, d.LengthDecodedData, crcOk, first, last, bits);
+        }
+    }
+
+    /// <summary>Stands in for P7a's one write into channel decoding: a completed MOT header (3) or body (4) data group
+    /// with an unseen transport ID creates a transport block, which clears <c>callsignValid</c> (sourcedecoder.cpp:300,409,794-810).
+    /// It runs after channel decoding in the same frame, as srcDecoder->decode() does (demodulator.cpp:160-161).</summary>
+    internal sealed class SourceDecoderStandIn(string[][] goldenFrames)
+    {
+        private readonly HashSet<string> _transportIds = [];
+
+        public void AfterChannelDecoding(int row, DrmChannelDecoder decoder)
+        {
+            if (row >= goldenFrames.Length)
+                return;
+            string[] g = goldenFrames[row];
+            if ((g[18] == "3" || g[18] == "4") && _transportIds.Add(g[21]))
+                decoder.InvalidateCallsign();
+        }
+    }
+
+    /// <summary>The real frame stage, counting frames that leave input_samples_buffer_request at 0.</summary>
+    internal sealed class CountingStage(DrmRxFrameStage inner) : IDrmFrameStage
+    {
         public int ZeroRequestCalls { get; private set; }
 
         public void Reset() => inner.Reset();
@@ -231,11 +283,11 @@ internal static class RxGoldenRun
 
         public void OnFrameSync() => inner.OnFrameSync();
 
+        public void ResetReceiver(DrmDemodState state) => inner.ResetReceiver(state);
+
         public bool ProcessFrame(DrmDemodState st)
         {
             bool frame = inner.ProcessFrame(st);
-            if (frame && st.TransmissionFrameBufferDataValid == 1)
-                st.SpectrumOccupancy = spectrumOccupancyAfterDecoding(CurrentStripe);
             if (frame && st.InputSamplesBufferRequest == 0)
                 ZeroRequestCalls++;
             return frame;

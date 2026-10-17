@@ -22,7 +22,13 @@ internal interface IDrmFrameStage
 
     /// <summary><c>channelEstimation()</c> (demodulator.cpp:524-1132), called whenever frame sync holds.
     /// Returns true when a frame was equalized, where QSSTV then runs <c>channel_decoding()</c> and
-    /// <c>srcDecoder-&gt;decode()</c> (P6). Must keep <c>InputSamplesBufferRequest</c> current and set
+    /// <c>srcDecoder-&gt;decode()</c> (<see cref="DrmRxFrameStage"/>). Must keep <c>InputSamplesBufferRequest</c> current and set
     /// <c>DoSynchronize</c> on QSSTV's SNR rule (demodulator.cpp:1090-1112).</summary>
     bool ProcessFrame(DrmDemodState state);
+
+    /// <summary>The receiver reset after <c>demodulator::init</c> in drmRx::init (drmrx.cpp:30-33): channel decoding's
+    /// POWER_ON/INIT calls (P6). Stages without channel decoding have nothing to do.</summary>
+    void ResetReceiver(DrmDemodState state)
+    {
+    }
 }
