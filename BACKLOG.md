@@ -384,7 +384,11 @@ real QSSTV/EasyPal WAVs for P8.
   channel estimation/tracking/cells with own LU (7ff248e0). Goldens on all 79 cases; CPU ≤ 0.6 % of one core mean.
 - **DRM-P6.** DONE — RX channel decoding, exact QSSTV port (FAC, mkmscmap, deinterleave, MSD + Viterbi,
   de-dispersal); all 79 cases + noisy rx_chdec goldens exact. Seam for P7a: `IDrmMscSink`.
-- **DRM-P6b.** OPEN, STARTED 2026-10-17 — plan `~/.claude/plans/drm-p6b-rx-improvements.md` (harness first, then one fix per
+- **DRM-P6b.** CLOSED 2026-10-17 — results in docs/drm-rx-measurements.md. Shipped: P6b-1 PPI wrap (always on).
+  Dropped with data: P6b-2 lost last frame (≤ 0.3 % of runs), P6b-3 knife-edge sync (frames lost, files not), P6b-4
+  facreset (23/21) and snrfull (10/19) and Tg_C (no effect). P6b-5 (capture gap → reset threshold) not measured: deferred past release, the current constant stays. P6b-UI
+  shipped inside P7b. History:
+  OPEN, STARTED 2026-10-17 — plan `~/.claude/plans/drm-p6b-rx-improvements.md` (harness first, then one fix per
   sub-phase, then the Options/help/docs step). P6b-1 PPI wrap DONE 2026-10-17 (always on, recorded in
   docs/improving-on-legacy.md). P6b-0 harness DONE (4f4dbe96; results in docs/drm-rx-measurements.md). Dropped:
   P6b-4 Tg_C (no effect). Measuring: P6b-2 lost last frame (corrected oracle), P6b-4 resync counters (A/B). RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
@@ -422,7 +426,10 @@ real QSSTV/EasyPal WAVs for P8.
   build + QSSTV interop WAV at 1920 and 1280 px, Large font. Known limits: a file with no name never reads complete;
   the chip holds its last state while TX pauses capture. Off-scope: at 1280 px + Large font the status bar already
   overflowed before P7b (frames-today/log chips hidden).
-- **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
+- **DRM-P8.** Automated part DONE 2026-10-17 (`7246f820`): our RX decodes QSSTV TX byte-identical (golden suite + live
+  WAV), QSSTV RX decodes our TX byte-identical (2026-10-16), and AWGN no-regression against QSSTV's receiver on
+  identical input (780 runs: per-run identical on normal/fast/e4high; QSSTV corrupts RS2 and loses PPI-wrap files,
+  we do not). OPEN for the user: real-station recordings (QSSTV and EasyPal).
 - **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).
 - **DRM-DOC.** DONE 2026-10-17 — `docs/removed-features.md:808` revision (receive shipped, UI in P7b, HamDRM name,
   P9/P10 not yet). (CLAUDE.md QSSTV-as-port-target line added 2026-10-16,
