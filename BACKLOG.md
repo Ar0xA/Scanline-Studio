@@ -215,13 +215,10 @@ ideally asserted in CI. No benchmark exists. `spec/06-sstv-dsp.md` Definition of
 
 ## 5. Product and roadmap
 
-### FREQ-PRESETS. OPEN, queued after DRM-P7a-2 — SSTV/DRM frequency dropdown beside the frequency counter
-User request 2026-10-17. A dropdown to the right of the frequency counter, filled with popular SSTV and DRM/EasyPal
-frequencies, each with its mode (e.g. USB/LSB/FM), a "DRM" label on the DRM ones, and an EU/US (region) label where a
-frequency is region-specific. Sources the user named: https://pd2tx.com/other-stuff/sstv-freq and
-https://vk6ysf.com/sstvfrequ.htm (cross-check both; record the source per entry). "DMR" in the request means DRM
-(user-confirmed). Picking an entry sets frequency AND mode through CAT (user-confirmed). Needs a UI plan review
-(yoniq-auditor), localization, help-guide update and `check-help.mjs`.
+### FREQ-PRESETS. DONE `af9b345c` — SSTV/DRM calling-frequency menu beside the frequency counter
+41 entries (pd2tx, vk6ysf, Wikipedia), 12 band submenus, mode/kind/region/ISS labels; a pick sets frequency, mode
+(SSB-as-PKT aware) and width (2800 Hz on DRM rows) through CAT. Plan `~/.claude/plans/freq-presets.md` rev 3; plan
+review 2 rounds, code review go (round 1); live check on the rigctld dummy rig passed.
 
 ### R1. OPEN — `TemplateCatProtocol` fallback
 
