@@ -402,7 +402,8 @@ real QSSTV/EasyPal WAVs for P8.
 - **HAMDRM-GATE.** OPEN, WAITING ON THE USER (set 2026-10-17, user: loop "until HamDRM is good enough for release").
   2026-10-17: items (1)-(7) DONE (P6b closed, P7b incl. P6b-UI, P7a-2 (b)(c), DRM-REL (1)-(2) Linux, DRM-DOC, P8
   automated). EasyPal (DRM-REL 3) CLOSED by the user 2026-10-17: "EasyPal == HamDRM" confirmed on their side.
-  Running: real-QSSTV-app interop matrix, all modes both directions. Left: real-station recordings (P8),
+  Real-QSSTV-app interop matrix DONE 2026-10-17: 18 configs (every mode × SO × QAM, protection/interleave/RS 0-4
+  rotating), 18/18 byte-identical both directions (`~/tools/qsstv-app/matrix/results-2026-10-17.csv`). Left: real-station recordings (P8),
   DRM-REL (1) on the Windows/macOS release builds. Release needs:
   (1) P6b closed; (2) P6b-UI receive on/off in Options + help; (3) P7b minimal RX UI (sync, segment progress,
   callsign); (4) P7a-2 follow-ups (b) ImageSharp advisory and (c) orphan PNG; (5) DRM-REL (1)-(2) on Linux;
