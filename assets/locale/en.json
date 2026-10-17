@@ -749,7 +749,7 @@
   "VersionNotice.Title": "Welcome to Scanline Studio {0}",
   "VersionNotice.WhatsNewHeading": "What's new in {0}",
   "VersionNotice.ListBullet": "•",
-  "VersionNotice.ReleaseSummary.0.9.3-beta": "Send and receive HamDRM digital pictures, compatible with EasyPal and QSSTV.\nCalling-frequency menu in the header for SSTV and HamDRM.\nSeparate TX power levels for SSTV and HamDRM.\nA failed settings load no longer erases your settings, and a backup is kept.\nNow licensed GPL-3.0-or-later.",
+  "VersionNotice.ReleaseSummary.0.9.3-beta": "Send and receive HamDRM digital pictures, compatible with EasyPal and QSSTV.\nCalling-frequency menu in the header for SSTV and HamDRM.\nSeparate TX power levels for SSTV and HamDRM.\nA failed settings load no longer erases your settings, and a backup is kept.",
   "VersionNotice.ReleaseSummary.0.9.2-beta": "Report bugs and send feedback from the Help menu.\nA notice like this one at the start of each new version.\nBehind-the-scenes code clean-up.",
   "VersionNotice.Beta": "This is a beta version. It can still contain bugs, and some parts may change before the final release.",
   "VersionNotice.Feedback": "Your feedback and bug reports are needed to improve Scanline Studio.\nFound a bug? Use {0}\nHave an idea or an opinion? Use {1}",
