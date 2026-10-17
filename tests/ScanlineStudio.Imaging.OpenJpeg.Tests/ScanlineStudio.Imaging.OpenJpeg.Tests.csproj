@@ -26,4 +26,9 @@
     <None Include="..\ScanlineStudio.Core.Drm.Tests\Fixtures\QsstvGolden\inputs\card.jp2" Link="Fixtures\card.jp2" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- OpenJPEG 2.5.4 color.c reference vectors and JP2s, from ~/tools/drm-p7a2-colorref (Fixtures/Ycc/README.md). -->
+  <ItemGroup>
+    <None Include="Fixtures\Ycc\**" Exclude="Fixtures\Ycc\README.md" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>

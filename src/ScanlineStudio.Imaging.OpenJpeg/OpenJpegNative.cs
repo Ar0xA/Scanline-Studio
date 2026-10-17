@@ -15,6 +15,7 @@ internal sealed unsafe class OpenJpegNative
     public const int CodecJ2k = 0;
     public const int CodecJp2 = 2;
     public const int ColorSpaceSrgb = 1;
+    public const int ColorSpaceGray = 2;
     public const int ColorSpaceSycc = 3;
     public const int ColorSpaceEycc = 4;
 

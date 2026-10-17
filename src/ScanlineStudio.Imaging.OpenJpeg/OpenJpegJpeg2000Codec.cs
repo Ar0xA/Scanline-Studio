@@ -99,6 +99,7 @@ public sealed unsafe partial class OpenJpegJpeg2000Codec : IJpeg2000Codec
             : throw new InvalidDataException("Not a JPEG 2000 file or codestream.");
 
         OpenJpegNative native = RequireNative();
+        CheckSizLimits(data, format);
         byte* parameters = (byte*)NativeMemory.AllocZeroed(OpenJpegNative.DecoderParametersBufferSize);
         try
         {
@@ -205,49 +206,174 @@ public sealed unsafe partial class OpenJpegJpeg2000Codec : IJpeg2000Codec
     }
 
     /// <summary>RGB from components 0-2, or grey replicated from component 0 for one or two components.
-    /// Samples are re-centred if signed, scaled to 8 bits and clamped. Subsampled or YCC images are refused
-    /// for now; QSSTV's sYCC conversion (jp2io.cpp:259-274) is part of the RX phase.</summary>
+    /// The colour-space rule and the sYCC/e-YCC conversion follow opj_decompress 2.5.4 (:1620-1634), the
+    /// same as QSSTV (jp2io.cpp:265-278). Converted samples are unsigned at component 0's precision; others
+    /// are re-centred if signed. Both are scaled to 8 bits and clamped.</summary>
     private static ArrayRgb24Image ToRgb24(byte* image)
     {
         uint components = *(uint*)(image + OpenJpegNative.ImageNumCompsOffset);
         int colorSpace = *(int*)(image + OpenJpegNative.ImageColorSpaceOffset);
         byte* comps = *(byte**)(image + OpenJpegNative.ImageCompsOffset);
-        int width = (int)*(uint*)(comps + OpenJpegNative.CompWOffset);
-        int height = (int)*(uint*)(comps + OpenJpegNative.CompHOffset);
-        int used = components >= 3 ? 3 : 1;
-        if (colorSpace is OpenJpegNative.ColorSpaceSycc or OpenJpegNative.ColorSpaceEycc)
-            throw new InvalidDataException("YCC JPEG 2000 images are not supported yet.");
-        for (int i = 0; i < used; i++)
+        Component c0 = Component.Read(comps, 0);
+
+        if (colorSpace != OpenJpegNative.ColorSpaceSycc && components == 3 && c0.Dx == c0.Dy
+            && Component.Read(comps, 1).Dx != 1)
         {
-            byte* comp = comps + (i * OpenJpegNative.CompSize);
-            if (*(uint*)(comp + OpenJpegNative.CompDxOffset) != 1 || *(uint*)(comp + OpenJpegNative.CompDyOffset) != 1
-                || *(uint*)(comp + OpenJpegNative.CompWOffset) != (uint)width || *(uint*)(comp + OpenJpegNative.CompHOffset) != (uint)height
-                || *(int**)(comp + OpenJpegNative.CompDataOffset) == null)
-            {
-                throw new InvalidDataException("Subsampled JPEG 2000 components are not supported yet.");
-            }
+            colorSpace = OpenJpegNative.ColorSpaceSycc;
+        }
+        else if (components <= 2)
+        {
+            colorSpace = OpenJpegNative.ColorSpaceGray;
         }
 
+        if (colorSpace == OpenJpegNative.ColorSpaceSycc)
+            return SyccToRgb24(image, c0, Component.Read(comps, 1), Component.Read(comps, 2));
+        if (colorSpace == OpenJpegNative.ColorSpaceEycc)
+            return EsyccToRgb24(c0, Component.Read(comps, 1), Component.Read(comps, 2));
+
+        int used = components >= 3 ? 3 : 1;
+        for (int i = 0; i < used; i++)
+        {
+            Component c = Component.Read(comps, i);
+            if (c.Dx != 1 || c.Dy != 1 || c.W != c0.W || c.H != c0.H || c.Data == null)
+                throw new InvalidDataException("Subsampled JPEG 2000 components are not supported.");
+        }
+
+        int width = (int)c0.W;
+        int height = (int)c0.H;
         var pixels = new Rgb24[(long)width * height];
-        byte* c0 = comps;
-        byte* c1 = used == 3 ? comps + OpenJpegNative.CompSize : comps;
-        byte* c2 = used == 3 ? comps + (2 * OpenJpegNative.CompSize) : comps;
+        Component r = c0;
+        Component g = used == 3 ? Component.Read(comps, 1) : c0;
+        Component b = used == 3 ? Component.Read(comps, 2) : c0;
         for (int i = 0; i < pixels.Length; i++)
-            pixels[i] = new Rgb24(Sample(c0, i), Sample(c1, i), Sample(c2, i));
+            pixels[i] = new Rgb24(Sample(r, i), Sample(g, i), Sample(b, i));
         return new ArrayRgb24Image(width, height, pixels);
     }
 
-    private static byte Sample(byte* comp, int index)
+    private static ArrayRgb24Image SyccToRgb24(byte* image, Component y, Component cb, Component cr)
     {
-        int prec = (int)*(uint*)(comp + OpenJpegNative.CompPrecOffset);
-        int value = (*(int**)(comp + OpenJpegNative.CompDataOffset))[index];
-        if (*(uint*)(comp + OpenJpegNative.CompSgndOffset) != 0 && prec > 0)
+        OpenJpegColor.SyccLayout layout = OpenJpegColor.LayoutOf(y.Dx, y.Dy, cb.Dx, cb.Dy, cr.Dx, cr.Dy);
+        if (layout == OpenJpegColor.SyccLayout.CannotConvert)
+            throw new InvalidDataException("This sYCC JPEG 2000 subsampling cannot be converted to RGB.");
+
+        uint x0 = *(uint*)(image + OpenJpegNative.ImageX0Offset);
+        uint y0 = *(uint*)(image + OpenJpegNative.ImageY0Offset);
+        uint x1 = *(uint*)(image + OpenJpegNative.ImageX1Offset);
+        uint y1 = *(uint*)(image + OpenJpegNative.ImageY1Offset);
+        uint chromaW = layout == OpenJpegColor.SyccLayout.Yuv444 ? y.W : CeilDiv2(x1) - CeilDiv2(x0);
+        uint chromaH = layout == OpenJpegColor.SyccLayout.Yuv420 ? CeilDiv2(y1) - CeilDiv2(y0) : y.H;
+        if (y.W != x1 - x0 || y.H != y1 - y0 || cb.W != chromaW || cb.H != chromaH || cr.W != chromaW || cr.H != chromaH
+            || y.Data == null || cb.Data == null || cr.Data == null)
+        {
+            throw new InvalidDataException("sYCC JPEG 2000 chroma dimensions do not match the image.");
+        }
+
+        int width = (int)y.W;
+        int height = (int)y.H;
+        var sink = new ScaledRgbSink(new Rgb24[(long)width * height], (int)y.Prec);
+        try
+        {
+            switch (layout)
+            {
+                case OpenJpegColor.SyccLayout.Yuv420:
+                    OpenJpegColor.Sycc420((int)y.Prec, y.Span, cb.Span, cr.Span, width, height, (int)cb.W, x0, y0, ref sink);
+                    break;
+                case OpenJpegColor.SyccLayout.Yuv422:
+                    OpenJpegColor.Sycc422((int)y.Prec, y.Span, cb.Span, cr.Span, width, height, (int)cb.W, x0, ref sink);
+                    break;
+                default:
+                    OpenJpegColor.Sycc444((int)y.Prec, y.Span, cb.Span, cr.Span, width, height, ref sink);
+                    break;
+            }
+        }
+        catch (IndexOutOfRangeException ex)
+        {
+            throw new InvalidDataException("sYCC JPEG 2000 chroma is shorter than the image needs.", ex);
+        }
+
+        return new ArrayRgb24Image(width, height, sink.Pixels);
+    }
+
+    private static ArrayRgb24Image EsyccToRgb24(Component y, Component cb, Component cr)
+    {
+        if (!OpenJpegColor.CanConvertEsycc(y.Dx, y.Dy, cb.Dx, cb.Dy, cr.Dx, cr.Dy))
+            throw new InvalidDataException("This e-YCC JPEG 2000 subsampling cannot be converted to RGB.");
+
+        // color.c converts subsampled e-YCC at the reduced size; this decoder only renders full-size components.
+        if (y.Dx != 1 || y.Dy != 1 || cb.W != y.W || cb.H != y.H || cr.W != y.W || cr.H != y.H
+            || y.Data == null || cb.Data == null || cr.Data == null)
+        {
+            throw new InvalidDataException("Subsampled JPEG 2000 components are not supported.");
+        }
+
+        int width = (int)y.W;
+        int height = (int)y.H;
+        var sink = new ScaledRgbSink(new Rgb24[(long)width * height], (int)y.Prec);
+        OpenJpegColor.Esycc((int)y.Prec, y.Span, cb.Span, cr.Span, cb.Sgnd, cr.Sgnd, width * height, ref sink);
+        return new ArrayRgb24Image(width, height, sink.Pixels);
+    }
+
+    private static uint CeilDiv2(uint value) => (uint)(((ulong)value + 1) / 2);
+
+    private static byte Sample(Component comp, int index)
+    {
+        int prec = (int)comp.Prec;
+        int value = comp.Data[index];
+        if (comp.Sgnd && prec > 0)
             value += 1 << (prec - 1);
+        return ScaleTo8(value, prec);
+    }
+
+    private static byte ScaleTo8(int value, int prec)
+    {
         if (prec > 8)
             value >>= prec - 8;
         else if (prec is > 0 and < 8)
             value <<= 8 - prec;
         return (byte)Math.Clamp(value, 0, 255);
+    }
+
+    private readonly struct Component
+    {
+        public uint Dx { get; init; }
+
+        public uint Dy { get; init; }
+
+        public uint W { get; init; }
+
+        public uint H { get; init; }
+
+        public uint Prec { get; init; }
+
+        public bool Sgnd { get; init; }
+
+        public int* Data { get; init; }
+
+        public ReadOnlySpan<int> Span => new(Data, checked((int)((long)W * H)));
+
+        public static Component Read(byte* comps, int index)
+        {
+            byte* comp = comps + (index * OpenJpegNative.CompSize);
+            return new Component
+            {
+                Dx = *(uint*)(comp + OpenJpegNative.CompDxOffset),
+                Dy = *(uint*)(comp + OpenJpegNative.CompDyOffset),
+                W = *(uint*)(comp + OpenJpegNative.CompWOffset),
+                H = *(uint*)(comp + OpenJpegNative.CompHOffset),
+                Prec = *(uint*)(comp + OpenJpegNative.CompPrecOffset),
+                Sgnd = *(uint*)(comp + OpenJpegNative.CompSgndOffset) != 0,
+                Data = *(int**)(comp + OpenJpegNative.CompDataOffset),
+            };
+        }
+    }
+
+    /// <summary>Maps converted values (unsigned at component 0's precision) to 8 bits.</summary>
+    private struct ScaledRgbSink(Rgb24[] pixels, int prec) : IRgbSink
+    {
+        public Rgb24[] Pixels { get; } = pixels;
+
+        public void Set(int index, int r, int g, int b) =>
+            Pixels[index] = new Rgb24(ScaleTo8(r, prec), ScaleTo8(g, prec), ScaleTo8(b, prec));
     }
 
     private OpenJpegNative RequireNative() =>

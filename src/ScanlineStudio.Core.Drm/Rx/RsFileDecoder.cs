@@ -128,6 +128,51 @@ internal static class RsFileDecoder
         return true;
     }
 
+    /// <summary>False when <see cref="TryDecode"/> is certain to fail on erasures alone: some code word has more erased
+    /// symbols than the parity. Counts every word without decoding, in O(missing bytes), using <see cref="TryDecode"/>'s
+    /// own index math. True does not mean the decode succeeds (bit errors can still fail it).</summary>
+    /// <param name="bodyLength">The length <see cref="TryDecode"/>'s body would have.</param>
+    /// <param name="level">The RS level, 1..4.</param>
+    /// <param name="erasures">As for <see cref="TryDecode"/>.</param>
+    public static bool ErasuresDecodable(long bodyLength, int level, IReadOnlyList<int> erasures)
+    {
+        ArgumentNullException.ThrowIfNull(erasures);
+        if (level is < 1 or > 4)
+            return false;
+        int parity = BlockSize - Coders[level - 1].DataSize;
+
+        long bep = bodyLength / BlockSize;
+        if (bodyLength % BlockSize != 0)
+            bep++;
+        if (bep == 0 || erasures.Count < 2)
+            return false;
+
+        int segmentLength = erasures[1];
+        if (segmentLength <= 0 || erasures.Count == 2)
+            return true;
+
+        // Word i holds positions p = j·bep + i (j < 255), so the counted range is p < 255·bep, clipped to the map.
+        long mapLength = (long)segmentLength * (erasures[0] + 1);
+        long limit = Math.Min(mapLength, BlockSize * bep);
+        var counts = new int[bep];
+        var seen = new HashSet<int>();
+        for (int k = 2; k < erasures.Count; k++)
+        {
+            int s = erasures[k];
+            if (!seen.Add(s))
+                continue;
+            long start = Math.Max(0L, (long)s * segmentLength);
+            long end = Math.Min(limit, ((long)s + 1) * segmentLength);
+            for (long p = start; p < end; p++)
+            {
+                if (++counts[p % bep] > parity)
+                    return false;
+            }
+        }
+
+        return true;
+    }
+
     /// <summary><c>QFileInfo(dir + "/" + name).completeBaseName()</c>: the last '/'-separated component, up to its last '.'.</summary>
     public static string CompleteBaseName(string name)
     {

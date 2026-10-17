@@ -51,7 +51,7 @@ public sealed partial class SstvSessionService
         }
         finally
         {
-            _rxTransitionGate.Release();
+            ReleaseRxTransitionGate();
         }
     }
 
@@ -91,7 +91,9 @@ public sealed partial class SstvSessionService
         // Re-applied on every StartReceivingAsync call (not just once at DI-construction time, unlike
         // the other decoder toggles below the audio-capture start) since ISstvDecoder.StationIdDecodeEnabled
         // is deliberately live-settable -- see that property's own doc comment for why.
+        long drmToggleGenerationBeforeLoad = ReadDrmToggleGeneration();
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        SeedDrmToggle(appSettings, drmToggleGenerationBeforeLoad);
         var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
             ?? new StationIdSettings();
         _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled ?? StationIdSettings.DefaultFskIdRxEnabled;
@@ -101,6 +103,9 @@ public sealed partial class SstvSessionService
         // field doc comment for why this mirrors that setting's shape rather than SetAutoSaveAudioEnabled's.
         _cwIdRxEnabled = stationIdSettings.CwIdRxEnabled ?? StationIdSettings.DefaultCwIdRxEnabled;
         _cwIdRxWindowSeconds = stationIdSettings.CwIdRxWindowSeconds ?? StationIdSettings.DefaultCwIdRxWindowSeconds;
+
+        // Before opening capture, so no new await sits between the disposed/cancelled re-checks below and the publish.
+        await AwaitRetiringDrmWorkersAsync().ConfigureAwait(false);
 
         await _audioEngine.StartCaptureAsync(
             device, _decoder.SampleRate, settings.CaptureThreadPriority,
@@ -184,6 +189,7 @@ public sealed partial class SstvSessionService
         _audioEngine.SamplesCaptured += _levelMeterHandler;
         _audioEngine.SamplesCaptured += _audioAutoSaveHandler;
         _audioEngine.SamplesCaptured += _cwIdHandler;
+        StartDrmWorkerLocked();
         _isReceiving = true;
         // Configurations-preset backlog, Phase 1 (2026-08-28): latched here, at the exact point
         // capture is confirmed genuinely open -- see this field's own doc comment for why it isn't
@@ -224,7 +230,7 @@ public sealed partial class SstvSessionService
         }
         finally
         {
-            _rxTransitionGate.Release();
+            ReleaseRxTransitionGate();
         }
     }
 
@@ -240,6 +246,7 @@ public sealed partial class SstvSessionService
         _audioEngine.SamplesCaptured -= _levelMeterHandler;
         _audioEngine.SamplesCaptured -= _audioAutoSaveHandler;
         _audioEngine.SamplesCaptured -= _cwIdHandler;
+        RetireDrmWorker();
         // RawInputPeakLevel's own contract: 0.0 whenever capture isn't running, never a stale
         // reading left over from before this stop -- no more buffers will arrive to overwrite it.
         _rawInputPeakLevel = 0f;

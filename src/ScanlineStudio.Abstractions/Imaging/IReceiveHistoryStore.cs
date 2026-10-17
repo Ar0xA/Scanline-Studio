@@ -135,6 +135,9 @@ public static class StationIdSources
 {
     public const string Fsk = "FSK";
     public const string Cw = "CW";
+
+    /// <summary>The callsign a DRM transmission carries in its FAC.</summary>
+    public const string Drm = "DRM";
 }
 
 /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio) -- the resolved (never raw/possibly-

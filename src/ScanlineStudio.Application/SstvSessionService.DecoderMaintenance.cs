@@ -153,7 +153,7 @@ public sealed partial class SstvSessionService
                 }
                 finally
                 {
-                    _rxTransitionGate.Release();
+                    ReleaseRxTransitionGate();
                 }
 
                 NotifyMaintenanceCriticalStop();

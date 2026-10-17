@@ -240,12 +240,13 @@ public sealed partial class SstvSessionService : ISstvSessionService
         ICwIdDecoder cwIdDecoder,
         ILogger<SstvSessionService> logger,
         IDrmTransmitter? drmTransmitter = null,
-        IJpeg2000Codec? jpeg2000Codec = null)
+        IJpeg2000Codec? jpeg2000Codec = null,
+        IDrmReceiverFactory? drmReceiverFactory = null)
         : this(audioEngine, deviceEnumerator, deviceMuteQuery, settingsStore, decoder, encoder, macroTextResolver,
                waterfall, receivedImage, radioSession, cwIdDecoder, logger,
                cleanupTimeoutForTests: null, playbackStopWaitBudgetForTests: null,
                inFlightKeyedTransmitWaitForTests: null, playbackStallTimeoutForTests: null,
-               drmTransmitter: drmTransmitter, jpeg2000Codec: jpeg2000Codec)
+               drmTransmitter: drmTransmitter, jpeg2000Codec: jpeg2000Codec, drmReceiverFactory: drmReceiverFactory)
     {
     }
 
@@ -271,7 +272,8 @@ public sealed partial class SstvSessionService : ISstvSessionService
         TimeSpan? inFlightKeyedTransmitWaitForTests,
         TimeSpan? playbackStallTimeoutForTests,
         IDrmTransmitter? drmTransmitter = null,
-        IJpeg2000Codec? jpeg2000Codec = null)
+        IJpeg2000Codec? jpeg2000Codec = null,
+        IDrmReceiverFactory? drmReceiverFactory = null)
     {
         _cleanupTimeout = cleanupTimeoutForTests ?? CleanupTimeout;
         _playbackStopWaitBudget = playbackStopWaitBudgetForTests ?? PlaybackStopWaitBudget;
@@ -292,6 +294,7 @@ public sealed partial class SstvSessionService : ISstvSessionService
         _logger = logger;
         _drmTransmitter = drmTransmitter;
         _jpeg2000Codec = jpeg2000Codec;
+        _drmReceiverFactory = drmReceiverFactory;
 
         // Isolated fan-out (Phase-3 plan decision #3): a throwing/slow handler on one target must
         // never prevent the other from running -- this is what actually fixes the bug the pre-build
@@ -1000,6 +1003,16 @@ public sealed partial class SstvSessionService : ISstvSessionService
         catch (Exception ex)
         {
             SafeLog(() => Log.CleanupStepFailed(_logger, "StopReceiving (dispose)", ex));
+        }
+
+        // StopReceivingAsync returns without stopping when its gate wait times out, so the DRM workers get their own backstop.
+        try
+        {
+            await StopAllDrmWorkersForDisposeAsync().ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            SafeLog(() => Log.CleanupStepFailed(_logger, "DRM RX workers (dispose)", ex));
         }
 
         try

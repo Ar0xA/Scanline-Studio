@@ -140,6 +140,117 @@ public sealed class OpenJpegJpeg2000CodecTests
         Assert.Throws<InvalidDataException>(() => NewCodec().Decode("\x89PNG\r\n\x1a\n...."u8));
     }
 
+    [Fact]
+    public void Siz_SixteenMillionTiles_IsRefusedWithoutOpenJpegAllocatingThem()
+    {
+        // 4000×4000 is inside the pixel limit; 1×1 tiles would make opj_read_header allocate 16M tile records.
+        byte[] j2k = Codestream(NewCodec());
+        WriteSiz(j2k, xsiz: 4000, ysiz: 4000, tileW: 1, tileH: 1);
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(j2k));
+        Assert.Contains("16000000 tiles", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Siz_InsideJp2Box_IsCheckedToo()
+    {
+        byte[] jp2 = EncodeCard(NewCodec(), 32, 32, 0);
+        int cs = jp2.AsSpan().IndexOf("jp2c"u8) + 4;
+        BinaryPrimitives.WriteUInt32BigEndian(jp2.AsSpan(cs + 8), 5000);
+        BinaryPrimitives.WriteUInt32BigEndian(jp2.AsSpan(cs + 12), 5000);
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(jp2));
+        Assert.Contains("pixel limit", ex.Message, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData("zero-tile")]
+    [InlineData("zero-subsampling")]
+    [InlineData("bad-lsiz")]
+    [InlineData("truncated")]
+    [InlineData("short-segment")]
+    public void Siz_Malformed_IsInvalidData(string defect)
+    {
+        byte[] j2k = Codestream(NewCodec());
+        switch (defect)
+        {
+            case "zero-tile":
+                WriteSiz(j2k, xsiz: 32, ysiz: 32, tileW: 0, tileH: 32);
+                break;
+            case "zero-subsampling":
+                j2k[42 + 1] = 0;
+                break;
+            case "bad-lsiz":
+                BinaryPrimitives.WriteUInt16BigEndian(j2k.AsSpan(4), 40);
+                break;
+            case "short-segment":
+                // The SIZ segment ends at 4 + Lsiz; cut one byte inside the last component entry.
+                j2k = j2k[..(4 + BinaryPrimitives.ReadUInt16BigEndian(j2k.AsSpan(4)) - 1)];
+                break;
+            default:
+                j2k = j2k[..30];
+                break;
+        }
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(j2k));
+        Assert.DoesNotContain("opj_", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>A palette box with 255 channels would make opj_jp2_apply_pclr allocate 255 × w × h samples inside
+    /// opj_decode; the pre-parse refuses it first (its own message, not OpenJPEG's).</summary>
+    [Fact]
+    public void Jp2_PaletteWithTooManyChannels_IsRefusedBeforeOpenJpeg()
+    {
+        byte[] jp2 = EncodeCard(NewCodec(), 32, 32, 0);
+        int jp2h = jp2.AsSpan().IndexOf("jp2h"u8) - 4;
+        uint jp2hLength = BinaryPrimitives.ReadUInt32BigEndian(jp2.AsSpan(jp2h));
+        byte[] pclr = [0, 0, 0, 11, (byte)'p', (byte)'c', (byte)'l', (byte)'r', 0, 1, 255];
+        var patched = new List<byte>(jp2[..(jp2h + (int)jp2hLength)]);
+        patched.AddRange(pclr);
+        patched.AddRange(jp2[(jp2h + (int)jp2hLength)..]);
+        byte[] bomb = [.. patched];
+        BinaryPrimitives.WriteUInt32BigEndian(bomb.AsSpan(jp2h), jp2hLength + (uint)pclr.Length);
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(bomb));
+        Assert.Contains("palette has 255 channels", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>OpenJPEG also reads a pclr box at the top level, between jp2h and jp2c (jp2.c:2314-2325).</summary>
+    [Fact]
+    public void Jp2_TopLevelPaletteWithTooManyChannels_IsRefusedBeforeOpenJpeg()
+    {
+        byte[] jp2 = EncodeCard(NewCodec(), 32, 32, 0);
+        int jp2c = jp2.AsSpan().IndexOf("jp2c"u8) - 4;
+        byte[] pclr = [0, 0, 0, 11, (byte)'p', (byte)'c', (byte)'l', (byte)'r', 0, 1, 255];
+        byte[] bomb = [.. jp2[..jp2c], .. pclr, .. jp2[jp2c..]];
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(bomb));
+        Assert.Contains("palette has 255 channels", ex.Message, StringComparison.Ordinal);
+    }
+
+    /// <summary>OpenJPEG never checks the jp2c length and decodes to EOF, so a too-long jp2c box still decodes.</summary>
+    [Fact]
+    public void Jp2_CodestreamLengthPastTheEnd_StillDecodes()
+    {
+        byte[] jp2 = EncodeCard(NewCodec(), 32, 32, 0);
+        int jp2c = jp2.AsSpan().IndexOf("jp2c"u8) - 4;
+        BinaryPrimitives.WriteUInt32BigEndian(jp2.AsSpan(jp2c), (uint)(jp2.Length - jp2c + 1000));
+
+        IImageSource image = NewCodec().Decode(jp2);
+        Assert.Equal((32, 32), (image.Width, image.Height));
+    }
+
+    [Fact]
+    public void Jp2_WithoutCodestreamBox_IsInvalidData()
+    {
+        byte[] jp2 = EncodeCard(NewCodec(), 32, 32, 0);
+        int at = jp2.AsSpan().IndexOf("jp2c"u8);
+        "xxxx"u8.CopyTo(jp2.AsSpan(at));
+
+        var ex = Assert.Throws<InvalidDataException>(() => NewCodec().Decode(jp2));
+        Assert.Contains("codestream box", ex.Message, StringComparison.Ordinal);
+    }
+
     /// <summary>The harness's synthetic RGB card (qsstv-drm-harness main.cpp runJp2Enc).</summary>
     private static byte[] Card(int w, int h)
     {

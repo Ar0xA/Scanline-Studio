@@ -2,6 +2,7 @@ using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
 using ScanlineStudio.Abstractions.Cw;
+using ScanlineStudio.Abstractions.Drm;
 using ScanlineStudio.Abstractions.Imaging;
 using ScanlineStudio.Abstractions.Sstv;
 using ScanlineStudio.Core.Audio;
@@ -45,7 +46,12 @@ public sealed partial class SstvSessionService
 
             var (samples, sampleRate) = await Task.Run(() => WavFile.Read(path), ct).ConfigureAwait(false);
 
-            if (sampleRate != _decoder.SampleRate)
+            // The DRM toggle is otherwise seeded only by an RX start; a file decode may run without one.
+            long drmToggleGenerationBeforeLoad = ReadDrmToggleGeneration();
+            SeedDrmToggle(await _settingsStore.LoadAsync(ct).ConfigureAwait(false), drmToggleGenerationBeforeLoad);
+
+            // Decision 6: a file at another rate still gets a DRM-only pass when DRM RX can run at its rate.
+            if (sampleRate != _decoder.SampleRate && !CanDecodeDrmFileAt(sampleRate))
             {
                 throw new InvalidOperationException(
                     $"File sample rate ({sampleRate} Hz) does not match the configured decode rate ({_decoder.SampleRate} Hz).");
@@ -73,11 +79,18 @@ public sealed partial class SstvSessionService
             // RequestSampleRateAsync call that committed a new rate while this one waited for the
             // gate would otherwise go undetected here, and the file's samples would be pushed at the
             // wrong rate. Previously fine when the rate was immutable; not anymore.
-            if (sampleRate != _decoder.SampleRate)
+            bool decodeDrm = CanDecodeDrmFileAt(sampleRate);
+            bool drmOnly = sampleRate != _decoder.SampleRate;
+            if (drmOnly && !decodeDrm)
             {
-                _rxTransitionGate.Release();
+                ReleaseRxTransitionGate();
                 throw new InvalidOperationException(
                     $"File sample rate ({sampleRate} Hz) does not match the configured decode rate ({_decoder.SampleRate} Hz) -- the decode rate changed while waiting to start.");
+            }
+
+            if (drmOnly)
+            {
+                SafeLog(() => Log.DrmOnlyFileDecode(_logger, sampleRate, _decoder.SampleRate));
             }
 
             var wasReceiving = _isReceiving;
@@ -104,6 +117,7 @@ public sealed partial class SstvSessionService
                 // itself throws, the outer finally's StartReceivingLockedAsync/_rxTransitionGate.Release()
                 // still run -- see that method's own doc comment.
                 var completedNormally = false;
+                FileDrmReceiver? fileDrm = decodeDrm ? CreateFileDrmReceiver(sampleRate) : null;
                 try
                 {
                     // Runs on a background thread -- PushSamples/decode events are synchronous, so
@@ -120,6 +134,11 @@ public sealed partial class SstvSessionService
 
                                 var length = Math.Min(ChunkSize, samples.Length - chunkOffset);
                                 var chunk = new ReadOnlyMemory<float>(samples, chunkOffset, length);
+                                fileDrm?.Push(chunk.Span);
+                                if (drmOnly)
+                                {
+                                    continue;
+                                }
 
                                 // Same three fan-out targets live capture feeds (matching legacy's own
                                 // fftIN.CollectFFT reading from the same buffer WaveFile.ReadWrite
@@ -140,12 +159,15 @@ public sealed partial class SstvSessionService
                                 // way live capture does.
                                 _cwIdHandler(chunk);
                             }
+
+                            fileDrm?.FinishFile();
                         },
                         ct).ConfigureAwait(false);
                     completedNormally = true;
                 }
                 finally
                 {
+                    fileDrm?.Close();
                     FlushOrDropCwArmForEndOfFile(completedNormally);
                 }
             }
@@ -160,7 +182,7 @@ public sealed partial class SstvSessionService
                 }
                 finally
                 {
-                    _rxTransitionGate.Release();
+                    ReleaseRxTransitionGate();
                 }
             }
         }

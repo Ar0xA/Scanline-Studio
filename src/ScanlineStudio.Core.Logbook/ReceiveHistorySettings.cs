@@ -30,6 +30,24 @@ public sealed record ReceiveHistorySettings
     /// different default locations.</summary>
     public string? AudioDirectory { get; init; }
 
+    /// <summary>Where every received DRM file is kept raw. <see langword="null"/> means a <c>drm</c> folder inside the
+    /// images folder, resolved by <see cref="ResolveDrmFilesDirectoryAsync"/>.</summary>
+    public string? DrmFilesDirectory { get; init; }
+
+    /// <summary>The DRM files folder: <see cref="DrmFilesDirectory"/>, or <c>drm</c> inside
+    /// <see cref="ResolveDirectoryAsync"/>'s folder.</summary>
+    public static async Task<string> ResolveDrmFilesDirectoryAsync(ISettingsStore settingsStore, CancellationToken ct = default)
+    {
+        var settings = await settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var section = settings.GetSection(SectionKey, ReceiveHistorySettingsJsonContext.Default.ReceiveHistorySettings);
+        if (!string.IsNullOrWhiteSpace(section?.DrmFilesDirectory))
+        {
+            return section.DrmFilesDirectory;
+        }
+
+        return Path.Combine(await ResolveDirectoryAsync(settingsStore, ct).ConfigureAwait(false), "drm");
+    }
+
     public static async Task<string> ResolveDirectoryAsync(ISettingsStore settingsStore, CancellationToken ct = default)
     {
         var settings = await settingsStore.LoadAsync(ct).ConfigureAwait(false);

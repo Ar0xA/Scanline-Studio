@@ -426,6 +426,28 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public event Action<CwIdDecodedInfo>? CwIdDecoded;
 
+    public event Action<DrmSignalState>? DrmSignalStateChanged;
+
+    public event Action<DrmReceivedFile>? DrmFileReceived;
+
+    public event Action<string>? DrmAlreadyReceived;
+
+    public bool IsDrmReceiveActive { get; set; }
+
+    public List<bool> DrmReceiveEnabledCalls { get; } = [];
+
+    public Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default)
+    {
+        DrmReceiveEnabledCalls.Add(enabled);
+        return Task.CompletedTask;
+    }
+
+    public void RaiseDrmFileReceived(DrmReceivedFile file) => DrmFileReceived?.Invoke(file);
+
+    public void RaiseDrmSignalStateChanged(DrmSignalState state) => DrmSignalStateChanged?.Invoke(state);
+
+    public void RaiseDrmAlreadyReceived(string name) => DrmAlreadyReceived?.Invoke(name);
+
     public event Action<TransmitProgressInfo>? TransmitProgressChanged;
 
     public event Action<bool>? CapturePausedForTransmitChanged;

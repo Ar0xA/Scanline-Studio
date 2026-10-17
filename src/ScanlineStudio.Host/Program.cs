@@ -21,6 +21,7 @@ using ScanlineStudio.Application;
 using ScanlineStudio.Core.Audio;
 using ScanlineStudio.Core.Audio.MiniAudio;
 using ScanlineStudio.Core.Cw;
+using ScanlineStudio.Core.Drm.Rx;
 using ScanlineStudio.Core.Drm.Tx;
 using ScanlineStudio.Core.Imaging;
 using ScanlineStudio.Core.Localization;
@@ -218,6 +219,17 @@ internal static partial class Program
         catch (Exception ex)
         {
             Log.ReceiveHistoryRecorderResolveFailed(logger, ex);
+        }
+
+        // Eagerly resolved like ReceiveHistoryRecorder: its constructor subscribes to DrmFileReceived.
+        DrmReceptionRecorder? drmRecorder = null;
+        try
+        {
+            drmRecorder = host.Services.GetRequiredService<DrmReceptionRecorder>();
+        }
+        catch (Exception ex)
+        {
+            Log.DrmReceptionRecorderResolveFailed(logger, ex);
         }
 
         // ui_transition_plan.md step 12: same "eagerly resolved so its constructor's event
@@ -489,7 +501,7 @@ internal static partial class Program
         var radioShutdown = host.Services.GetRequiredService<IRadioSessionService>() as IPttTestDrain;
         lifetime.Exit += (_, _) => HandleLifetimeExit(logger, (IAsyncDisposable)host, applicationRestarter, fileLoggerProvider,
             singleInstanceMutex: singleInstanceMutex, drainPttTests: radioShutdown is null ? null : () => radioShutdown.DrainPttTestsAsync(),
-            drainImagesTests: imageRecorder is null ? null : () => imageRecorder.DrainAsync());
+            drainImagesTests: imageRecorder is null && drmRecorder is null ? null : () => DrainReceivedFilesAsync(imageRecorder, drmRecorder));
 
         try
         {
@@ -1112,6 +1124,8 @@ internal static partial class Program
         services.AddSingleton(sp => new DrmTxNaming(sp.GetRequiredService<TimeProvider>()));
         services.AddSingleton<BsrTransportIdCounter>();
         services.AddSingleton<IDrmTransmitter, DrmTransmitter>();
+        services.AddSingleton<IDrmReceiverFactory>(sp => new DrmReceiverFactory(sp.GetRequiredService<ILoggerFactory>()));
+        services.AddSingleton<IReceivedImageDecoder, DrmImageDecoder>();
         // TX template editor persistence (Phase 5, spec/15-template-designer.md) -- IImageSourceWriter
         // is the missing "write an IImageSource out as a PNG" counterpart to IImageFileLoader;
         // TemplateStore (Application layer) depends on it, IImageFileLoader, and
@@ -1127,6 +1141,8 @@ internal static partial class Program
         services.AddSingleton<IStockImageLibrary, StockImageLibrary>();
         services.AddSingleton<IReceiveHistoryStore, SqliteReceiveHistoryStore>();
         services.AddSingleton<ReceiveHistoryRecorder>();
+        services.AddSingleton<DrmReceptionRecorder>();
+        services.AddSingleton<IDrmReceptionRecorder>(sp => sp.GetRequiredService<DrmReceptionRecorder>());
 
         // ui_transition_plan.md step 12 (Auto-save RX audio): eagerly resolved just below (same
         // "resolved once, explicitly" shape as ReceiveHistoryRecorder immediately above) so its
@@ -1281,6 +1297,15 @@ internal static partial class Program
         return HamlibProtocolFactory.Create(radioSettings.HamlibLibraryPath, loggerFactory);
     }
 
+    /// <summary>The SSTV and DRM recorders drain concurrently, each with its own 30 s budget.</summary>
+    internal static async Task<bool> DrainReceivedFilesAsync(ReceiveHistoryRecorder? images, IDrmReceptionRecorder? drm)
+    {
+        Task<bool> imageDrain = images?.DrainAsync() ?? Task.FromResult(true);
+        Task<bool> drmDrain = drm?.DrainAsync() ?? Task.FromResult(true);
+        bool[] results = await Task.WhenAll(imageDrain, drmDrain).ConfigureAwait(false);
+        return results[0] && results[1];
+    }
+
     /// <summary>ui_transition_plan.md step 12 (Auto-save RX audio): constructs the normal DI-resolved
     /// <see cref="SstvSessionService"/>, then applies the PERSISTED auto-save-audio setting to it via
     /// <see cref="ISstvSessionService.SetAutoSaveAudioEnabled"/>/<see cref="ISstvSessionService.SetAudioDirectory"/>
@@ -1431,6 +1456,9 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Unobserved task exception")]
         public static partial void UnobservedTaskException(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve DrmReceptionRecorder; received DRM files will not be stored")]
+        public static partial void DrmReceptionRecorderResolveFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to resolve ReceiveHistoryRecorder; RX images will not be auto-saved to history")]
         public static partial void ReceiveHistoryRecorderResolveFailed(ILogger logger, Exception ex);

@@ -1,3 +1,4 @@
+using ScanlineStudio.Abstractions.Drm;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using ScanlineStudio.Core.Drm.Util;
@@ -217,6 +218,9 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
 
     /// <summary>Test-only: read the RS surplus byte as x86 QSSTV does (signed), to compare with its saved files.</summary>
     internal bool ReproduceQsstvSignedSurplus { get; init; }
+
+    /// <summary>Test-only: when set, every RS attempt also runs the full decode and reports (early check passed, decode succeeded).</summary>
+    internal Action<bool, bool>? RsAttemptProbe { get; init; }
 
     /// <summary>Global <c>msc_valid</c>.</summary>
     public DrmMscStatus MscValid { get; private set; }
@@ -568,10 +572,22 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
         {
             if (tb.AlreadyReceived)
                 return;
+
+            // Skips the body copy and the decode when some code word is already past its parity; output identical.
+            long bodyLength = BodyLength(tb);
+            bool decodable = bodyLength > MaxBodyBytes || RsFileDecoder.ErasuresDecodable(bodyLength, level, _erasures);
+            if (!decodable && RsAttemptProbe is null)
+            {
+                Log.RsDecodeFailed(_logger, tb.TransportId, tb.SegmentsReceived, tb.TotalSegments);
+                return;
+            }
+
             byte[]? body = AssembleBody(tb);
             if (body is null)
                 return;
-            if (!RsFileDecoder.TryDecode(body, fileName, extension, _erasures, ReproduceQsstvSignedSurplus, out RsDecodeResult? rs) || rs is null)
+            bool decoded = RsFileDecoder.TryDecode(body, fileName, extension, _erasures, ReproduceQsstvSignedSurplus, out RsDecodeResult? rs);
+            RsAttemptProbe?.Invoke(decodable, decoded);
+            if (!decodable || !decoded || rs is null)
             {
                 Log.RsDecodeFailed(_logger, tb.TransportId, tb.SegmentsReceived, tb.TotalSegments);
                 return;
@@ -684,9 +700,7 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
     /// <c>defaultSegmentSize</c> zeros (sourcedecoder.cpp:469-480). Null past <see cref="MaxBodyBytes"/>.</summary>
     private byte[]? AssembleBody(DrmTransportBlock tb)
     {
-        long total = 0;
-        foreach (DrmDataSegment s in tb.Segments)
-            total += s.HasData ? s.Data.Length : tb.DefaultSegmentSize;
+        long total = BodyLength(tb);
         if (total > MaxBodyBytes)
         {
             Log.BodyTooLarge(_logger, tb.TransportId, total);
@@ -709,6 +723,14 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
         }
 
         return body;
+    }
+
+    private static long BodyLength(DrmTransportBlock tb)
+    {
+        long total = 0;
+        foreach (DrmDataSegment s in tb.Segments)
+            total += s.HasData ? s.Data.Length : tb.DefaultSegmentSize;
+        return total;
     }
 
     /// <summary>QSSTV shows a file as text when <c>QImage::load</c> fails and the suffix is "txt" or "chat"

@@ -1,3 +1,4 @@
+using ScanlineStudio.Abstractions.Drm;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -117,6 +118,31 @@ public sealed class RxSourceDecoderScenarioGoldenTests(ITestOutputHelper output)
         }
     }
 
+    /// <summary>The RS early erasure check never rejects an attempt the full decode would accept, and with the check in
+    /// place the scenario still produces exactly the same files and events.</summary>
+    [Theory]
+    [MemberData(nameof(Scenarios))]
+    public void EarlyErasureCheck_NeverRejectsADecodableAttempt(string scenario)
+    {
+        string dir = Path.Combine("rx_srcdec", scenario);
+        int attempts = 0, rejected = 0;
+        Run probed = Execute(dir, legacy: true, (early, full) =>
+        {
+            attempts++;
+            if (!early)
+                rejected++;
+            Assert.False(!early && full, $"{scenario}: early check rejected a decodable attempt");
+        });
+        Run plain = Execute(dir, legacy: true);
+        Assert.Equal(probed.Rows, plain.Rows);
+        Assert.Equal(probed.Events, plain.Events);
+        Assert.Equal(probed.Files.Select(f => Convert.ToHexString(f.Data.Span)), plain.Files.Select(f => Convert.ToHexString(f.Data.Span)));
+        output.WriteLine($"{scenario}: {attempts} RS attempts, {rejected} rejected early");
+        string[] withAttempts = ["rs1_full_x86", "rs1_jp2_missing_1", "rs2_missing_1", "rs2_missing_2", "rs3_missing_2", "rs4_missing_4", "rs_crafted"];
+        if (withAttempts.Contains(scenario))
+            Assert.True(attempts > 0, $"{scenario}: the probe saw no RS attempt");
+    }
+
     [Fact]
     public void Names_AreSanitizedAndFlagged()
     {
@@ -135,7 +161,7 @@ public sealed class RxSourceDecoderScenarioGoldenTests(ITestOutputHelper output)
 
     private sealed record Run(DrmSourceDecoder Decoder, List<string> Rows, List<string> Events, List<DrmReceivedFile> Files, List<byte[]> Bsr);
 
-    private static Run Execute(string dir, bool legacy)
+    private static Run Execute(string dir, bool legacy, Action<bool, bool>? rsProbe = null)
     {
         using JsonDocument cfg = JsonDocument.Parse(GoldenFixtures.ReadStored(dir, "srcdec.json.gz"));
         JsonElement c = cfg.RootElement;
@@ -147,7 +173,7 @@ public sealed class RxSourceDecoderScenarioGoldenTests(ITestOutputHelper output)
             SpectrumOccupancyNew = c.GetProperty("spectrum_occupancy_new").GetInt32(),
         };
         int rm = c.GetProperty("robustness_mode").GetInt32();
-        var decoder = new DrmSourceDecoder { ReproduceQsstvSignedSurplus = legacy };
+        var decoder = new DrmSourceDecoder { ReproduceQsstvSignedSurplus = legacy, RsAttemptProbe = rsProbe };
         decoder.Init();
         var events = new List<string>();
         var files = new List<DrmReceivedFile>();

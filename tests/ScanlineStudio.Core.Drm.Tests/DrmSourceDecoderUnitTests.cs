@@ -1,3 +1,4 @@
+using DrmReceivedFile = ScanlineStudio.Abstractions.Drm.DrmReceivedFile;
 using ScanlineStudio.Core.Drm.Rx;
 using ScanlineStudio.Core.Drm.Tables;
 using ScanlineStudio.Core.Drm.Tx;
@@ -156,6 +157,133 @@ public sealed class DrmSourceDecoderUnitTests(Xunit.Abstractions.ITestOutputHelp
         block[1] = 7;
         rs.Encode(block.AsSpan(0, 224), block.AsSpan(224));
         Assert.False(RsFileDecoder.TryDecode(block, "x.rs1", "rs1", [4, 64], false, out _));
+    }
+
+    /// <summary>Random segment losses at every level: when the early check says no, the full decode fails too.</summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void ErasuresDecodable_FalseImpliesTryDecodeFails(int level)
+    {
+        var rsType = Enum.Parse<DrmReedSolomon>("Rs" + level);
+        var rng = new Random(100 + level);
+        int agreeFalse = 0, passes = 0;
+        for (int trial = 0; trial < 200; trial++)
+        {
+            byte[] payload = new byte[rng.Next(1, 6000)];
+            rng.NextBytes(payload);
+            byte[] coded = RsFileEncoder.Encode(payload, "jpg", rsType);
+            int segLen = rng.Next(16, 300);
+            int segments = (coded.Length + segLen - 1) / segLen;
+            double loss = rng.NextDouble() * 0.6;
+            var erasures = new List<int> { segments, segLen };
+            byte[] body = (byte[])coded.Clone();
+            for (int sgm = 0; sgm < segments - 1; sgm++)
+            {
+                if (rng.NextDouble() < loss)
+                {
+                    erasures.Add(sgm);
+                    body.AsSpan(sgm * segLen, segLen).Clear();
+                }
+            }
+
+            bool early = RsFileDecoder.ErasuresDecodable(body.Length, level, erasures);
+            bool full = RsFileDecoder.TryDecode(body, "x.rs" + level, "rs" + level, erasures, false, out _);
+            Assert.False(!early && full, $"trial {trial}: early check rejected a decodable body");
+            if (!early)
+                agreeFalse++;
+            else
+                passes++;
+        }
+
+        Assert.True(agreeFalse > 0 && passes > 0, $"both outcomes exercised ({agreeFalse} rejected, {passes} passed)");
+    }
+
+    /// <summary>The not-yet-sent tail erases the high-index words first, so word 0 passes while a later word fails;
+    /// the early check must reject that body, not only check word 0.</summary>
+    [Fact]
+    public void ErasuresDecodable_RejectsTailLossThatWordZeroSurvives()
+    {
+        byte[] payload = new byte[20_000];
+        new Random(9).NextBytes(payload);
+        byte[] coded = RsFileEncoder.Encode(payload, "jp2", DrmReedSolomon.Rs1);
+        const int segLen = 200;
+        int segments = (coded.Length + segLen - 1) / segLen;
+        int bep = coded.Length / 255;
+        int parity = 255 - RsFileEncoder.DataSize(DrmReedSolomon.Rs1);
+
+        // Grow the missing tail (the last segment is received) until some word passes parity; word 0 must not.
+        int[] Counts(int first)
+        {
+            var c = new int[bep];
+            for (long p = (long)first * segLen; p < Math.Min((long)(segments - 1) * segLen, 255L * bep); p++)
+                c[p % bep]++;
+            return c;
+        }
+
+        int firstMissing = segments - 2;
+        while (Counts(firstMissing).Max() <= parity)
+            firstMissing--;
+        int[] counts = Counts(firstMissing);
+        Assert.True(counts[0] <= parity, $"word 0 has {counts[0]} erasures, parity {parity}");
+        Assert.True(counts.Max() > parity);
+
+        var erasures = new List<int> { segments, segLen };
+        byte[] body = (byte[])coded.Clone();
+        for (int sgm = firstMissing; sgm < segments - 1; sgm++)
+        {
+            erasures.Add(sgm);
+            body.AsSpan(sgm * segLen, segLen).Clear();
+        }
+
+        Assert.False(RsFileDecoder.TryDecode(body, "x.rs1", "rs1", erasures, false, out _));
+        Assert.False(RsFileDecoder.ErasuresDecodable(body.Length, 1, erasures));
+    }
+
+    /// <summary>Worst-case attempt cost per RS level at our TX maximum (100 kB): the most erasures each code can still
+    /// correct, plus the early check alone on a body one segment past that. Reported, not gated.</summary>
+    [Theory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    [InlineData(4)]
+    public void RsFileDecoder_WorstCaseCostPerLevel(int level)
+    {
+        var rsType = Enum.Parse<DrmReedSolomon>("Rs" + level);
+        int k = RsFileEncoder.DataSize(rsType);
+        int payloadSize = (100_000 / 255 * k) - 7;
+        var payload = new byte[payloadSize];
+        new Random(level).NextBytes(payload);
+        byte[] coded = RsFileEncoder.Encode(payload, "jp2", rsType);
+        int bep = coded.Length / 255;
+        int parity = 255 - k;
+        int segLen = bep;
+        int segments = (coded.Length + segLen - 1) / segLen;
+
+        // A segment of exactly bep bytes erases one symbol in every word; take parity of them, spread out.
+        var erasures = new List<int> { segments, segLen };
+        byte[] body = (byte[])coded.Clone();
+        int step = (segments - 1) / parity;
+        for (int i = 0; i < parity; i++)
+        {
+            erasures.Add(i * step);
+            body.AsSpan(i * step * segLen, segLen).Clear();
+        }
+
+        Assert.True(RsFileDecoder.TryDecode(body, "x.rs" + level, "rs" + level, erasures, false, out _));
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        Assert.True(RsFileDecoder.ErasuresDecodable(body.Length, level, erasures));
+        Assert.True(RsFileDecoder.TryDecode(body, "x.rs" + level, "rs" + level, erasures, false, out RsDecodeResult? r));
+        double ms = System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds;
+        Assert.Equal(payload, r!.File);
+
+        erasures.Add(1);
+        long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+        Assert.False(RsFileDecoder.ErasuresDecodable(body.Length, level, erasures));
+        double checkMs = System.Diagnostics.Stopwatch.GetElapsedTime(t1).TotalMilliseconds;
+        output.WriteLine($"RS{level} body {coded.Length} bytes, {parity} erasures per word: attempt {ms:F1} ms; early rejection {checkMs:F2} ms");
     }
 
     // ---- robustness -----------------------------------------------------------------------------------------------

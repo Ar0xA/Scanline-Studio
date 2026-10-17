@@ -149,6 +149,31 @@ public interface ISstvSessionService : IAsyncDisposable
     /// whatever reception is displayed right now.</summary>
     event Action<CwIdDecodedInfo>? CwIdDecoded;
 
+    /// <summary>The DRM receiver's signal state, raised synchronously: marshal to the UI with
+    /// <c>Dispatcher.UIThread.Post</c> and return at once. Live states come from the DRM worker thread (a slow
+    /// subscriber backs audio up into its 2 s drop-oldest queue, never into capture) or the file-decode thread. The
+    /// terminal state (<see cref="DrmSignalState.IsActive"/> false) comes from whichever thread stops the receiver:
+    /// the RX stop caller, the <see cref="SetDrmReceiveEnabledAsync"/> caller, a pool thread, or the audio drain thread
+    /// (the decoder-maintenance stop), so a slow subscriber there delays capture once per stop. Drop any state whose
+    /// <see cref="DrmSignalState.Generation"/> is older than the newest one seen.</summary>
+    event Action<DrmSignalState>? DrmSignalStateChanged;
+
+    /// <summary>A DRM file completed, not yet stored: the DRM reception recorder stores it. Same thread and
+    /// slow-subscriber rules as <see cref="DrmSignalStateChanged"/>; a subscriber must hand off any I/O, never run it
+    /// inline.</summary>
+    event Action<DrmReceivedFile>? DrmFileReceived;
+
+    /// <summary>An already-received DRM object was announced again. The argument is QSSTV's raw saved name: display
+    /// text only, never a path. Same thread rules as <see cref="DrmSignalStateChanged"/>.</summary>
+    event Action<string>? DrmAlreadyReceived;
+
+    /// <summary>Whether a DRM receive worker is running now.</summary>
+    bool IsDrmReceiveActive { get; }
+
+    /// <summary>Turns DRM RX on or off: persists the setting and applies it to a running RX session as soon as the RX
+    /// transition gate is free (at once, or when the current transition or file decode ends).</summary>
+    Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default);
+
     /// <summary>The operator's own configured callsign (<c>OperatorSettings.Callsign</c>), run
     /// through <c>ScanlineStudio.Abstractions.Sstv.StationIdCallsignNormalizer.Normalize</c> (uppercase/trim/
     /// 16-char cap, <c>Option.cpp:445-448</c>) -- exists so a <c>ScanlineStudio.UI</c> consumer (e.g.

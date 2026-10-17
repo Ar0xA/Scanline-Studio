@@ -174,7 +174,7 @@ public sealed partial class SstvSessionService
         }
         finally
         {
-            _rxTransitionGate.Release();
+            ReleaseRxTransitionGate();
         }
     }
 
@@ -335,7 +335,7 @@ public sealed partial class SstvSessionService
         }
         finally
         {
-            _rxTransitionGate.Release();
+            ReleaseRxTransitionGate();
         }
     }
 
