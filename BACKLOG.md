@@ -405,7 +405,9 @@ real QSSTV/EasyPal WAVs for P8.
   automated). EasyPal (DRM-REL 3) CLOSED by the user 2026-10-17: "EasyPal == HamDRM" confirmed on their side.
   Real-QSSTV-app interop matrix DONE 2026-10-17: 18 configs (every mode × SO × QAM, protection/interleave/RS 0-4
   rotating), 18/18 byte-identical both directions (`~/tools/qsstv-app/matrix/results-2026-10-17.csv`). Left: real-station recordings (P8),
-  DRM-REL (1) on the Windows/macOS release builds. Release needs:
+  DRM-REL (1) on the macOS release build, and the first real run of the release workflows' OpenJPEG check. Windows RX
+  DONE 2026-10-17 (user, `~/tools/qsstv-app/windows-check.zip`, no QSSTV on the machine): 4 real-QSSTV WAVs (A/4/RS0,
+  B/64/RS3, E/64/RS4, B/16/RS1 20 kB), all saved files SHA-256-identical to the sent ones. Release needs:
   (1) P6b closed; (2) P6b-UI receive on/off in Options + help; (3) P7b minimal RX UI (sync, segment progress,
   callsign); (4) P7a-2 follow-ups (b) ImageSharp advisory and (c) orphan PNG; (5) DRM-REL (1)-(2) on Linux;
   (6) DRM-DOC; (7) P8 automated interop. Deferred past release: P9/P10, DRM-SRC, DRM-QGRID. User-only: EasyPal
