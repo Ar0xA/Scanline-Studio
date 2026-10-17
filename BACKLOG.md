@@ -393,6 +393,11 @@ real QSSTV/EasyPal WAVs for P8.
   the end. (RS1 signed-char fix already shipped in P7a-1, no toggle — user-agreed.)
   Also: the worker's 1 s gap→reset threshold is unmeasured; `DrmReceiverTests.GapInjection` shows zero-fill beating a
   reset at 2 s too.
+- **HAMDRM-GATE.** OPEN (set 2026-10-17, user: loop "until HamDRM is good enough for release"). Release needs:
+  (1) P6b closed; (2) P6b-UI receive on/off in Options + help; (3) P7b minimal RX UI (sync, segment progress,
+  callsign); (4) P7a-2 follow-ups (b) ImageSharp advisory and (c) orphan PNG; (5) DRM-REL (1)-(2) on Linux;
+  (6) DRM-DOC; (7) P8 automated interop. Deferred past release: P9/P10, DRM-SRC, DRM-QGRID. User-only: EasyPal
+  interop (DRM-REL 3), real-station recordings (P8).
 - **DRM-P7a-1.** DONE `60bb3cc7` — RX source decoding in Core (packets, MOT, RS erasure decode, name sanitizer);
   79 cases + 17 rx_srcdec scenarios exact.
 - **DRM-P7a-2.** DONE `afdba6f4` — Application integration (worker, file store, gallery/history, file-decode feed),
