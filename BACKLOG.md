@@ -354,7 +354,9 @@ real QSSTV/EasyPal WAVs for P8.
 - **DRM-REL.** OPEN — release checklist: (1) per OS, confirm `libopenjp2` sits beside the published exe and the
   "OpenJPEG 2.5.4 loaded" log appears on first DRM use (release workflows run no tests); (2) state "macOS 14+,
   glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34);
-  (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
+  (1)+(2) DONE on Linux 2026-10-17: published linux-x64 has `libopenjp2.so.7` beside the exe, log "OpenJPEG 2.5.4
+  loaded from '/tmp/p7b-pub/libopenjp2.so.7'"; download card states glibc 2.34+ and macOS 14+ (website/index.html,
+  ships when the branch merges). Windows/macOS (1) at their release builds. (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
   far; AU/NZ nets use EasyPal. Include BSR in EasyPal mode once P9 ships.
 - **DRM-P4b.** DONE — TX UI: "DRM (EasyPal)" target in the TX mode list (TargetGeometry refactor of the editor,
   SSTV unchanged), DRM block (profile, size, file size, live airtime estimate while editing, on-air callsign), Options ›
@@ -414,10 +416,16 @@ real QSSTV/EasyPal WAVs for P8.
   (c) CLOSED 2026-10-17 — an orphan `*_drm_*.png` (PNG written,
   `RecordAsync` failed) is imported by `ReconcileWithDiskAsync` as a "drm" row (its filename regex matches) without
   callsign/frequency: a recovery, same as the SSTV recorder. No change.
-- **DRM-P7b.** OPEN — RX UI (own plan review).
+- **DRM-P7b.** DONE `ecd8ff54` — HamDRM receive UI, includes P6b-UI: Options › Decode toggle (live apply, failure keeps
+  the dialog open), status-bar chip (mode, callsign, segments received/expected, sync, sync lost 5 s, received 8 s),
+  amber Receiving look, help en/de. Plan rev 3, code review go (round 1, minor findings fixed). Live: published
+  build + QSSTV interop WAV at 1920 and 1280 px, Large font. Known limits: a file with no name never reads complete;
+  the chip holds its last state while TX pauses capture. Off-scope: at 1280 px + Large font the status bar already
+  overflowed before P7b (frames-today/log chips hidden).
 - **DRM-P8.** OPEN — interop proof (needs the user's recordings for the real-station part).
 - **DRM-P9 / P10.** OPEN — BSR/FIX / waterfall text (each its own plan review).
-- **DRM-DOC.** OPEN — `docs/removed-features.md:808` revision. (CLAUDE.md QSSTV-as-port-target line added 2026-10-16,
+- **DRM-DOC.** DONE 2026-10-17 — `docs/removed-features.md:808` revision (receive shipped, UI in P7b, HamDRM name,
+  P9/P10 not yet). (CLAUDE.md QSSTV-as-port-target line added 2026-10-16,
   user-approved; CLAUDE.md is gitignored.)
 
 ### RESEARCH. Research list — not committed work
