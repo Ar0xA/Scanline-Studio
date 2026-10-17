@@ -436,7 +436,7 @@ public sealed partial class RadioStatusViewModel : ViewModelBase
 
     private TxLevelFamily _activeTxLevelFamily = TxLevelFamily.Sstv;
 
-    /// <summary>"Pwr · SSTV" / "Pwr · DRM": the label of every Pwr control bound to <see cref="TxVolumePercent"/>.</summary>
+    /// <summary>"Pwr · SSTV" / "Pwr · HamDRM": the label of every Pwr control bound to <see cref="TxVolumePercent"/>.</summary>
     public string TxLevelLabel => _localization.GetString(
         ActiveTxLevelFamily == TxLevelFamily.Drm ? "RadioStatus.TxVolumeLabel.Drm" : "RadioStatus.TxVolumeLabel.Sstv");
 

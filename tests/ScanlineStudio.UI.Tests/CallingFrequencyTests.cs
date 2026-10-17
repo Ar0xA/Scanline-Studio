@@ -222,9 +222,9 @@ public sealed class CallingFrequencyTests
 
     [AvaloniaTheory]
     [InlineData(14_240_000, RadioMode.Usb, "14.240000 MHz · USB · SSTV · EU")]
-    [InlineData(3_733_000, RadioMode.Lsb, "3.733000 MHz · LSB · DRM · EU")]
+    [InlineData(3_733_000, RadioMode.Lsb, "3.733000 MHz · LSB · HamDRM · EU")]
     [InlineData(7_170_000, RadioMode.Lsb, "7.170000 MHz · LSB · SSTV · AU/US")]
-    [InlineData(14_233_000, RadioMode.Usb, "14.233000 MHz · USB · SSTV/DRM")]
+    [InlineData(14_233_000, RadioMode.Usb, "14.233000 MHz · USB · SSTV/HamDRM")]
     [InlineData(145_800_000, RadioMode.Fm, "145.800000 MHz · FM · SSTV · ISS downlink")]
     [InlineData(433_775_000, RadioMode.Fm, "433.775000 MHz · FM · SSTV · AU")]
     public void DisplayText_UsesTheRealEnglishStrings(long hz, RadioMode mode, string expected)

@@ -175,7 +175,7 @@
         </div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="workspace" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="hauptfenster layout aufbau arbeitsbereich menü kopfzeile frequenz favoriten voreinstellungen rx pegel leistung pwr status registerkarten tabs empfang senden galerie logbuch datei konfigurationen kalibrierung werkzeuge optionen hilfe website github über anwendungsprotokoll log protokoll menüleiste anruffrequenzen easypal drm">
+      <article id="workspace" class="help-topic" data-help-topic data-category="Erste Schritte" data-keywords="hauptfenster layout aufbau arbeitsbereich menü kopfzeile frequenz favoriten voreinstellungen rx pegel leistung pwr status registerkarten tabs empfang senden galerie logbuch datei konfigurationen kalibrierung werkzeuge optionen hilfe website github über anwendungsprotokoll log protokoll menüleiste anruffrequenzen easypal drm hamdrm">
         <p class="topic-category">Erste Schritte</p>
         <h2>Rundgang durch den Arbeitsbereich</h2>
         <p>Das Hauptfenster mit fester Aufteilung zeigt oben den Stationsstatus und darunter die aufgabenbezogenen Werkzeuge in vier Registerkarten.</p>
@@ -199,9 +199,9 @@
         <ul>
           <li><strong>Frequenz und Betriebsart</strong> zeigen den aktuellen Zustand des verbundenen Transceivers. Bei verbundener CAT-Steuerung können Sie eine Frequenz oder eine unterstützte Betriebsart anfordern.</li>
           <li><strong>Favoriten</strong> rufen eine gespeicherte Kombination aus Frequenz, Betriebsart und Filterbandbreite in einem Schritt auf. Verwaltet werden sie über <strong>Aktuelle speichern</strong> oder <strong>Liste bearbeiten…</strong>. Wie sich der Bandbreitenanteil verhält, steht unter <a href="#radio-cat">Transceiver und CAT-Steuerung</a>.</li>
-          <li><strong>Anruffrequenzen</strong> (die Schaltfläche <strong>▾</strong> rechts neben der Frequenz) listet beliebte SSTV- und DRM-Anruffrequenzen nach Band. Eine Auswahl stimmt den Transceiver ab und setzt Betriebsart und Filterbreite. Siehe <a href="#radio-cat">Transceiver und CAT-Steuerung</a>.</li>
+          <li><strong>Anruffrequenzen</strong> (die Schaltfläche <strong>▾</strong> rechts neben der Frequenz) listet beliebte SSTV- und HamDRM-Anruffrequenzen nach Band. Eine Auswahl stimmt den Transceiver ab und setzt Betriebsart und Filterbreite. Siehe <a href="#radio-cat">Transceiver und CAT-Steuerung</a>.</li>
           <li><strong>RX-Pegel</strong> zeigt den aktuellen Aufnahmepegel. Eine dauerhaft niedrige Anzeige ebenso vermeiden wie rotes Clipping (Übersteuerung).</li>
-          <li><strong>Pwr</strong> ist die TX-Wiedergabeverstärkung der Anwendung. Sie ist weder die Gerätelautstärke des Betriebssystems noch die HF-Leistungseinstellung des Transceivers. Für SSTV und DRM gibt es je einen eigenen Pegel: Die Beschriftung (<strong>Pwr · SSTV</strong> oder <strong>Pwr · DRM</strong>) folgt der auf der Registerkarte Senden gewählten Betriebsart und zeigt, welcher Pegel eingestellt wird.</li>
+          <li><strong>Pwr</strong> ist die TX-Wiedergabeverstärkung der Anwendung. Sie ist weder die Gerätelautstärke des Betriebssystems noch die HF-Leistungseinstellung des Transceivers. Für SSTV und HamDRM gibt es je einen eigenen Pegel: Die Beschriftung (<strong>Pwr · SSTV</strong> oder <strong>Pwr · HamDRM</strong>) folgt der auf der Registerkarte Senden gewählten Betriebsart und zeigt, welcher Pegel eingestellt wird.</li>
           <li><strong>Empfang</strong> startet oder pausiert die SSTV-Suche. Während einer Aussendung durch Scanline Studio pausiert die Aufnahme automatisch und wird danach fortgesetzt. Für dieses gesamte Zeitfenster (eine echte Aussendung oder ein Abstimmton) zeigt die Beschriftung <strong>Senden</strong> und wechselt nach dem Ende zurück zu <strong>Empfang</strong>. Ansonsten wechselt die Beschriftung zu <strong>RX stumm</strong>, sobald die Aufnahme gestoppt ist. Während ein Bild decodiert wird, blinkt sie bernsteinfarben und zeigt <strong>Decodierung</strong>. Das Blinken lässt sich in den <a href="#appearance-options">Darstellungsoptionen</a> abschalten. Die zugehörige Anzeige in der Statusleiste verhält sich genauso, sodass Sende- und Decodierzustand von jeder Registerkarte aus sichtbar sind, nicht nur unter Empfang.</li>
           <li><strong>TX stoppen</strong> neben <strong>Empfang</strong> bricht eine laufende Aussendung sofort ab. Die Schaltfläche ist unabhängig von der aktiven Registerkarte immer sichtbar und daher erreichbar, ohne zuerst zur Registerkarte Senden zu wechseln.</li>
         </ul>
@@ -329,10 +329,10 @@
         <p>Einen Modus über eine Schnellmodus-Schaltfläche nur dann erzwingen, wenn der gesendete Modus bekannt ist und die Wiedergabe ihn nicht automatisch erkennt. War das Signal in der ursprünglichen Aufnahme übersteuert oder fehlt es ganz, kann die erneute Decodierung das fehlende Audio nicht wiederherstellen.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Senden" data-keywords="tx senden erstes bild aussendung durchsuchen beispielbild stock modus auto manuell wechseln ändern größe anpassen umfließen dauer geometrie abmessungen vis ausgabegerät ptt abbrechen stoppen leistung alc swr drm easypal">
+      <article id="transmit-first-picture" class="help-topic" data-help-topic data-category="Senden" data-keywords="tx senden erstes bild aussendung durchsuchen beispielbild stock modus auto manuell wechseln ändern größe anpassen umfließen dauer geometrie abmessungen vis ausgabegerät ptt abbrechen stoppen leistung alc swr drm hamdrm easypal">
         <p class="topic-category">Senden</p>
         <h2>Ein Bild senden</h2>
-        <p>Bild und Transceiver vor dem Tasten vorbereiten. Der Editor erzeugt genau die Pixelmaße, die der gewählte SSTV-Modus verlangt. Zum digitalen Senden mit DRM (EasyPal) siehe <a href="#transmit-drm">Ein Bild mit DRM (EasyPal) senden</a>.</p>
+        <p>Bild und Transceiver vor dem Tasten vorbereiten. Der Editor erzeugt genau die Pixelmaße, die der gewählte SSTV-Modus verlangt. Zum digitalen Senden mit HamDRM (EasyPal) siehe <a href="#transmit-drm">Ein Bild mit HamDRM (EasyPal) senden</a>.</p>
 
         <ol class="workflow">
           <li>Unter <strong>Senden</strong> einen Modus wählen (die vollständige Liste steht unter <a href="#sstv-modes">Unterstützte SSTV-Modi</a>) oder die Modusfolge auf Auto belassen, um im zuletzt empfangenen Modus zu antworten.</li>
@@ -356,11 +356,11 @@
       </article>
       <article id="transmit-drm" class="help-topic" data-help-topic data-category="Senden" data-keywords="drm easypal digitales sstv hamdrm qsstv jpeg 2000 jp2 profil robust normal schnell benutzerdefiniert dateigröße kb schätzung modus a b e qam bandbreite schutz interleaver reed solomon rs vox ton pegel papr rufzeichen">
         <p class="topic-category">Senden</p>
-        <h2>Ein Bild mit DRM (EasyPal) senden</h2>
-        <p><a class="term" href="#glossary-drm">DRM</a> sendet das Bild als komprimierte JPEG-2000-Datei statt als analoge SSTV-Töne. Es ist kompatibel mit EasyPal und QSSTV. Ein DRM-Bild kommt ohne Rauschen und ohne Schräglage an oder gar nicht; es eignet sich daher für gute Verbindungen und höhere Auflösungen. Scanline Studio sendet DRM nur; der DRM-Empfang ist noch nicht verfügbar.</p>
+        <h2>Ein Bild mit HamDRM (EasyPal) senden</h2>
+        <p><a class="term" href="#glossary-drm">HamDRM</a> sendet das Bild als komprimierte JPEG-2000-Datei statt als analoge SSTV-Töne. Es ist kompatibel mit EasyPal und QSSTV. Ein HamDRM-Bild kommt ohne Rauschen und ohne Schräglage an oder gar nicht; es eignet sich daher für gute Verbindungen und höhere Auflösungen. Scanline Studio sendet HamDRM nur; der HamDRM-Empfang ist noch nicht verfügbar.</p>
 
         <ol class="workflow">
-          <li>Unter <strong>Senden</strong> am Ende der Modusliste <strong>DRM (EasyPal)</strong> wählen.</li>
+          <li>Unter <strong>Senden</strong> am Ende der Modusliste <strong>HamDRM (EasyPal)</strong> wählen.</li>
           <li>Ein <strong>Profil</strong> wählen: <strong>Robust</strong> für schwache oder schwundbehaftete Signale, <strong>Normal</strong> für übliche KW-Verbindungen oder <strong>Schnell</strong> für einen starken, sauberen Kanal.</li>
           <li>Eine <strong>Größe</strong> (320 × 240, 640 × 480 oder 800 × 600) und eine <strong>Dateigröße</strong> (4–100 KB) wählen. Der Editor erstellt das Bild in der gewählten Größe, genau wie bei einem SSTV-Modus.</li>
           <li>Das Bild im Editor vorbereiten, die Zeile <strong>Geschätzt</strong> prüfen und <strong>SENDEN</strong> wählen.</li>
@@ -381,18 +381,18 @@
         </dl>
 
         <h3>Rufzeichen und VOX-Ton</h3>
-        <p>DRM sendet das Rufzeichen aus den <a href="#station-options">Stationsoptionen</a> in einer kurzen Kennung mit höchstens 9 einfachen lateinischen Zeichen. Die Zeile <strong>Rufzeichen</strong> zeigt, was tatsächlich gesendet wird; sie wird rot und zeigt einen Hinweis, wenn das von der Eingabe abweicht. Der <strong>VOX-Ton</strong> (ein 1 s langer Ton vor dem Signal zum Tasten per VOX) wird in den <a href="#station-options">Stationsoptionen</a> eingestellt.</p>
+        <p>HamDRM sendet das Rufzeichen aus den <a href="#station-options">Stationsoptionen</a> in einer kurzen Kennung mit höchstens 9 einfachen lateinischen Zeichen. Die Zeile <strong>Rufzeichen</strong> zeigt, was tatsächlich gesendet wird; sie wird rot und zeigt einen Hinweis, wenn das von der Eingabe abweicht. Der <strong>VOX-Ton</strong> (ein 1 s langer Ton vor dem Signal zum Tasten per VOX) wird in den <a href="#station-options">Stationsoptionen</a> eingestellt.</p>
 
-        <h3>DRM-Pegel einstellen</h3>
-        <p>SSTV ist ein Dauerton, DRM dagegen hat einen hohen <a class="term" href="#glossary-papr">PAPR</a>: Die Spitzen liegen etwa 12-14 dB über dem Mittelwert. Deshalb hat DRM in Scanline Studio einen eigenen Pwr-Pegel. Bei gewähltem DRM zeigen der Pwr-Regler im Kopfbereich und auf der Registerkarte Senden <strong>Pwr · DRM</strong> und stellen nur den DRM-Pegel ein; der SSTV-Pegel bleibt unverändert. Die Registerkarte „Transceiver / CAT“ in den Optionen zeigt beide Pegel.</p>
+        <h3>HamDRM-Pegel einstellen</h3>
+        <p>SSTV ist ein Dauerton, HamDRM dagegen hat einen hohen <a class="term" href="#glossary-papr">PAPR</a>: Die Spitzen liegen etwa 12-14 dB über dem Mittelwert. Deshalb hat HamDRM in Scanline Studio einen eigenen Pwr-Pegel. Bei gewähltem HamDRM zeigen der Pwr-Regler im Kopfbereich und auf der Registerkarte Senden <strong>Pwr · HamDRM</strong> und stellen nur den HamDRM-Pegel ein; der SSTV-Pegel bleibt unverändert. Die Registerkarte „Transceiver / CAT“ in den Optionen zeigt beide Pegel.</p>
         <ol class="steps">
-          <li>Auf der Registerkarte Senden DRM wählen, möglichst an einer Dummy-Load.</li>
-          <li><strong>Abstimmen</strong> auf der Registerkarte Senden oder im Tongenerator wählen. Bei gewähltem DRM spielt der Ton mit dem DRM-Pegel.</li>
-          <li>Pwr erhöhen, bis die <a class="term" href="#glossary-alc">ALC</a> des Transceivers gerade anspricht, dann etwas zurücknehmen. Der Ton liegt etwas über den echten DRM-Spitzen, das ist also eine sichere Obergrenze.</li>
-          <li>Bei DRM sind im Mittel nur etwa 20-30 % der Nennleistung zu erwarten. Das ist normal; die Spitzen erreichen trotzdem die volle Leistung.</li>
+          <li>Auf der Registerkarte Senden HamDRM wählen, möglichst an einer Dummy-Load.</li>
+          <li><strong>Abstimmen</strong> auf der Registerkarte Senden oder im Tongenerator wählen. Bei gewähltem HamDRM spielt der Ton mit dem HamDRM-Pegel.</li>
+          <li>Pwr erhöhen, bis die <a class="term" href="#glossary-alc">ALC</a> des Transceivers gerade anspricht, dann etwas zurücknehmen. Der Ton liegt etwas über den echten HamDRM-Spitzen, das ist also eine sichere Obergrenze.</li>
+          <li>Bei HamDRM sind im Mittel nur etwa 20-30 % der Nennleistung zu erwarten. Das ist normal; die Spitzen erreichen trotzdem die volle Leistung.</li>
         </ol>
-        <div class="safety"><strong>Ansteuerpegel.</strong> Ein übersteuertes DRM-Signal ist für jeden Empfänger unbrauchbar. Den ALC-Eingriff bei DRM gering halten, auch wenn die Leistungsanzeige schwach wirkt.</div>
-        <div class="note"><strong>Was DRM nicht nutzt.</strong> Die automatische Modusfolge wählt nur SSTV-Modi und wechselt daher nie von DRM weg. Loopback-Selbsttest, VIS-Header, Vorton und Tonbereich gelten nur für SSTV. TX stoppen, SWR-Abschaltung, Gesendete Bilder und Erneut senden funktionieren wie bei SSTV.</div>
+        <div class="safety"><strong>Ansteuerpegel.</strong> Ein übersteuertes HamDRM-Signal ist für jeden Empfänger unbrauchbar. Den ALC-Eingriff bei HamDRM gering halten, auch wenn die Leistungsanzeige schwach wirkt.</div>
+        <div class="note"><strong>Was HamDRM nicht nutzt.</strong> Die automatische Modusfolge wählt nur SSTV-Modi und wechselt daher nie von HamDRM weg. Loopback-Selbsttest, VIS-Header, Vorton und Tonbereich gelten nur für SSTV. TX stoppen, SWR-Abschaltung, Gesendete Bilder und Erneut senden funktionieren wie bei SSTV.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
       <article id="image-editor" class="help-topic" data-help-topic data-category="Senden" data-keywords="bildeditor bild editor zuschneiden zuschnitt verschieben skalieren drehen vorschau seitenverhältnis letterbox sicherer bereich raster ausrichten helligkeit kontrast sättigung gamma schärfen entrauschen neue vorlage abbrechen rückgängig wiederholen zoom mehrfachauswahl umschalt shift klick sperren duplizieren kopieren einfügen stil reduzieren einpassen strecken ausfüllen breite höhe hintergrundfoto hintergrund">
@@ -591,7 +591,7 @@
         <p>Unter <strong>Optionen → Weiterleitung</strong> für jedes Ziel Name, Host und Port hinzufügen. Jedes neu geloggte QSO wird als <code>LoggedADIF</code>-Nachricht im WSJT-X-Protokoll an die aktivierten Ziele gesendet. Übliche lokale Ports sind 2237 für GridTracker und 2333 für manche Konfigurationen von N1MM Logger+ oder Log4OM. Den Port in der Dokumentation der empfangenden Anwendung nachschlagen.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="radio-cat" class="help-topic" data-help-topic data-category="Funkgerät und Audio" data-keywords="funkgerät transceiver cat cat-steuerung backend keines rigctld hamlib eingebunden flrig host port seriell serielle schnittstelle modell baudrate ptt vox rts dtr verbinden verbindung testen bandbreite filter durchlassbereich voreinstellung 1800 2400 2800 favorit favoriten pro favorit 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm aktuelle speichern anruffrequenz anruffrequenzen easypal drm digital sstv bandplan 14.230 14.233 iss ariss 145.800 region eu us au">
+      <article id="radio-cat" class="help-topic" data-help-topic data-category="Funkgerät und Audio" data-keywords="funkgerät transceiver cat cat-steuerung backend keines rigctld hamlib eingebunden flrig host port seriell serielle schnittstelle modell baudrate ptt vox rts dtr verbinden verbindung testen bandbreite filter durchlassbereich voreinstellung 1800 2400 2800 favorit favoriten pro favorit 9000 12000 15000 usb lsb fm data-u data-l data-fm pktusb pktlsb pktfm aktuelle speichern anruffrequenz anruffrequenzen easypal drm hamdrm digital sstv bandplan 14.230 14.233 iss ariss 145.800 region eu us au">
         <p class="topic-category">Funkgerät und Audio</p>
         <h2>Transceiver und CAT einrichten</h2>
         <p><strong>Optionen → Transceiver / CAT</strong> öffnen, ein Backend wählen, dessen Verbindungsdaten eingeben, testen, speichern und anschließend die eigentliche Verbindung zum Transceiver herstellen. <strong>Verbindung testen</strong>, <strong>Verbinden</strong> und <strong>Trennen</strong> befinden sich alle auf dieser Registerkarte unterhalb der Backend-Einstellungen, nicht in der Transceiver-Kopfzeile des Hauptfensters.</p>
@@ -633,8 +633,8 @@
         <div class="warning"><strong>Die Auswahl eines Favoriten überschreibt ein von Hand eingestelltes Filter.</strong> Backends, die keine Bandbreite setzen können, etwa flrig und OmniRig, überspringen diesen Schritt und lassen das Filter des Transceivers unverändert.</div>
 
         <h3>Anruffrequenzen</h3>
-        <p>Die Schaltfläche <strong>▾</strong> rechts neben der Frequenzanzeige öffnet eine Liste beliebter SSTV- und DRM-Anruffrequenzen (EasyPal), nach Band geordnet von 160 m bis 70 cm. Jeder Eintrag zeigt die Frequenz, das Seitenband laut Quelle (USB, LSB oder FM) und ob dort analoges SSTV, DRM oder beides läuft. <strong>EU</strong>, <strong>US</strong> oder <strong>AU</strong> kennzeichnet eine regionale Anruffrequenz.</p>
-        <p>Eine Auswahl wirkt wie ein Favorit: Sie sendet per CAT die Frequenz, dann die Betriebsart, dann eine Filterbreite. DRM-Einträge fordern 2800 Hz an, weil ein 2,5-kHz-DRM-Signal breiter ist als die SSB-Vorgabe von 2400 Hz. Andere Einträge verwenden 2400 Hz bei USB und LSB und 15000 Hz bei FM. Ist <strong>SSB als PKT</strong> aktiviert, werden USB- und LSB-Einträge wie bei den USB- und LSB-Schaltflächen als Datenvariante (PKTUSB, PKTLSB) gesendet. FM-Einträge bleiben unverändert.</p>
+        <p>Die Schaltfläche <strong>▾</strong> rechts neben der Frequenzanzeige öffnet eine Liste beliebter SSTV- und HamDRM-Anruffrequenzen (EasyPal), nach Band geordnet von 160 m bis 70 cm. Jeder Eintrag zeigt die Frequenz, das Seitenband laut Quelle (USB, LSB oder FM) und ob dort analoges SSTV, HamDRM oder beides läuft. <strong>EU</strong>, <strong>US</strong> oder <strong>AU</strong> kennzeichnet eine regionale Anruffrequenz.</p>
+        <p>Eine Auswahl wirkt wie ein Favorit: Sie sendet per CAT die Frequenz, dann die Betriebsart, dann eine Filterbreite. HamDRM-Einträge fordern 2800 Hz an, weil ein 2,5-kHz-HamDRM-Signal breiter ist als die SSB-Vorgabe von 2400 Hz. Andere Einträge verwenden 2400 Hz bei USB und LSB und 15000 Hz bei FM. Ist <strong>SSB als PKT</strong> aktiviert, werden USB- und LSB-Einträge wie bei den USB- und LSB-Schaltflächen als Datenvariante (PKTUSB, PKTLSB) gesendet. FM-Einträge bleiben unverändert.</p>
         <p>Die Liste stammt von pd2tx.com, vk6ysf.com und dem Wikipedia-Artikel über Slow-Scan Television. Prüfen Sie vor dem Senden Ihre eigene Lizenz und den Bandplan.</p>
         <div class="warning"><strong>145,800 MHz ist der ISS-Downlink.</strong> Der Eintrag ist mit <strong>ISS-Downlink</strong> markiert. Nutzen Sie ihn nur zum Empfang von SSTV-Bildern der Internationalen Raumstation. Senden Sie dort nicht.</div>
 
@@ -654,7 +654,7 @@
           <li><strong>Pwr</strong> langsam erhöhen und dabei die HF-Leistungs- und <a class="term" href="#glossary-alc">ALC</a>-Anzeigen des Transceivers beobachten.</li>
           <li>Aufhören, bevor die ALC übermäßig ausschlägt. <strong>Abstimmen beenden</strong> wählen oder die Zeitbegrenzung abwarten.</li>
         </ol>
-        <p>Die Registerkarte „Transceiver / CAT“ hat zwei Pwr-Regler, <strong>Leistung · SSTV</strong> und <strong>Leistung · DRM</strong>; ihr Abstimmen nutzt immer den SSTV-Pegel. Zum Abstimmen für DRM auf der Registerkarte Senden DRM wählen und dort abstimmen; siehe <a href="#transmit-drm">DRM-Pegel einstellen</a>.</p>
+        <p>Die Registerkarte „Transceiver / CAT“ hat zwei Pwr-Regler, <strong>Leistung · SSTV</strong> und <strong>Leistung · HamDRM</strong>; ihr Abstimmen nutzt immer den SSTV-Pegel. Zum Abstimmen für HamDRM auf der Registerkarte Senden HamDRM wählen und dort abstimmen; siehe <a href="#transmit-drm">HamDRM-Pegel einstellen</a>.</p>
 
         <p><strong>Senden bei zu hohem <a class="term" href="#glossary-swr">SWR</a> abbrechen</strong> bricht eine laufende Aussendung ab, nachdem der verbundene Transceiver bei zwei aufeinanderfolgenden Abfragen einen Wert über der gewählten Schwelle gemeldet hat. Die Option kann nicht funktionieren, wenn Transceiver oder Backend kein SWR melden.</p>
         <div class="safety"><strong>Kein primärer Schutz.</strong> Software-Abfragen und CAT können ausfallen oder verzögert reagieren. Die SWR-Abschaltung ist eine zusätzliche Absicherung, kein Ersatz für den Hardware-Schutz des Transceivers, eine geeignete Antennenanlage oder die Überwachung durch den Funkamateur.</div>
@@ -798,18 +798,18 @@
         <div class="tip"><strong>Nachts in einem abgedunkelten Raum im Einsatz?</strong> „Dunkel“ verhindert, dass die Oberfläche den Raum erhellt, und ist bei Dunkelheit angenehmer für die Augen.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="station-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="station stationsdaten optionen rufzeichen call callsign operator name locator grid square maidenhead standard rst rapport signalrapport makros overlay cw fsk log logbuch drm profil robust normal schnell vox ton pegel">
+      <article id="station-options" class="help-topic" data-help-topic data-category="Referenz der Optionen" data-keywords="station stationsdaten optionen rufzeichen call callsign operator name locator grid square maidenhead standard rst rapport signalrapport makros overlay cw fsk log logbuch drm hamdrm profil robust normal schnell vox ton pegel">
         <p class="topic-category">Referenz der Optionen</p>
         <h2>Stationsoptionen</h2>
         <p>Die Registerkarte „Station“ enthält die Identitätsangaben, auf die andere Funktionen stillschweigend zurückgreifen: Vorlagen-Makros, Kennung und Logbuch lesen sie alle von hier, statt eine erneute Eingabe zu verlangen.</p>
 
         <dl>
-          <dt>Eigenes Rufzeichen</dt><dd>Speist das Einfügefeld „MEIN RUFZEICHEN“ des TX-Bildeditors, den CW-ID-Text, die FSK-Stationskennung, die DRM-Stationskennung und jedes geloggte QSO. Bleibt es leer, funktionieren alle fünf nicht, daher lohnt es sich, es vor allem anderen einzutragen.</dd>
+          <dt>Eigenes Rufzeichen</dt><dd>Speist das Einfügefeld „MEIN RUFZEICHEN“ des TX-Bildeditors, den CW-ID-Text, die FSK-Stationskennung, die HamDRM-Stationskennung und jedes geloggte QSO. Bleibt es leer, funktionieren alle fünf nicht, daher lohnt es sich, es vor allem anderen einzutragen.</dd>
           <dt>Eigener Name</dt><dd>Steht Vorlagen-Overlays als Einfügefeld „MEIN NAME“ zur Verfügung. Rein kosmetisch. Nichts anderes in der Anwendung liest ihn.</dd>
           <dt>Eigener Locator</dt><dd>Der eigene <a class="term" href="#glossary-maidenhead-grid">Maidenhead-Locator</a>. Das Feld wird nicht geprüft, daher funktioniert auch jede beliebige Freitext-Ortsangabe. Wird für ein Overlay-Feld „MEIN LOCATOR“ verwendet und zusammen mit dem Locator der Gegenstation zur Berechnung von Entfernung und Richtung für Vorlagenfelder.</dd>
           <dt>Standard-RST</dt><dd>Füllt die Felder „Gesendet“ und „Empfangen“ vor, wenn ein neues QSO geloggt wird. Standardwert ist <strong>595</strong>. SSTV-Stationen tauschen Lesbarkeit/Stärke/<em>Video</em> (R-S-V) aus, nicht den sonst im Amateurfunk üblichen Rapport Lesbarkeit/Stärke/<em>Ton</em> (R-S-T), daher wäre 599 der falsche Rapport zum Vorbelegen. Das Feld leeren, wenn lieber nichts vorbelegt und der Rapport jedes Mal von Hand eingegeben werden soll.</dd>
-          <dt>DRM-Sendeprofile</dt><dd>Die drei Profile, die die Registerkarte Senden für <a href="#transmit-drm">DRM (EasyPal)</a> anbietet: je ein Name und die sechs Übertragungsfelder. Ein leerer Name verwendet den Standardnamen (Robust, Normal, Schnell). Das eigene Profil „Benutzerdefiniert“ der Registerkarte Senden wird getrennt gespeichert.</dd>
-          <dt>VOX-Ton vor DRM senden</dt><dd>Sendet vor jeder DRM-Aussendung einen 1 s langen 1700-Hz-Ton, damit ein per <a class="term" href="#glossary-vox">VOX</a> getasteter Sender schon an ist, wenn das Signal beginnt. Standardmäßig aus.</dd>
+          <dt>HamDRM-Sendeprofile</dt><dd>Die drei Profile, die die Registerkarte Senden für <a href="#transmit-drm">HamDRM (EasyPal)</a> anbietet: je ein Name und die sechs Übertragungsfelder. Ein leerer Name verwendet den Standardnamen (Robust, Normal, Schnell). Das eigene Profil „Benutzerdefiniert“ der Registerkarte Senden wird getrennt gespeichert.</dd>
+          <dt>VOX-Ton vor HamDRM senden</dt><dd>Sendet vor jeder HamDRM-Aussendung einen 1 s langen 1700-Hz-Ton, damit ein per <a class="term" href="#glossary-vox">VOX</a> getasteter Sender schon an ist, wenn das Signal beginnt. Standardmäßig aus.</dd>
         </dl>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
@@ -870,7 +870,7 @@
           </table>
         </div>
         <p>Die Schnellmodus-Schaltflächen der MODE-Karte auf der Registerkarte Empfang (siehe <a href="#receive-first-picture">Das erste Bild empfangen</a>) enthalten eine praxistaugliche Auswahl dieser Modi. Mit einem Rechtsklick auf einen Platz lässt er sich mit jedem beliebigen Modus aus der vollständigen Liste oben neu belegen.</p>
-        <p>Die Modusauswahl der Registerkarte Senden bietet außerdem <strong>DRM (EasyPal)</strong> an, eine digitale Betriebsart, die kein SSTV ist: vorerst nur zum Senden und nicht auf den Schnellmodus-Schaltflächen. Siehe <a href="#transmit-drm">Ein Bild mit DRM (EasyPal) senden</a>.</p>
+        <p>Die Modusauswahl der Registerkarte Senden bietet außerdem <strong>HamDRM (EasyPal)</strong> an, eine digitale Betriebsart, die kein SSTV ist: vorerst nur zum Senden und nicht auf den Schnellmodus-Schaltflächen. Siehe <a href="#transmit-drm">Ein Bild mit HamDRM (EasyPal) senden</a>.</p>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
       <article id="macros" class="help-topic" data-help-topic data-category="Werkzeuge und Referenz" data-keywords="makros makro tokens platzhalter vorlage variablen prozent m datum uhrzeit zeit rufzeichen name locator grid frequenz modus betriebsart entfernung richtung peilung his_grid vorschau qso fill benutzerdefiniert feld txt">
@@ -1036,7 +1036,7 @@
         <div class="tip"><strong>Sinnvolles Support-Paket.</strong> Anwendungsversion aus Hilfe → Über Scanline Studio…, Betriebssystem, gewähltes Audio- und CAT-Backend, genauen Fehlertext, Schritte zur Reproduktion und den relevanten Auszug aus dem Anwendungsprotokoll notieren. Eine kurze WAV-Datei nur beilegen, wenn sie zur Reproduktion eines Decodierproblems nötig ist.</div>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
       </article>
-      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossar begriffe abkürzungen fachbegriffe afc agc cat drm papr dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead locator grid nr utc wpm hilbert pll rufzeichen rapport">
+      <article id="glossary" class="help-topic" data-help-topic data-category="Support" data-keywords="glossar begriffe abkürzungen fachbegriffe afc agc cat drm hamdrm papr dsp fsk id hamlib ppm ptt qso qsl rst sstv swr vis vox xrun adif alc avt training bpf lpf iir fir vco maidenhead locator grid nr utc wpm hilbert pll rufzeichen rapport">
         <p class="topic-category">Support</p>
         <h2>Glossar</h2>
         <p>Zeigen Sie an beliebiger Stelle dieses Handbuchs auf einen gepunktet unterstrichenen Begriff oder setzen Sie den Fokus darauf, um seine Definition zu sehen, ohne die Seite zu verlassen. Jeder Begriff verweist auf die eine Definition hier.</p>
@@ -1048,7 +1048,7 @@
           <dt id="glossary-avt-training">AVT-Training</dt><dd>Ein Decoder-Zustand für die AVT-SSTV-Betriebsartenfamilie, die das eingehende Signal erst vermessen muss, bevor sie einrasten und das Bild decodieren kann. Er unterscheidet sich von den üblichen Zuständen „Suche“/„eingerastet“ der anderen Betriebsarten.</dd>
           <dt id="glossary-bpf">BPF</dt><dd>Bandpassfilter; lässt einen gewählten Frequenzbereich durch und unterdrückt alles außerhalb davon.</dd>
           <dt id="glossary-cat">CAT</dt><dd>Computer Aided Transceiver, die CAT-Steuerung: Übertragung von Frequenz, Betriebsart, PTT und Telemetrie zwischen Computer und Funkgerät.</dd>
-          <dt id="glossary-drm">DRM</dt><dd>Digital Radio Mondiale; hier die Amateurfunk-Variante HamDRM, mit der EasyPal und QSSTV ein Bild als komprimierte Datei über einen Sprachkanal senden. Ein Bild kommt entweder vollständig und sauber an oder gar nicht.</dd>
+          <dt id="glossary-drm">HamDRM</dt><dd>Die Amateurfunk-Variante von DRM (Digital Radio Mondiale), mit der EasyPal und QSSTV ein Bild als komprimierte Datei über einen Sprachkanal senden. Ein Bild kommt entweder vollständig und sauber an oder gar nicht.</dd>
           <dt id="glossary-dsp">DSP</dt><dd>Digitale Signalverarbeitung.</dd>
           <dt id="glossary-fir">FIR</dt><dd>Finite Impulse Response (endliche Impulsantwort); eines der beiden gängigen digitalen Filterkonzepte (siehe auch IIR). Ein FIR-Filter ist immer stabil, benötigt für dieselbe Flankensteilheit aber mehr Rechenaufwand.</dd>
           <dt id="glossary-fsk-id">FSK ID</dt><dd>Per Frequenzumtastung (FSK) gesendete Stationskennung, die als FSK-ID rund um eine SSTV-Aussendung übertragen wird.</dd>
@@ -1060,7 +1060,7 @@
           <dt id="glossary-nr">NR</dt><dd>Eine Serien- bzw. Referenznummer; hier das optionale numerische Teilpaket, das die FSK-Kennung zusätzlich zum Rufzeichen mitführen kann.</dd>
           <dt id="glossary-pll">PLL</dt><dd>Phasenregelschleife (Phase-Locked Loop); eine der Demodulatormethoden, mit denen Scanline Studio den eingehenden Bildton verfolgen und daraus die Helligkeit zurückgewinnen kann.</dd>
           <dt id="glossary-ppm">PPM</dt><dd>Parts per million (Millionstel); hier ein kleiner Fehler des Audio-Taktes, der zu schrägen Bildern führen kann.</dd>
-          <dt id="glossary-papr">PAPR</dt><dd>Peak-to-Average Power Ratio (Spitzen-Mittelwert-Verhältnis); wie weit die Spitzen eines Signals über seiner mittleren Leistung liegen. Bei DRM ist es hoch, daher erreichen die Spitzen die volle Leistung lange vor dem Mittelwert.</dd>
+          <dt id="glossary-papr">PAPR</dt><dd>Peak-to-Average Power Ratio (Spitzen-Mittelwert-Verhältnis); wie weit die Spitzen eines Signals über seiner mittleren Leistung liegen. Bei HamDRM ist es hoch, daher erreichen die Spitzen die volle Leistung lange vor dem Mittelwert.</dd>
           <dt id="glossary-ptt">PTT</dt><dd>Push to talk (Sendetaste); die Steuerung, die den Sender tastet.</dd>
           <dt id="glossary-qso">QSO</dt><dd>Eine Funkverbindung zwischen Stationen.</dd>
           <dt id="glossary-qsl">QSL</dt><dd>Bestätigung einer Funkverbindung; häufig in Form einer gestalteten Karte oder eines SSTV-Bildes.</dd>
