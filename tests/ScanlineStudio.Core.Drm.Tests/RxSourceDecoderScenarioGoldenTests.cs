@@ -77,15 +77,26 @@ public sealed class RxSourceDecoderScenarioGoldenTests(ITestOutputHelper output)
         output.WriteLine($"{scenario}: {run.Rows.Count} frames, {run.Files.Count} file(s), {run.Bsr.Count} bsr, {run.Decoder.TransportBlocks.Count} block(s)");
     }
 
-    /// <summary>The production decoder (RS size byte unsigned) on the same scenarios: only RS files with a surplus of
-    /// 128 or more change, to the transmitted size.</summary>
+    /// <summary>The production decoder on the same scenarios: only RS files with a surplus of 128 or more change, to the
+    /// transmitted size, and ppi_wrap's file that QSSTV loses to the 8-bit PPI count is received (P6b-1).</summary>
     [Theory]
     [MemberData(nameof(Scenarios))]
-    public void ProductionDecoder_FixesOnlyTheSignedSizeByte(string scenario)
+    public void ProductionDecoder_FixesOnlyTheSignedSizeByteAndThePpiWrap(string scenario)
     {
         string dir = Path.Combine("rx_srcdec", scenario);
         Run legacy = Execute(dir, legacy: true);
         Run prod = Execute(dir, legacy: false);
+        if (scenario == "ppi_wrap")
+        {
+            // make_rx_srcdec.py ppi_scenario: wrap.txt = (test.txt × 3)[:571], last group 279 bytes (count byte 23).
+            byte[] base3 = [.. Enumerable.Repeat(File.ReadAllBytes(Path.Combine(GoldenFixtures.GoldenDir, "inputs", "test.txt")), 3).SelectMany(b => b)];
+            Assert.Equal(["ok.txt"], legacy.Files.Select(f => f.QsstvFileName));
+            Assert.Equal(["wrap.txt", "ok.txt"], prod.Files.Select(f => f.QsstvFileName));
+            Assert.Equal(base3[..571], prod.Files[0].Data.ToArray());
+            Assert.Equal(legacy.Files[0].Data.ToArray(), prod.Files[1].Data.ToArray());
+            return;
+        }
+
         Assert.Equal(legacy.Rows, prod.Rows);
         Assert.Equal(legacy.Events, prod.Events);
         Assert.Equal(legacy.Files.Count, prod.Files.Count);
@@ -173,7 +184,7 @@ public sealed class RxSourceDecoderScenarioGoldenTests(ITestOutputHelper output)
             SpectrumOccupancyNew = c.GetProperty("spectrum_occupancy_new").GetInt32(),
         };
         int rm = c.GetProperty("robustness_mode").GetInt32();
-        var decoder = new DrmSourceDecoder { ReproduceQsstvSignedSurplus = legacy, RsAttemptProbe = rsProbe };
+        var decoder = new DrmSourceDecoder { ReproduceQsstvSignedSurplus = legacy, ReproduceQsstvPpiWrap = legacy, RsAttemptProbe = rsProbe };
         decoder.Init();
         var events = new List<string>();
         var files = new List<DrmReceivedFile>();

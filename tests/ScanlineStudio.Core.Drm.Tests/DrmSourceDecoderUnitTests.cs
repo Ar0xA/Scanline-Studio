@@ -479,34 +479,39 @@ public sealed class DrmSourceDecoderUnitTests(Xunit.Abstractions.ITestOutputHelp
     }
 
     /// <summary>The PPI answer: QSSTV RX trusts the 8-bit count. With 310-byte packets (mode A, SO 1, 64-QAM, low),
-    /// a file whose last data group is 256..309 bytes never completes, also with our wire-identical TX.</summary>
+    /// a file whose last data group is 256..309 bytes never completes in QSSTV, also with our wire-identical TX. Our
+    /// decoder re-reads the wrapped count (P6b-1) and completes every case.</summary>
     [Theory]
     [InlineData(299 + 200, true)]
     [InlineData(299 + 260, false)]
     [InlineData(299 + 244, true)]
     [InlineData(299 + 245, false)]
     [InlineData(299 + 298, false)]
-    public void PpiCountWrap_LosesTheLastSegment(int size, bool received)
+    public void PpiCountWrap_QsstvLosesTheLastSegment_OurDecoderDoesNot(int size, bool receivedByQsstv)
     {
         var settings = new DrmTxSettings(RobustnessMode.A, SpectrumOccupancy.So1, DrmQam.Qam64, DrmProtection.Low, DrmInterleave.Long, DrmReedSolomon.None, "PA0TST");
         byte[] payload = Text(size);
         var gen = new DrmSourceFrameGenerator(DrmTxObject.ForFile(payload, new DrmTxFileName("p.txt"), DrmReedSolomon.None), settings, new BsrTransportIdCounter());
         Assert.Equal(310, gen.PacketLength);
-        var (d, files) = NewDecoder();
-        var f = new FakeMscFrame { MscModeNew = 0, PlPartB = 1 };
-        foreach (DrmSourceFrame frame in gen.Frames())
+        List<byte[]> packets = [.. gen.Frames().SelectMany(frame => frame.Packets)];
+
+        foreach (bool qsstv in new[] { true, false })
         {
-            foreach (byte[] p in frame.Packets)
+            var d = new DrmSourceDecoder { ReproduceQsstvPpiWrap = qsstv };
+            var files = new List<DrmReceivedFile>();
+            d.FileReceived += files.Add;
+            var f = new FakeMscFrame { MscModeNew = 0, PlPartB = 1 };
+            foreach (byte[] p in packets)
             {
                 f.Load(p, gen.NumDecodedBitsMsc);
                 d.Decode(f, 0);
             }
-        }
 
-        if (received)
-            Assert.Equal(payload, Assert.Single(files).Data.ToArray());
-        else
-            Assert.Empty(files);
+            if (receivedByQsstv || !qsstv)
+                Assert.Equal(payload, Assert.Single(files).Data.ToArray());
+            else
+                Assert.Empty(files);
+        }
     }
 
     [Fact]
@@ -582,6 +587,100 @@ public sealed class DrmSourceDecoderUnitTests(Xunit.Abstractions.ITestOutputHelp
         string unique = DrmReceivedFileNames.MakeUnique(longName, n => n == longName);
         Assert.True(unique.Length <= DrmReceivedFileNames.MaxLength);
         Assert.EndsWith(" (1).txt", unique, StringComparison.Ordinal);
+    }
+
+    // ---- P6b-1: wrapped PPI count retry guards ---------------------------------------------------------------------
+
+    private const int WidePacket = 285;
+
+    /// <summary>A single PPI last packet of <see cref="WidePacket"/> bytes: header, count byte, the group's first bytes,
+    /// random padding, packet CRC.</summary>
+    private static byte[] PpiPacket(byte[] group, int countByte)
+    {
+        var body = new byte[WidePacket - 2];
+        new Random(5).NextBytes(body);
+        body[0] = 0xC8;
+        body[1] = (byte)countByte;
+        group.AsSpan(0, Math.Min(group.Length, body.Length - 2)).CopyTo(body.AsSpan(2));
+        return WithCrc(body);
+    }
+
+    private static byte[] BodyGroup(int dataBytes, int sizeField, bool crcFlag)
+    {
+        byte[] data = Text(dataBytes);
+        byte[] g = [(byte)((crcFlag ? 0x70 : 0x30) | 4), 0, 0x80, 0, 0x12, 0x01, 0x23, (byte)(sizeField >> 8), (byte)sizeField, .. data];
+        return crcFlag ? WithCrc(g) : g;
+    }
+
+    private static DrmSourceDecoder DecodeOne(byte[] packet, bool qsstv)
+    {
+        var d = new DrmSourceDecoder { ReproduceQsstvPpiWrap = qsstv };
+        var f = new FakeMscFrame();
+        f.Load(packet, WidePacket * 8);
+        d.Decode(f, 0);
+        return d;
+    }
+
+    private static (DrmMscStatus, int, int, ushort) State(DrmSourceDecoder d) =>
+        (d.MscValid, d.CurrentDataGroup.DataGroupType, d.CurrentDataGroup.Lenght, d.CurrentDataGroup.SegmentSize);
+
+    [Fact]
+    public void PpiRetry_AWrappedGroupWithMatchingSize_IsAccepted()
+    {
+        byte[] group = BodyGroup(265, 265, crcFlag: true);
+        Assert.Equal(276, group.Length);
+        byte[] packet = PpiPacket(group, 276 - 256);
+
+        DrmSourceDecoder d = DecodeOne(packet, qsstv: false);
+
+        Assert.Equal((4, 265, (ushort)265), (d.CurrentDataGroup.DataGroupType, d.CurrentDataGroup.Lenght, d.CurrentDataGroup.SegmentSize));
+        Assert.Equal(DrmMscStatus.Invalid, DecodeOne(packet, qsstv: true).MscValid);
+    }
+
+    [Fact]
+    public void PpiRetry_ACrcValidCandidateWithAWrongSize_IsRejected_AndTheFirstReadingStands()
+    {
+        byte[] packet = PpiPacket(BodyGroup(265, 264, crcFlag: true), 276 - 256);
+
+        Assert.Equal(State(DecodeOne(packet, qsstv: true)), State(DecodeOne(packet, qsstv: false)));
+    }
+
+    [Fact]
+    public void PpiRetry_AGroupWithoutTheCrcFlag_IsNeverReplaced()
+    {
+        byte[] group = BodyGroup(11, 11, crcFlag: false);
+        byte[] packet = PpiPacket(group, group.Length);
+
+        DrmSourceDecoder fixedDecoder = DecodeOne(packet, qsstv: false);
+
+        Assert.Equal(State(DecodeOne(packet, qsstv: true)), State(fixedDecoder));
+        Assert.Equal(11, fixedDecoder.CurrentDataGroup.Lenght);
+    }
+
+    [Fact]
+    public void PpiRetry_ARejectedRetry_LeavesTheHoldingBufferAsQsstvDoes()
+    {
+        // A non-first last packet after the rejected one appends to the same holding buffer in both decoders.
+        byte[] first = PpiPacket(BodyGroup(265, 264, crcFlag: true), 276 - 256);
+        var next = new byte[WidePacket - 2];
+        new Random(6).NextBytes(next);
+        next[0] = 0x49;
+        next[1] = 40;
+        byte[] second = WithCrc(next);
+
+        int Run(bool qsstv)
+        {
+            var d = new DrmSourceDecoder { ReproduceQsstvPpiWrap = qsstv };
+            var f = new FakeMscFrame();
+            f.Load(first, WidePacket * 8);
+            d.Decode(f, 0);
+            f.Load(second, WidePacket * 8);
+            d.Decode(f, 0);
+            return d.HoldingLength;
+        }
+
+        Assert.Equal(20 + 40, Run(qsstv: true));
+        Assert.Equal(20 + 40, Run(qsstv: false));
     }
 
     // ---- helpers --------------------------------------------------------------------------------------------------

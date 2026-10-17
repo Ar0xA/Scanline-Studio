@@ -382,7 +382,9 @@ real QSSTV/EasyPal WAVs for P8.
   channel estimation/tracking/cells with own LU (7ff248e0). Goldens on all 79 cases; CPU ≤ 0.6 % of one core mean.
 - **DRM-P6.** DONE — RX channel decoding, exact QSSTV port (FAC, mkmscmap, deinterleave, MSD + Viterbi,
   de-dispersal); all 79 cases + noisy rx_chdec goldens exact. Seam for P7a: `IDrmMscSink`.
-- **DRM-P6b.** OPEN — RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
+- **DRM-P6b.** OPEN, STARTED 2026-10-17 — plan `~/.claude/plans/drm-p6b-rx-improvements.md` (harness first, then one fix per
+  sub-phase, then the Options/help/docs step). P6b-1 PPI wrap DONE 2026-10-17 (always on, recorded in
+  docs/improving-on-legacy.md). Next: P6b-0 harness numbers, then P6b-2. RX improvements over QSSTV (user direction: compatible, but don't copy RX weaknesses). After an
   exact port + goldens: decode the last frame (QSSTV always loses it), fix the knife-edge sync drop (B0_q4_high_long),
   E0_q64_low_short first-frame bit errors, PPI 8-bit byte-count wrap (files with a last packet ≥ 256 bytes never
   complete, QSSTV→QSSTV too), stale code rates on a PL-only change, enough_frames on short→long interleave, type mask

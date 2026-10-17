@@ -27,11 +27,22 @@ public sealed class DrmReceiver : IDrmReceiver
     /// <summary>A receiver at <paramref name="captureRate"/>.</summary>
     /// <exception cref="ArgumentOutOfRangeException">The rate is not supported.</exception>
     public DrmReceiver(int captureRate, ILoggerFactory? loggerFactory = null)
+        : this(captureRate, DrmRxOptions.Default, loggerFactory)
     {
+    }
+
+    /// <summary>A receiver with explicit behaviour switches (baselines and measurements).</summary>
+    internal DrmReceiver(int captureRate, DrmRxOptions options, ILoggerFactory? loggerFactory = null)
+    {
+        ArgumentNullException.ThrowIfNull(options);
         loggerFactory ??= NullLoggerFactory.Instance;
         _frontEnd = new DrmRxFrontEnd(captureRate);
         _channelDecoder = new DrmChannelDecoder();
-        _sourceDecoder = new DrmSourceDecoder(loggerFactory.CreateLogger<DrmSourceDecoder>());
+        _sourceDecoder = new DrmSourceDecoder(loggerFactory.CreateLogger<DrmSourceDecoder>())
+        {
+            ReproduceQsstvPpiWrap = options.ReproduceQsstvPpiWrap,
+            ReproduceQsstvSignedSurplus = options.ReproduceQsstvSignedSurplus,
+        };
         _demodulator = new DrmDemodulator(new DrmRxFrameStage(new DrmChannelEstimator(), _channelDecoder, _sourceDecoder));
         _onStripe = OnStripe;
         _sourceDecoder.FileReceived += f => FileReceived?.Invoke(f);

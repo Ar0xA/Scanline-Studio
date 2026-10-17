@@ -75,7 +75,7 @@ internal static class RxGoldenRun
         };
         estimator.Tracker.ForceRunnerUpAtCalls = forcedCalls.Count > 0 ? forcedCalls : null;
         var decoder = new DrmChannelDecoder();
-        var legacy = new SourceRecorder(new DrmSourceDecoder { ReproduceQsstvSignedSurplus = true });
+        var legacy = new SourceRecorder(new DrmSourceDecoder { ReproduceQsstvSignedSurplus = true, ReproduceQsstvPpiWrap = true });
         var fixedSource = new SourceRecorder(new DrmSourceDecoder());
         var stage = new CountingStage(new DrmRxFrameStage(estimator, decoder, new TeeSink(legacy.Decoder, fixedSource.Decoder)));
         var demod = new DrmDemodulator(stage);

@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using ScanlineStudio.Abstractions.Drm;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -153,7 +154,9 @@ internal sealed class DrmDataGroup
 /// 3 bytes (QSSTV's <c>len-3</c> wraps, :140) is dropped as invalid; a data group growing past
 /// <see cref="MaxDataGroupBytes"/> is dropped and continuity reset (QSSTV appends without bound); reads past a short
 /// data group give 0 (<see cref="DrmDataGroup.At"/>); a body over <see cref="MaxBodyBytes"/> is not reassembled;
-/// the RS size byte is read unsigned (<see cref="RsFileDecoder"/>); names are reported unsanitized as
+/// the RS size byte is read unsigned (<see cref="RsFileDecoder"/>); a last PPI packet whose 8-bit useful-byte count
+/// wrapped on the TX side (:133-137) is re-read with count + 256 when that gives a CRC-verified group of the right size
+/// (<see cref="RetryWrappedPpiCount"/>); names are reported unsanitized as
 /// <see cref="DrmReceivedFile.QsstvFileName"/> and sanitized as <see cref="DrmReceivedFile.FileName"/>, so a name with
 /// a path is saved under its last component where QSSTV writes into (or fails to open) a subdirectory; Core assumes the
 /// consumer's store succeeds, where QSSTV leaves a file unsaved when <c>QFile::open</c> fails (:697-701), except for
@@ -166,8 +169,7 @@ internal sealed class DrmDataGroup
 /// <c>getBSR</c> (:710-791, P9), and QSSTV's debug logging.</para>
 /// <para><b>QSSTV quirks kept</b> (P6b candidates): the data-group type mask is 3 bits (:234), so types 11 and 12 alias
 /// to MOT header/body; a PLI-3 MOT parameter takes its length from the parameter byte itself, whose top bit is always set
-/// (:361-374), so it swallows the rest of the header; the PPI byte count is trusted as sent (:133-137), so a last
-/// packet with 256 or more useful bytes, whose count wraps on the TX side, loses its data group.</para>
+/// (:361-374), so it swallows the rest of the header.</para>
 /// <para>Not thread-safe: one instance per receive worker.</para>
 /// </remarks>
 internal sealed partial class DrmSourceDecoder : IDrmMscSink
@@ -219,6 +221,9 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
     /// <summary>Test-only: read the RS surplus byte as x86 QSSTV does (signed), to compare with its saved files.</summary>
     internal bool ReproduceQsstvSignedSurplus { get; init; }
 
+    /// <summary>Baseline only: when set, a wrapped PPI byte count is trusted as QSSTV does (no 256 retry).</summary>
+    internal bool ReproduceQsstvPpiWrap { get; init; }
+
     /// <summary>Test-only: when set, every RS attempt also runs the full decode and reports (early check passed, decode succeeded).</summary>
     internal Action<bool, bool>? RsAttemptProbe { get; init; }
 
@@ -242,6 +247,9 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
 
     /// <summary><c>currentDataPacket</c>.</summary>
     public DrmDataGroup CurrentDataGroup { get; } = new();
+
+    /// <summary>Bytes of the data group being reassembled, for tests.</summary>
+    internal int HoldingLength => _holdingLength;
 
     /// <summary><c>transportBlockPtrList</c>, oldest first.</summary>
     public IReadOnlyList<DrmTransportBlock> TransportBlocks => _transportBlocks;
@@ -343,11 +351,76 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
             return false;
         }
 
-        if (_holdingLength + available > _holding.Length)
-            Array.Resize(ref _holding, Math.Max(_holding.Length * 2, _holdingLength + available));
-        _packetBuffer.AsSpan(start, available).CopyTo(_holding.AsSpan(_holdingLength));
-        _holdingLength += available;
-        return last && SetupDataPacket();
+        int before = _holdingLength;
+        AppendToHolding(start, available);
+        if (!last)
+            return false;
+
+        bool ok = SetupDataPacket();
+        if (ppi && !ReproduceQsstvPpiWrap && !(ok && CurrentDataGroup.CrcFlag) && available + 256 <= len - 4)
+            ok = RetryWrappedPpiCount(before, available, ok);
+        return ok;
+    }
+
+    private void AppendToHolding(int start, int count)
+    {
+        if (_holdingLength + count > _holding.Length)
+            Array.Resize(ref _holding, Math.Max(_holding.Length * 2, _holdingLength + count));
+        _packetBuffer.AsSpan(start, count).CopyTo(_holding.AsSpan(_holdingLength));
+        _holdingLength += count;
+    }
+
+    /// <summary>QSSTV TX writes the PPI useful-byte count in 8 bits (DataDecoder.cpp:101-102), so a last packet with
+    /// 256+ useful bytes (only packets of 260+ bytes have room: A/64-QAM/low and A/SO1/64-QAM/high) arrives with
+    /// count − 256 and QSSTV drops the group. Re-reads the packet with count + 256 and keeps that only if the group CRC passes and the segment size matches, both checked
+    /// before any state changes; otherwise the first reading stands. <paramref name="firstResult"/> is its result.</summary>
+    private bool RetryWrappedPpiCount(int before, int count, bool firstResult)
+    {
+        int wrapped = count + 256;
+        if (before + wrapped > MaxDataGroupBytes)
+            return firstResult;
+
+        int firstLength = _holdingLength;
+        _holdingLength = before;
+        AppendToHolding(2, wrapped);
+        if (!IsVerifiedGroupWithMatchingSize(_holding.AsSpan(0, _holdingLength)))
+        {
+            _holdingLength = before;
+            AppendToHolding(2, count);
+            Debug.Assert(_holdingLength == firstLength);
+            return firstResult;
+        }
+
+        bool ok = SetupDataPacket();
+        Debug.Assert(ok);
+        Log.PpiCountUnwrapped(_logger, count, wrapped);
+        return ok;
+    }
+
+    /// <summary>The checks <see cref="SetupDataPacket"/> would make, without its side effects: CRC flag set, CRC passes,
+    /// and the segment size field equals the bytes that follow it.</summary>
+    private static bool IsVerifiedGroupWithMatchingSize(ReadOnlySpan<byte> group)
+    {
+        if (group.Length < 4 || (group[0] & 0x40) == 0 || RxCrc.Crc16Bytewise(group) != 0)
+            return false;
+
+        int end = group.Length - 2;
+        int at = 2;
+        if ((group[0] & 0x80) != 0)
+            at += 2;
+        if ((group[0] & 0x20) != 0)
+            at += 2;
+        if ((group[0] & 0x10) != 0)
+        {
+            if (at >= end)
+                return false;
+            at += 1 + (group[at] & 0x0F);
+        }
+
+        if (at + 2 > end)
+            return false;
+        int segmentSize = ((group[at] & 0x1F) * 256) + group[at + 1];
+        return segmentSize == end - (at + 2);
     }
 
     /// <summary><c>setupDataPacket</c> (sourcedecoder.cpp:217-282): the MSC data-group header.</summary>
@@ -752,6 +825,9 @@ internal sealed partial class DrmSourceDecoder : IDrmMscSink
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Debug, Message = "DRM RX: PPI byte count {Count} read as {Unwrapped} (8-bit wrap in the sender)")]
+        public static partial void PpiCountUnwrapped(ILogger logger, int count, int unwrapped);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "DRM RX: packet of {Bytes} bytes exceeds the packet buffer, dropped")]
         public static partial void PacketTooLong(ILogger logger, int bytes);
 
