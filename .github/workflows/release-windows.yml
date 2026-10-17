@@ -45,6 +45,16 @@ jobs:
       - name: Publish
         run: dotnet publish src/ScanlineStudio.Host -c Release -r ${{ matrix.rid }} /p:Platform=AnyCPU -o publish/${{ matrix.rid }}
 
+      # HamDRM pictures need OpenJPEG beside the executable; release workflows run no tests, so check it here.
+      - name: Check bundled OpenJPEG
+        shell: pwsh
+        run: |
+          $lib = "publish/${{ matrix.rid }}/openjp2.dll"
+          $src = "src/ScanlineStudio.Imaging.OpenJpeg/native/win-x64/openjp2.dll"
+          if (-not (Test-Path $lib)) { Write-Output "::error::$lib is missing"; exit 1 }
+          if (-not (Test-Path "publish/${{ matrix.rid }}/openjpeg-LICENSE.txt")) { Write-Output "::error::openjpeg-LICENSE.txt is missing"; exit 1 }
+          if ((Get-FileHash $lib -Algorithm SHA256).Hash -ne (Get-FileHash $src -Algorithm SHA256).Hash) { Write-Output "::error::$lib differs from the vendored OpenJPEG"; exit 1 }
+
       - name: Package
         shell: pwsh
         run: |

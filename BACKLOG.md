@@ -356,7 +356,8 @@ real QSSTV/EasyPal WAVs for P8.
   glibc 2.34+" on the download page (official OpenJPEG osx-arm64 minos 14.0; libscanlineaudio already needs glibc 2.34);
   (1)+(2) DONE on Linux 2026-10-17: published linux-x64 has `libopenjp2.so.7` beside the exe, log "OpenJPEG 2.5.4
   loaded from '/tmp/p7b-pub/libopenjp2.so.7'"; download card states glibc 2.34+ and macOS 14+ (website/index.html,
-  ships when the branch merges). Windows/macOS (1) at their release builds. (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
+  ships when the branch merges). Windows/macOS (1): the release workflows now fail the build if OpenJPEG is missing or differs from the
+  vendored binary (step "Check bundled OpenJPEG"); first real run is the next release. (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
   far; AU/NZ nets use EasyPal. Include BSR in EasyPal mode once P9 ships.
 - **DRM-P4b.** DONE — TX UI: "DRM (EasyPal)" target in the TX mode list (TargetGeometry refactor of the editor,
   SSTV unchanged), DRM block (profile, size, file size, live airtime estimate while editing, on-air callsign), Options ›
