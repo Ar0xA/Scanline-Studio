@@ -236,14 +236,15 @@ public sealed partial class TxImageEditorPaneViewModel
     /// Illustrator/Inkscape/Sketch's own convention instead). Reuses <see cref="InsertClonedSnapshot"/>
     /// wholesale (its harmless +0.02 seed offset is immediately overridden by the drag that follows).
     /// <see cref="InsertClonedSnapshot"/>'s own <see cref="PushUndoSnapshot"/> call resets
-    /// <see cref="_pendingCoalesceProperty"/> to null -- re-arming it here to the SAME
-    /// <c>"OverlayGeometry"</c> key the immediately-following drag's first move will target means
-    /// <see cref="PushUndoSnapshotCoalesced"/> sees it already pending and no-ops, so one Ctrl-drag
-    /// gesture produces exactly one undo step (the clone-insert), not two.</summary>
+    /// <see cref="_pendingCoalesceProperty"/> to null; re-arming it to the <c>"OverlayGeometry"</c> key
+    /// folds a move that arrives before the UI thread goes idle into the clone-insert step. In practice
+    /// the first move comes after the idle clear, so a Ctrl-drag is usually two undo steps (move, then
+    /// the clone), the same as a plain drag that pauses; Esc (<c>CancelActiveDrag</c>, one Undo) then
+    /// puts the clone back at its start and one more Undo removes it.</summary>
     public ITemplateElementViewModel DuplicateElementForDrag(ITemplateElementViewModel element)
     {
         var clone = InsertClonedSnapshot(element.ToSnapshot());
-        _pendingCoalesceProperty = "OverlayGeometry";
+        ArmCoalescing("OverlayGeometry");
         return clone;
     }
 

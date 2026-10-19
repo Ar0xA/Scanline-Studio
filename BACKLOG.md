@@ -131,13 +131,6 @@ enforce `spec/13-testing.md`'s stated 80%. Decide: raise the floor, or change th
 and `RadioSessionService.cs:75-81` and `:280-286`, with two different error strings for one condition.
 About 15 lines. Do it when already in those files.
 
-### UX-COALESCE. OPEN — overlay edits after a Ctrl-drag duplicate are not undoable
-
-`DuplicateElementForDrag` sets the `"OverlayGeometry"` coalesce marker (`TxImageEditorPaneViewModel.cs`
-about `:5446`) and nothing posts a clear for it. Later overlay drags or X/Y edits then push no undo step:
-they cannot be undone, and they read clean after a save, so "New Template" can discard them without a
-confirm. Found by `yoniq-auditor` 2026-09-22, not reproduced in a test yet.
-
 ### SENTFRAMES-THUMB. OPEN, minor — TX-tab sent-frames thumbnails are not disposed on trim
 
 `TxControlsPaneViewModel.RecordSentFrame` (~:2197-2200) trims `SentFrames` without disposing the evicted
@@ -645,6 +638,11 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **UX-COALESCE.** DONE 2026-10-19 — a Ctrl-drag duplicate armed the "OverlayGeometry" undo-coalesce marker
+  without its idle clear, so later element moves/edits were not undoable and did not count as unsaved. New
+  `ArmCoalescing` pairs the marker with the clear at every site. User-accepted side effect: a Ctrl-drag is usually two
+  undo steps, so Esc puts the clone back at its start and one more Ctrl+Z removes it. One new test, mutation-proven.
+  Auditor: 1 plan review + 1 code review, go.
 - **CQ-06-F3.** DONE 2026-10-19 — a Configurations prompt/confirm dialog that fails to open is now a cancel:
   logged, the action's failure text shown, nothing written. `InvokeConfigurationActionAsync` (async-void menu click)
   is fully guarded, including the refresh after the action. The Log QSO, Gallery re-decode (now awaits `ExecuteAsync`,

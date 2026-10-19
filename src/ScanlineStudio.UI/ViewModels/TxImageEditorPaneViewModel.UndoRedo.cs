@@ -185,6 +185,23 @@ public sealed partial class TxImageEditorPaneViewModel
         ReadyRack.SetCanvasDirty(IsDirtySinceLastCheckpoint);
     }
 
+    /// <summary>Marks <paramref name="propertyName"/> as mid-burst and posts the Background-priority clear
+    /// that ends the burst once the UI thread goes idle. Every arming site must use this: a marker armed
+    /// without its clear stays set, and every later change to that property is silently not undoable.</summary>
+    private void ArmCoalescing(string propertyName)
+    {
+        _pendingCoalesceProperty = propertyName;
+        Dispatcher.UIThread.Post(
+            () =>
+            {
+                if (_pendingCoalesceProperty == propertyName)
+                {
+                    _pendingCoalesceProperty = null;
+                }
+            },
+            DispatcherPriority.Background);
+    }
+
     /// <summary>Same contract as <see cref="PushUndoSnapshot"/>, but coalesces a rapid BURST of
     /// changes to the SAME property into one undo step -- round-1 plan-review finding: sliders
     /// fire <c>Value</c> changes continuously while dragging (many times per second), and TextBoxes
@@ -221,16 +238,7 @@ public sealed partial class TxImageEditorPaneViewModel
         }
 
         _redoStack.Clear();
-        _pendingCoalesceProperty = propertyName;
-        Dispatcher.UIThread.Post(
-            () =>
-            {
-                if (_pendingCoalesceProperty == propertyName)
-                {
-                    _pendingCoalesceProperty = null;
-                }
-            },
-            DispatcherPriority.Background);
+        ArmCoalescing(propertyName);
         UndoCommand.NotifyCanExecuteChanged();
         RedoCommand.NotifyCanExecuteChanged();
         RevertCommand.NotifyCanExecuteChanged();

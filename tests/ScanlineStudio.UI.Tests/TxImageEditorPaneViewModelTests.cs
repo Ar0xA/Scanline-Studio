@@ -6355,14 +6355,37 @@ public sealed class TxImageEditorPaneViewModelTests
         Assert.NotSame(original, clone);
         Assert.Same(clone, vm.SelectedOverlayElement);
 
-        // Simulates the immediately-following Overlay drag's first move (OnCanvasPointerMoved's own
-        // `element.X += dxNormalized`) -- must NOT push a second undo step, or one Ctrl-drag gesture
-        // would need two Undo clicks to fully revert.
+        // A move that arrives before the UI thread goes idle (no RunJobs here) folds into the clone-insert step.
         clone.X += 0.05;
         clone.Y += 0.05;
 
         vm.UndoCommand.Execute(null);
         Assert.Single(vm.OverlayElements); // one Undo removed the clone entirely, not just its position
+    }
+
+    [AvaloniaFact]
+    public async Task DuplicateElementForDrag_AfterTheUiGoesIdle_LaterGeometryEditsAreUndoableAndDirty()
+    {
+        var templateStore = new FakeTemplateStore();
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), templateStore, new FakeImageSourceWriter(), CreateReadyRack(templateStore));
+        vm.AddOverlayElementCommand.Execute(null);
+        var original = (OverlayElementViewModel)vm.OverlayElements[0];
+        var clone = (OverlayElementViewModel)vm.DuplicateElementForDrag(original);
+        Dispatcher.UIThread.RunJobs(); // the idle clear that a real gesture almost always gets
+
+        vm.NewTemplateName = "After Duplicate";
+        await vm.SaveTemplateCommand.ExecuteAsync(null);
+        Assert.False(vm.IsDirtySinceLastCheckpoint);
+        var xBefore = clone.X;
+
+        clone.X = xBefore + 0.1;
+
+        Assert.True(vm.IsDirtySinceLastCheckpoint, "a geometry edit after a Ctrl-drag duplicate must count as unsaved work");
+        vm.UndoCommand.Execute(null);
+        Assert.Equal(2, vm.OverlayElements.Count);
+        Assert.Equal(xBefore, ((OverlayElementViewModel)vm.OverlayElements[1]).X, 6);
+        vm.UndoCommand.Execute(null);
+        Assert.Single(vm.OverlayElements);
     }
 
     [AvaloniaFact]
