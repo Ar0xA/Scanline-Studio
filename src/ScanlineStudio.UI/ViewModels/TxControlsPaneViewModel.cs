@@ -1875,6 +1875,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         var originalSource = oldEditor.CurrentSource;
         var operatorSettings = oldEditor.OperatorSettings;
         var hadUnsavedEdits = oldEditor.HasUnsavedEdits;
+        var wasDirtySinceCheckpoint = oldEditor.IsDirtySinceLastCheckpoint;
         var wasBlank = _currentEditorIsBlank;
         // Non-null forgiveness is safe: every path that leaves _currentEditor non-null also sets
         // _currentEditorFileName (OpenEditorWithLoadedSourceAsync's own fileName parameter is
@@ -1898,7 +1899,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 canTransmitNow: CanTransmitNowForEditor,
                 macrosReferenceRequested: () => RequestMacrosReference?.Invoke(),
                 carriedOverUnsavedEdits: hadUnsavedEdits,
-                transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText));
+                transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText),
+                carriedOverDirtySinceCheckpoint: wasDirtySinceCheckpoint);
             editor.Applied += final => OnEditorApplied(fileName, editor, final);
             editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
             editor.Cancelled += OnEditorCancelled;

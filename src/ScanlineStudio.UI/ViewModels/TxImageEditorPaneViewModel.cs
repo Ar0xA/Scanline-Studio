@@ -73,8 +73,8 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
     /// <summary>See <see cref="HasUnsavedEdits"/>'s own doc comment.</summary>
     private readonly bool _carriedOverUnsavedEdits;
     /// <summary>yoniq-auditor finding (2026-09-19, Blocker 1): a SEPARATE, mutable field from
-    /// <see cref="_carriedOverUnsavedEdits"/> -- seeded from the same constructor parameter, but
-    /// deliberately NOT the same field, because <see cref="_carriedOverUnsavedEdits"/> is
+    /// <see cref="_carriedOverUnsavedEdits"/>, seeded from its own constructor parameter (the old editor's
+    /// <see cref="IsDirtySinceLastCheckpoint"/>, not its <see cref="HasUnsavedEdits"/>), because <see cref="_carriedOverUnsavedEdits"/> is
     /// <see langword="readonly"/> and backs <see cref="HasUnsavedEdits"/>, which has its own 3
     /// legitimate production consumers that must keep reading "this editor started from a mode switch
     /// with real prior work" for its whole lifetime. <see cref="IsDirtySinceLastCheckpoint"/> needs the
@@ -429,12 +429,14 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         Action? macrosReferenceRequested = null,
         Func<IReadOnlyDictionary<string, string>?>? currentContactProvider = null,
         bool carriedOverUnsavedEdits = false,
-        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null)
+        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null,
+        bool carriedOverDirtySinceCheckpoint = false)
         : this(
             originalSource, targetMode.ToGeometry(), preparer, macroTextResolver, operatorSettings, radioSessionService,
             localization, logger, filePickerService, imageFileLoader, receivedImageBuffer, receiveHistoryStore,
             templateStore, imageSourceWriter, readyRack, initialState, canTransmitNow, currentContactVariables,
-            macrosReferenceRequested, currentContactProvider, carriedOverUnsavedEdits, transmitStatusNow)
+            macrosReferenceRequested, currentContactProvider, carriedOverUnsavedEdits, transmitStatusNow,
+            carriedOverDirtySinceCheckpoint)
     {
     }
 
@@ -489,14 +491,16 @@ public sealed partial class TxImageEditorPaneViewModel : ViewModelBase, IDisposa
         // the 2 real production call sites pass a real delegate. One snapshot delegate rather than
         // 3 separate ones since IsTransmitting/TransmitProgress/TransmitProgressText always change
         // together, at the same toggle points, on the parent.
-        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null)
+        Func<(bool IsTransmitting, double? Progress, string ProgressText)>? transmitStatusNow = null,
+        // Old editor's IsDirtySinceLastCheckpoint on a mode switch; a clean loaded template has undo history but nothing unsaved.
+        bool carriedOverDirtySinceCheckpoint = false)
     {
         _originalSource = originalSource;
         _sourceBaseline = originalSource;
         _sourceBaselineRotation = 0;
         _target = target;
         _carriedOverUnsavedEdits = carriedOverUnsavedEdits;
-        _carriedOverDirtySinceCheckpoint = carriedOverUnsavedEdits;
+        _carriedOverDirtySinceCheckpoint = carriedOverDirtySinceCheckpoint;
         _preparer = preparer;
         _macroTextResolver = macroTextResolver;
         _canTransmitNow = canTransmitNow ?? (static () => true);

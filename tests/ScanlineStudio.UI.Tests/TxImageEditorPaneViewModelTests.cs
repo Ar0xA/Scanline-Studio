@@ -901,8 +901,8 @@ public sealed class TxImageEditorPaneViewModelTests
         // HasUnsavedEdits's own 3 unrelated production consumers -- IsDirtySinceLastCheckpoint must
         // NOT OR that same field in, or a mode-switched editor's checkpoint would read permanently
         // dirty for its whole lifetime regardless of any later save. Constructs an editor the way
-        // ReplaceEditorForModeSwitch does (carriedOverUnsavedEdits: true) directly, since no
-        // CreateEditor overload exposes that parameter.
+        // ReplaceEditorForModeSwitch does for an edited canvas (both carried flags true) directly, since no
+        // CreateEditor overload exposes those parameters.
         var templateStore = new FakeTemplateStore();
         var readyRack = CreateReadyRack(templateStore);
         var vm = new TxImageEditorPaneViewModel(
@@ -910,7 +910,7 @@ public sealed class TxImageEditorPaneViewModelTests
             new OperatorSettings(), new FakeRadioSessionService(), new FakeLocalizationService(),
             NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeFilePickerService(), new FakeImageFileLoader(),
             new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(),
-            readyRack, carriedOverUnsavedEdits: true);
+            readyRack, carriedOverUnsavedEdits: true, carriedOverDirtySinceCheckpoint: true);
 
         Assert.True(vm.IsDirtySinceLastCheckpoint);
 

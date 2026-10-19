@@ -57,9 +57,9 @@ with nothing to catch it.
 ### PA-Two-more. OPEN — `MainWindow.axaml.cs` coverage
 
 - **a.** Scoped tests: T1-12's `DataContextChanged` re-entry guard (`MainWindow.axaml.cs:33`) plus the two
-  or three highest-traffic cross-pane wirings. A coverage task, not a fix. Do not chase all 1371 lines.
-  No test constructs `MainWindow` today.
-- **b.** Fold the 35 `logger is not null` guards in that file into a null-object logger.
+  or three highest-traffic cross-pane wirings. A coverage task, not a fix. Do not chase all ~1520 lines
+  (`Views/MainWindow.axaml.cs`). No test constructs `MainWindow` today.
+- **b.** Fold the 42 `logger is not null` guards in that file into a null-object logger.
 
 ### W. Windows-only test coverage
 
@@ -82,16 +82,17 @@ with nothing to catch it.
 - **W8-c. OPEN** — a fifth silent-pass site: `JsonSettingsStoreTests.cs:200-208`
   (`LoadAsync_UnreadableFile_ReturnsDefaultsRatherThanThrowing`) is a plain `[Fact]` with a bare
   `if (OperatingSystem.IsWindows()) return;`. Convert to `[SkipOnWindowsFact]` +
-  `[UnsupportedOSPlatform("windows")]`, like TT1-18.
+  `[UnsupportedOSPlatform("windows")]`, like TT1-18. The same pattern is also at `:240` and `:288`.
 - **W9-a. OPEN, needs a Windows run** — Hamlib's Windows DLL discovery (`HamlibLibraryLocator.cs:20`,
   `:87-89`, `:116-118`) has tests (`HamlibWindowsDiscoveryTests.cs`, 3 `[WindowsFact]`) never run on
   Windows. This decides whether CAT works at all on Windows.
 - **W9-b. OPEN** — the OmniRig row's visibility/`IsEnabled` binding (`OptionsWindowView.axaml:380`) and
   tooltip key (`OptionsWindowViewModel.cs:1281`) are unasserted. The availability flag itself is covered
   (`OptionsWindowViewModelTests.cs:2818-2820`).
-- **W9-c. OPEN** — `DirectoryPathComparer` normalization (`DirectoryPathComparer.cs:17`) on Windows:
+- **W9-c. PARTLY** — `DirectoryPathComparer` normalization (`DirectoryPathComparer.cs:17`) on Windows.
+  Case-insensitivity is tested (`WindowsDirectoryPathComparerTests.cs`, `1c3916de`). Still untested:
   drive-relative (`C:foo`), UNC, `\\?\`-prefixed and trailing-dot/space paths. These feed
-  `AppLocationsService` and `SqliteReceiveHistoryStore`. None is tested.
+  `AppLocationsService` and `SqliteReceiveHistoryStore`.
 - **W9-d. OPEN, low priority** — assert that the Windows-built shim exports everything `NativeAudio`
   P/Invokes. A missing export surfaces as `EntryPointNotFoundException` at runtime.
 - **W9-e. OPEN** — `scanline_audio_get_device_mute` (`scanline_audio.c:1497`) does its own UTF-8-to-wide
@@ -137,13 +138,6 @@ about `:5446`) and nothing posts a clear for it. Later overlay drags or X/Y edit
 they cannot be undone, and they read clean after a save, so "New Template" can discard them without a
 confirm. Found by `yoniq-auditor` 2026-09-22, not reproduced in a test yet.
 
-### UX-MODESWITCH-DIRTY. OPEN — a mode switch marks a clean loaded template dirty
-
-`ReplaceEditorForModeSwitch` seeds the new editor's carried-over dirtiness from `HasUnsavedEdits`
-(`TxControlsPaneViewModel.cs` about `:1730-1742`), which is true after any template load. So a freshly
-loaded, unedited template reads "edited" after a mode switch. Seed from `IsDirtySinceLastCheckpoint`
-instead, keeping `HasUnsavedEdits` for its own consumers. Found by `yoniq-auditor` 2026-09-22.
-
 ### PREVFRAMES-THUMB. OPEN — Receive-tab previous-frames thumbnails are never disposed
 
 `RxImagePaneViewModel.PreviousFrames` (`:2206-2227`) creates its own thumbnail bitmaps and drops the trimmed
@@ -154,12 +148,12 @@ ones without disposing them. Same leak class as the fixed Gallery thumbnails, se
 
 Measured 2026-09-22 (UX-THUMB1 probe, `GalleryDisplayCapMeasurementProbe.cs`, gated
 `SCANLINE_RUN_GALLERY_PROBE=1`): laying out the displayed set costs ~140-360 ms at 300 tiles and ~750 ms at
-1 500, one container per tile. Avalonia 11.3 has no virtualizing wrap panel; rows-of-6 in a
+1 500, one container per tile. Avalonia 11.3 had no virtualizing wrap panel (re-check on 12.1.3, now in use); rows-of-6 in a
 `VirtualizingStackPanel` breaks item-level `ListBox` behaviour (TwoWay `SelectedItem`, selected styling,
 keyboard navigation, right-click select). Candidate design (needs a UI plan-review first): an outer list of
 rows with a virtualizing panel, each row its own 6-column `ListBox` with `SelectedItem` bound OneWay to
 `SelectedEntry` and written back from `SelectionChanged`; arrow keys move within a row only; "Show older"
-moves outside the list. Also remove the outer `ScrollViewer` (`MainWindow.axaml` ~:1283-1358) first.
+moves outside the list. Also remove the outer `ScrollViewer` (`MainWindow.axaml` ~:1291) first.
 
 ### POLL. OPEN — `PollingStrategy.OnDemand` is a no-op
 
@@ -169,14 +163,10 @@ moves outside the list. Also remove the outer `ScrollViewer` (`MainWindow.axaml`
 
 ### RIG-BW. OPEN, low priority — non-atomic bandwidth read-modify-write
 
-`RigctldClientProtocol.SetBandwidthAsync` reads then writes mode+bandwidth without holding it atomic.
+`RigctldClientProtocol.SetBandwidthAsync` reads then writes mode+bandwidth. Our own client already holds one
+lock across the `m` read and `M` write (`e4730fdf`); what stays open is atomicity against other rigctld clients.
 Real but low-probability (Hamlib caches the just-set mode for 500 ms). A fix would touch 4 backends.
 Found 2026-09-19 during the "SSB as PKT" investigation.
-
-### ADIF-EXPORT. OPEN, verification only
-
-`TemplateStore.SaveAsync`'s atomic write was verified; the matching `ExportAdifFileAsync` half of that
-`production_audit.md` Tier 2 item was never re-checked. Check whether it writes atomically.
 
 ### SETTINGS-MIG. OPEN — `ISettingsMigration` chain has never run
 
@@ -201,10 +191,11 @@ safety feature.
 
 ### M3. OPEN — T1-14, cold imaging convert-in/convert-out
 
-Unmeasured. The working-copy bound (`WorkingCopyScaleFactor`, `TxImageEditorPaneViewModel.cs:235`) does
-not apply to the paths that crop and rotate the full original for final output. Measure a representative
-large source image. `TransmitImagePreparer.cs` has 10 `ToImageSharp(` call sites
-(`:87, 108, 171, 228, 260, 456, 713, 919, 1758, 1783`). The hot preview path is already fused (`a7bc5be7`).
+Unmeasured. The working-copy bound (`WorkingCopyScaleFactor`,
+`TxImageEditorPaneViewModel.SourceTransformAndPreview.cs:741`) does not apply to the paths that crop and rotate
+the full original for final output. Measure a representative large source image. The conversions now go
+through the shared `ImageSharpPixelConversion` (`f3b087dd`). The hot preview path is already fused (`a7bc5be7`)
+and has a `ComposePreview` probe (`538bbf12`); the cold path has none.
 
 ### PERF. OPEN — decoder real-time throughput is unmeasured
 
@@ -301,19 +292,20 @@ opt-in via `SCANLINE_WAYLAND=1`. Local plan (gitignored): `docs/plans/avalonia-1
   key, drag, context menu, scale 1.5 and 2, size restore/save. Alt+F/Alt+C also verified on the X11 backend
   (Xwayland) and `TxImageEditorQuickStyleFlyoutRealClickTests` is green.
 
-**Still open:**
+**Still open** (user, 2026-10-19: items 1 and 2 stay release blockers):
 1. **Windows hardware check** of the maximize workaround, `MainWindow.axaml.cs` (Avalonia#19434 block): 12 made
    `WindowState` a direct property and reworked Windows decorations. Remove only if proven unneeded. (User, other box.)
 2. **Locked-keyring prompt check (manual, Linux).** No test reaches `RunPromptAsync`. Lock the login keyring in
    Seahorse → open Options (QRZ password load prompts) → unlock. Field must fill within seconds, no
    "dismissed or timed out" log line.
 3. **Wayland known limits:** (a) weston kiosk-shell (forced fullscreen smaller than the fixed 1920×1032 size) → protocol
-   error 4; leaving Width/Height unset avoids it but floating windows then open at the 1280×640 minimum. Decision
-   pending. (b) wlroots 0.17 compositors (sway 1.9, labwc 0.7, Ubuntu 24.04) advertise xdg_wm_base v2, Avalonia needs
+   error 4. DECIDED (user, 2026-10-19): accept and document, no code change. Already in the help, en and de
+   (Troubleshooting › native Wayland). (b) wlroots 0.17 compositors (sway 1.9, labwc 0.7, Ubuntu 24.04) advertise xdg_wm_base v2, Avalonia needs
    ≥3 → documented, fails loudly. (c) `app_id` is empty on Wayland (no desktop-file/icon matching). (d) Not tested:
    file picker portal, external file drag-drop, Hyprland/GNOME/KDE, real input devices.
-4. **macOS**: skipped for the spike (user, 2026-09-26); decide before release — the manual `release-macos.yml` run
-   needs explicit user OK.
+4. **macOS**: skipped for the spike (user, 2026-09-26). Manual `release-macos.yml` runs succeeded 2026-10-01, 10-16
+   and 10-17 (run 39066615162). DECIDED (user, 2026-10-19): ship it, marked untested on a real Mac. The download text
+   says so (`website/index.html`, publishes when the branch merges to master).
 5. **Release metadata:** DONE — `Directory.Build.props` is `0.9.1-beta`.
 
 Friend test build (not a release): `0.9.1-avalonia12-test+0f63fd6`, Linux x64 tarball in local `publish/dist/`.
@@ -357,8 +349,9 @@ real QSSTV/EasyPal WAVs for P8.
   (1)+(2) DONE on Linux 2026-10-17: published linux-x64 has `libopenjp2.so.7` beside the exe, log "OpenJPEG 2.5.4
   loaded from '/tmp/p7b-pub/libopenjp2.so.7'"; download card states glibc 2.34+ and macOS 14+ (website/index.html,
   ships when the branch merges). Windows/macOS (1): the release workflows now fail the build if OpenJPEG is missing or differs from the
-  vendored binary (step "Check bundled OpenJPEG"); first real run is the next release. (3) EasyPal interop, both directions (user runs EasyPal under Wine or on Windows): only QSSTV interop is proven so
-  far; AU/NZ nets use EasyPal. Include BSR in EasyPal mode once P9 ships.
+  vendored binary (step "Check bundled OpenJPEG"); that check passed in Windows run 39066612924 and macOS run
+  39066615162 (2026-10-17). Still open for (1): the "OpenJPEG 2.5.4 loaded" log on real Windows/macOS first use.
+  (3) EasyPal interop: CLOSED by the user 2026-10-17 ("EasyPal == HamDRM"). Include BSR in EasyPal mode once P9 ships.
 - **DRM-P4b.** DONE — TX UI: "DRM (EasyPal)" target in the TX mode list (TargetGeometry refactor of the editor,
   SSTV unchanged), DRM block (profile, size, file size, live airtime estimate while editing, on-air callsign), Options ›
   Station profiles (Robust/Normal/Fast defaults) and VOX, sent-frames/resend, help en/de. Live check: QSSTV harness
@@ -405,7 +398,7 @@ real QSSTV/EasyPal WAVs for P8.
   automated). EasyPal (DRM-REL 3) CLOSED by the user 2026-10-17: "EasyPal == HamDRM" confirmed on their side.
   Real-QSSTV-app interop matrix DONE 2026-10-17: 18 configs (every mode × SO × QAM, protection/interleave/RS 0-4
   rotating), 18/18 byte-identical both directions (`~/tools/qsstv-app/matrix/results-2026-10-17.csv`). Left: real-station recordings (P8),
-  DRM-REL (1) on the macOS release build, and the first real run of the release workflows' OpenJPEG check. Windows RX
+  and DRM-REL (1) at runtime on the macOS release build (the workflows' OpenJPEG check passed 2026-10-17). Windows RX
   DONE 2026-10-17 (user, `~/tools/qsstv-app/windows-check.zip`, no QSSTV on the machine): 4 real-QSSTV WAVs (A/4/RS0,
   B/64/RS3, E/64/RS4, B/16/RS1 20 kB), all saved files SHA-256-identical to the sent ones, pictures shown, callsign correct. Release needs:
   (1) P6b closed; (2) P6b-UI receive on/off in Options + help; (3) P7b minimal RX UI (sync, segment progress,
@@ -538,9 +531,6 @@ User data, safety and error paths:
   Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
 - **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
   transaction (`LogbookPaneViewModel.cs:940`).
-  The first touch of the header slider then jumps the gain mid-TX. Fix: re-read the value in the Options
-  Closed handler (`MainWindow.axaml.cs:603`) under `_suppressVolumePersist`. A cross-thread change event
-  needs full review, a UI-thread hop, and save suppression.
 - **CQ-11-F3.** Log lines have no date (`FileLoggerProvider.cs:423`).
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
   `coverage-thresholds.json`. Related: COV.
@@ -548,9 +538,11 @@ User data, safety and error paths:
   Related: R2.
 
 Test integrity:
-- **CQ-03-F2.** Six undisposed Extended-mode decoder sites in SSTV tests leak temp files.
-- **CQ-07-F2 / F3 / F4.** Giant UI test classes, 32 reflection call sites, no shared VM builders
-  (a 15-argument constructor inline ~200 times).
+- **CQ-03-F2.** PARTLY — undisposed decoder sites in SSTV tests leak temp files. Left:
+  `RxBufferCaptureTests.cs:328` (`extendedDecoder` and `onDecoder`) and `RxBufferModeGatingTests.cs:40` (inline
+  `new AnalogFmSstvDecoder(...Extended)`).
+- **CQ-07-F2 / F3 / F4.** Giant UI test classes (10.5k / 9.5k lines), 18 reflection call sites (was 32), no shared
+  VM builders (`new OptionsWindowViewModel(` inline 211 times, `new RxImagePaneViewModel(` 155 times).
 - **CQ-08-F5.** Positive Application-test assertions follow fixed `Task.Delay`.
 - **CQ-10-F6.** Logbook tests use fixed sleeps; one IPv6 test can pass without running.
 
@@ -648,6 +640,13 @@ Listed with evidence in the area reports. Pick them up only when already working
   against real GitHub. Auditor plan review + code review: go.
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
+
+- **UX-MODESWITCH-DIRTY.** DONE 2026-10-19 — a mode switch no longer marks a clean loaded template dirty. The new
+  editor's checkpoint-relative dirtiness is seeded from the old editor's `IsDirtySinceLastCheckpoint` (new ctor param
+  `carriedOverDirtySinceCheckpoint`); `HasUnsavedEdits` still carries over for the blank-and-untouched check.
+  Two new tests in `PaneViewModelTests`, both mutation-proven. Auditor: 1 plan review + 1 code review, go.
+- **ADIF-EXPORT.** DONE (verified 2026-10-19) — `LogbookSessionService.ExportAdifFileAsync` writes a `.{guid}.tmp`
+  file and then `File.Move(..., overwrite: true)` (`LogbookSessionService.cs:145-156`, `3ff51563`).
 
 - **CQ-11-F2.** DONE — `OptionsWindowViewModel` is created by a registered `Func<>` factory
   (`ActivatorUtilities`), outside the root provider's disposal tracking; the dialog's `Closed` still disposes it, and

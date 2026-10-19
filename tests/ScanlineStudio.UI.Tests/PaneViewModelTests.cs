@@ -5580,6 +5580,7 @@ public sealed class PaneViewModelTests
         });
 
         Assert.True(reopened.HasUnsavedEdits);
+        Assert.True(reopened.IsDirtySinceLastCheckpoint);
         var confirmRequested = false;
         reopened.ConfirmRequested = _ =>
         {
@@ -5591,6 +5592,84 @@ public sealed class PaneViewModelTests
 
         Assert.True(confirmRequested, "Cancel must still ask for confirmation after a mode switch carried forward unsaved edits.");
         Assert.True(vm.IsEditorOpen, "Declining the confirm dialog must leave the (reflowed) editor open, same as any other Cancel decline.");
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeSwitchAfterCleanTemplateLoad_StaysClean_SoCancelDoesNotConfirm()
+    {
+        var (vm, modeB, editor) = await OpenBlankEditorWithLoadedTemplateAsync();
+        Assert.False(editor.IsDirtySinceLastCheckpoint);
+
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
+
+        // HasUnsavedEdits still carries over: it keeps the template from being treated as an untouched blank.
+        Assert.True(reopened.HasUnsavedEdits);
+        Assert.False(reopened.IsDirtySinceLastCheckpoint, "a mode switch is not a template change; templates store no mode.");
+        var confirmRequested = false;
+        reopened.ConfirmRequested = _ =>
+        {
+            confirmRequested = true;
+            return Task.FromResult(false);
+        };
+        await reopened.CancelCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(confirmRequested);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_ModeSwitchAfterTemplateLoadAndARealEdit_StaysDirty_SoCancelConfirms()
+    {
+        var (vm, modeB, editor) = await OpenBlankEditorWithLoadedTemplateAsync();
+        editor.AddOverlayElementCommand.Execute(null);
+        Assert.True(editor.IsDirtySinceLastCheckpoint);
+
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
+
+        Assert.True(reopened.IsDirtySinceLastCheckpoint);
+        var confirmRequested = false;
+        reopened.ConfirmRequested = _ =>
+        {
+            confirmRequested = true;
+            return Task.FromResult(false);
+        };
+        await reopened.CancelCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.True(confirmRequested);
+    }
+
+    private static async Task<(TxControlsPaneViewModel Vm, SstvModeDefinition ModeB, TxImageEditorPaneViewModel Editor)> OpenBlankEditorWithLoadedTemplateAsync()
+    {
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var templateStore = new FakeTemplateStore();
+        // One element is required: an empty canvas takes the blank-reopen path on a mode switch instead.
+        var templateId = templateStore.CreateTemplateId("A");
+        await templateStore.SaveAsync(templateId, "A", new PersistedTemplateDocument([
+            new PersistedBoxElement(0.5, 0.5, 0.2, 0.2, 0, false, new Rgb24(1, 2, 3), null, 0, 1.0),
+        ]));
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), templateStore, new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        await editor.ReadyRack.RefreshAsync();
+        var row = Assert.Single(editor.ReadyRack.AllTemplates);
+
+        editor.ReadyRack.LoadCommand.Execute(row);
+        Dispatcher.UIThread.RunJobs();
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Single(editor.OverlayElements);
+        return (vm, modeB, editor);
     }
 
     [AvaloniaFact]
