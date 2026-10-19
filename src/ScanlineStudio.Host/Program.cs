@@ -6,6 +6,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Styling;
+using Avalonia.Threading;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Abstractions.Audio;
@@ -470,6 +471,9 @@ internal static partial class Program
             return;
         }
 
+        // After SetupWithLifetime: the platform initializes the UI dispatcher there, and an earlier access
+        // could subscribe to an instance that setup then replaces.
+        host.Services.GetRequiredService<UnhandledUiExceptionHandler>().Install(Dispatcher.UIThread);
         Log.AvaloniaLifetimeStarted(logger);
 
         // IAudioEngine is IAsyncDisposable-only (no IDisposable) -- the built-in ServiceProvider's
@@ -1045,6 +1049,8 @@ internal static partial class Program
 
         services.AddSingleton<IFilePickerService, FilePickerService>();
         services.AddSingleton<IUrlLauncher, UrlLauncher>();
+        services.AddSingleton<IUnexpectedErrorNotice, UnexpectedErrorNotice>();
+        services.AddSingleton<UnhandledUiExceptionHandler>();
         services.AddSingleton<IFeedbackFormLauncher, FeedbackFormLauncher>();
         services.AddSingleton<IVersionNoticeService, VersionNoticeService>();
         services.AddSingleton<IUpdatePreferencesService, UpdatePreferencesService>();

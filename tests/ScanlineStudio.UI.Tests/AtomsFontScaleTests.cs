@@ -203,6 +203,7 @@ public sealed partial class AtomsFontScaleTests
         ["QsoLinkWindowView.axaml"] = 4,
         ["QuickSwitchFailedDialogView.axaml"] = 2,
         ["RadioConnectionGaveUpWindowView.axaml"] = 3,
+        ["UnexpectedErrorDialogView.axaml"] = 2,
         ["RadioHeaderView.axaml"] = 4,
         ["RestartRequiredDialogView.axaml"] = 2,
         ["VersionNoticeDialogView.axaml"] = 2,

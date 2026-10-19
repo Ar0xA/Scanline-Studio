@@ -522,11 +522,6 @@ User data, safety and error paths:
   (`QrzCallsignLookup.cs:170`). Enforce in the client.
 - **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
   test (`ImageFileLoader.cs:17,29`).
-- **UI-UNHANDLED.** DECISION — the app has no `Dispatcher.UIThread.UnhandledException` handler (only
-  `AppDomain.UnhandledException` logging, `Program.cs:202`), so any exception that escapes a UI event ends the app.
-  A global handler would swallow errors app-wide and leave state undefined. Two known sites in the same class:
-  `RxHistoryPaneViewModel.cs` ~:1374 (`await ConfirmRequested(...)` unguarded) and the Options "Restart Now"
-  `window.Closed += (_, _) => Close();` (`MainWindow.axaml.cs` ~:651). Found during CQ-06-F3, 2026-10-19.
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
   `coverage-thresholds.json`. Related: COV.
 - **CQ-05-F6 / CQ-06-F5.** Raw English `ex.Message` and English file-picker type names reach the UI.
@@ -636,6 +631,14 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **UI-UNHANDLED.** DONE 2026-10-19 — an exception that escaped a UI-thread job (event handler, async-void
+  continuation, posted work) ended the app. New `UnhandledUiExceptionHandler` on `Dispatcher.UIThread.UnhandledException`
+  logs it, marks it handled, and shows a non-modal "Unexpected error" notice (one open at a time, 60 s cooldown after
+  close; full stack for 20 per minute, then one line each). Worker-thread exceptions are NOT covered and still end the
+  app. Live-checked on native Wayland (headless rig): logged, app alive, main window usable behind the notice. Windows
+  and X11 input paths are inferred, not verified — do one Windows live check before release notes claim coverage.
+  Help en+de updated. 7 tests, 3 mutations caught. Auditor: 1 plan review + 1 code review, go. Open nits: wall-clock
+  cooldown (use GetTimestamp), `Handle` is public, invisible active window skips the notice.
 - **CQ-08-F6.** DONE 2026-10-19 — ADIF import froze the UI: measured 2000 QSOs = 17.4 s, and the work never left the
   UI thread (Microsoft.Data.Sqlite's async calls complete synchronously). Import now runs in `Task.Run` and inserts
   through the new `ILogbookRepository.AddRangeAsync` (one transaction; the same 2000 inserts took 17 ms in the probe).

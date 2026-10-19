@@ -1067,6 +1067,14 @@
           <li>The list only fills from stations you actually receive. It is not a directory of who is active on the band.</li>
         </ul>
 
+        <h3>An "Unexpected error" message appears</h3>
+        <ul>
+          <li>Scanline Studio caught an error in the user interface and kept running. The last action may not have finished: check its result, and try it again.</li>
+          <li>The message does not block the main window, so <strong>Stop TX</strong> and the other controls stay usable. It appears at most once per minute.</li>
+          <li>If problems continue, restart the app. Errors outside the user interface (audio, radio, background work) can still close the app.</li>
+          <li>The details are in the application log (Help → <strong>Open application log</strong>). Include that excerpt when you report the problem.</li>
+        </ul>
+
         <h3>Linux: native Wayland (experimental)</h3>
         <ul>
           <li>By default Scanline Studio runs through X11 (XWayland on a Wayland desktop). This needs no setting.</li>
