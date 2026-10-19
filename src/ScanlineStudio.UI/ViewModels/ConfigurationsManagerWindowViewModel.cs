@@ -65,10 +65,29 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
     /// same reasoning as <see cref="RequestTextPromptAsync"/>'s null-returns-cancel shape.</summary>
     public Func<ConfirmActionDialogViewModel, Task<bool>>? ConfirmRequested { get; set; }
 
-    private async Task<string?> RequestTextPromptAsync(TextPromptWindowViewModel promptVm) =>
-        TextPromptRequested is null ? null : await TextPromptRequested(promptVm).ConfigureAwait(true);
+    /// <summary>A prompt that fails to open is treated as Cancel: logged, <paramref name="failureKey"/> shown as
+    /// <see cref="ErrorMessage"/>, nothing written. The caller's command runs from an async-void menu click, so a
+    /// throw here would end the app.</summary>
+    private async Task<string?> RequestTextPromptAsync(TextPromptWindowViewModel promptVm, string failureKey)
+    {
+        if (TextPromptRequested is null)
+        {
+            return null;
+        }
 
-    private async Task<bool> RequestConfirmAsync(string title, string message)
+        try
+        {
+            return await TextPromptRequested(promptVm).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            await ReportDialogRequestFailedAsync(failureKey, ex);
+            return null;
+        }
+    }
+
+    /// <summary>Same failure contract as <see cref="RequestTextPromptAsync"/>; a failed confirm is a decline.</summary>
+    private async Task<bool> RequestConfirmAsync(string title, string message, string failureKey)
     {
         if (ConfirmRequested is null)
         {
@@ -79,7 +98,21 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
         // this dialog always showed.
         var confirmVm = new ConfirmActionDialogViewModel(
             title, message, _localization.GetString("Configurations.ConfirmYes"), _localization.GetString("Configurations.ConfirmNo"));
-        return await ConfirmRequested(confirmVm).ConfigureAwait(true);
+        try
+        {
+            return await ConfirmRequested(confirmVm).ConfigureAwait(true);
+        }
+        catch (Exception ex)
+        {
+            await ReportDialogRequestFailedAsync(failureKey, ex);
+            return false;
+        }
+    }
+
+    private async Task ReportDialogRequestFailedAsync(string failureKey, Exception ex)
+    {
+        Log.DialogRequestFailed(_logger, failureKey, ex);
+        await Dispatcher.UIThread.InvokeAsync(() => ErrorMessage = _localization.GetString(failureKey));
     }
 
     /// <summary>User-requested (2026-08-28): WSJT-X-style quick switch straight from the
@@ -176,7 +209,8 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
 
         var confirmed = await RequestConfirmAsync(
             _localization.GetString("Configurations.ConfirmResetTitle"),
-            _localization.GetString("Configurations.ConfirmResetMessage"));
+            _localization.GetString("Configurations.ConfirmResetMessage"),
+            "Configurations.SwitchFailed");
         if (!confirmed)
         {
             return;
@@ -225,7 +259,7 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
             _localization.GetString("Configurations.ClonePrompt.Message"),
             prefillText: row.Name + " " + _localization.GetString("Configurations.CloneSuffix"),
             validate: ValidatePresetName);
-        var name = await RequestTextPromptAsync(promptVm);
+        var name = await RequestTextPromptAsync(promptVm, "Configurations.CloneFailed");
         if (name is null)
         {
             return;
@@ -267,7 +301,7 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
             _localization.GetString("Configurations.RenamePrompt.Message"),
             prefillText: oldName,
             validate: ValidatePresetName);
-        var newName = await RequestTextPromptAsync(promptVm);
+        var newName = await RequestTextPromptAsync(promptVm, "Configurations.RenameFailed");
         if (newName is null)
         {
             return;
@@ -329,7 +363,8 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
 
         var confirmed = await RequestConfirmAsync(
             _localization.GetString("Configurations.ConfirmDeleteTitle"),
-            _localization.GetString("Configurations.ConfirmDeleteMessage", row.Name));
+            _localization.GetString("Configurations.ConfirmDeleteMessage", row.Name),
+            "Configurations.DeleteFailed");
         if (!confirmed)
         {
             return;
@@ -452,6 +487,9 @@ public sealed partial class ConfigurationsManagerWindowViewModel : ObservableObj
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configurations dialog failed to open; treated as cancel ({FailureKey})")]
+        public static partial void DialogRequestFailed(ILogger logger, string failureKey, Exception ex);
+
         [LoggerMessage(Level = LogLevel.Warning, Message = "Refreshing the Configurations list failed")]
         public static partial void RefreshFailed(ILogger logger, Exception ex);
 

@@ -167,6 +167,87 @@ public sealed class ConfigurationsManagerWindowViewModelTests
         Assert.Contains("Field Day", await store.ListPresetsAsync());
     }
 
+    // A dialog that fails to open must not escape the command: it runs from an async-void menu click,
+    // and the app has no UI-thread exception handler. Both failure shapes: a synchronous throw and a faulted task.
+
+    private static async Task<(ConfigurationsManagerWindowViewModel Vm, FakeConfigurationPresetStore Store, FakeConfigurationPresetService Service, ConfigurationPresetRowViewModel FieldDay, ConfigurationPresetRowViewModel Default)> CreateWithFieldDayAsync()
+    {
+        var store = new FakeConfigurationPresetStore();
+        store.Seed(ConfigurationsManagerWindowViewModel.DefaultPresetName);
+        store.Seed("Field Day");
+        var service = new FakeConfigurationPresetService();
+        var vm = new ConfigurationsManagerWindowViewModel(store, service, new FakeSettingsStore(), new FakeLocalizationService(), NullLogger<ConfigurationsManagerWindowViewModel>.Instance);
+        await vm.RefreshAsync();
+        Dispatcher.UIThread.RunJobs();
+        return (vm, store, service, vm.Presets.Single(p => p.Name == "Field Day"), vm.Presets.Single(p => p.IsProtected));
+    }
+
+    private static Func<T, Task<TResult>> FailingDialog<T, TResult>(bool synchronous) => synchronous
+        ? _ => throw new InvalidOperationException("dialog failed to open")
+        : _ => Task.FromException<TResult>(new InvalidOperationException("dialog failed to open"));
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task DeleteAsync_ConfirmDialogFails_TreatedAsDecline_ShowsDeleteFailed(bool synchronous)
+    {
+        var (vm, store, _, row, _) = await CreateWithFieldDayAsync();
+        vm.ConfirmRequested = FailingDialog<ConfirmActionDialogViewModel, bool>(synchronous);
+
+        await vm.DeleteCommand.ExecuteAsync(row);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Contains("Field Day", await store.ListPresetsAsync());
+        Assert.Equal("Configurations.DeleteFailed", vm.ErrorMessage);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task ResetToDefaultAsync_ConfirmDialogFails_TreatedAsDecline_NoSwitch_ShowsSwitchFailed(bool synchronous)
+    {
+        var (vm, _, service, _, defaultRow) = await CreateWithFieldDayAsync();
+        vm.ConfirmRequested = FailingDialog<ConfirmActionDialogViewModel, bool>(synchronous);
+
+        await vm.ResetToDefaultCommand.ExecuteAsync(defaultRow);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(0, service.SwitchCallCount);
+        Assert.Equal("Configurations.SwitchFailed", vm.ErrorMessage);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task CloneAsync_PromptDialogFails_TreatedAsCancel_ShowsCloneFailed(bool synchronous)
+    {
+        var (vm, store, _, row, _) = await CreateWithFieldDayAsync();
+        var before = await store.ListPresetsAsync();
+        vm.TextPromptRequested = FailingDialog<TextPromptWindowViewModel, string?>(synchronous);
+
+        await vm.CloneCommand.ExecuteAsync(row);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(before, await store.ListPresetsAsync());
+        Assert.Equal("Configurations.CloneFailed", vm.ErrorMessage);
+    }
+
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task RenameAsync_PromptDialogFails_TreatedAsCancel_ShowsRenameFailed(bool synchronous)
+    {
+        var (vm, store, _, row, _) = await CreateWithFieldDayAsync();
+        var before = await store.ListPresetsAsync();
+        vm.TextPromptRequested = FailingDialog<TextPromptWindowViewModel, string?>(synchronous);
+
+        await vm.RenameCommand.ExecuteAsync(row);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(before, await store.ListPresetsAsync());
+        Assert.Equal("Configurations.RenameFailed", vm.ErrorMessage);
+    }
+
     [AvaloniaFact]
     public async Task DeleteAsync_ConfirmRequestedUnwired_DefaultsToDeclined_DoesNotDelete()
     {

@@ -529,8 +529,11 @@ User data, safety and error paths:
   (`QrzCallsignLookup.cs:170`). Enforce in the client.
 - **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
   test (`ImageFileLoader.cs:17,29`).
-- **CQ-06-F3.** Configurations-menu dialog awaits sit outside each command's try; LogQso, Redecode and
-  Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
+- **UI-UNHANDLED.** DECISION — the app has no `Dispatcher.UIThread.UnhandledException` handler (only
+  `AppDomain.UnhandledException` logging, `Program.cs:202`), so any exception that escapes a UI event ends the app.
+  A global handler would swallow errors app-wide and leave state undefined. Two known sites in the same class:
+  `RxHistoryPaneViewModel.cs` ~:1374 (`await ConfirmRequested(...)` unguarded) and the Options "Restart Now"
+  `window.Closed += (_, _) => Close();` (`MainWindow.axaml.cs` ~:651). Found during CQ-06-F3, 2026-10-19.
 - **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
   transaction (`LogbookPaneViewModel.cs:940`).
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
@@ -642,6 +645,12 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **CQ-06-F3.** DONE 2026-10-19 — a Configurations prompt/confirm dialog that fails to open is now a cancel:
+  logged, the action's failure text shown, nothing written. `InvokeConfigurationActionAsync` (async-void menu click)
+  is fully guarded, including the refresh after the action. The Log QSO, Gallery re-decode (now awaits `ExecuteAsync`,
+  since `Execute` rethrows a faulted task on the UI context) and File > Exit handlers log instead of crashing; Exit
+  was guarded too, decided during review. 8 new VM test cases (sync throw and faulted task), mutation-proven. The
+  MainWindow parts have no test (PA-Two-more). Auditor: 1 plan review + 1 code review, go.
 - **CQ-11-F3.** DONE 2026-10-19 — `app.log` lines now start with `yyyy-MM-dd HH:mm:ss.fff` (local time), formatted
   with the invariant culture. New test under a culture with a `.` time separator; the shared-rotation test's cap moved
   400 → 480 for the longer line. Auditor: 1 code review, go.

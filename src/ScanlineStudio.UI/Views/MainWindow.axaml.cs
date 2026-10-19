@@ -848,19 +848,30 @@ public partial class MainWindow : Window
                     // fsk_cwid.md A-P3b: vm.RxImage.DecodedNrRst (the other station's own decoded
                     // FSK NR/RST) is passed separately -- PrefillForNewEntry's own doc comment for
                     // why this seeds FormRstReceived specifically, not FormRstSent.
-                    vm.Logbook.PrefillForNewEntry(
-                        vm.RxImage.OverrideCallsign,
-                        vm.RxImage.DetectedMode?.Id,
-                        vm.RxImage.StartedAt ?? DateTimeOffset.UtcNow,
-                        vm.RxImage.LookupName,
-                        vm.RxImage.LookupQth,
-                        vm.RxImage.LookupGrid,
-                        vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
-                        vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull,
-                        vm.RxImage.CurrentEntryId,
-                        vm.DefaultRst ?? OperatorSettings.DefaultRstFallback,
-                        vm.RxImage.DecodedNrRst);
-                    vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
+                    // Sync handler of a button command; an escaping throw would end the app.
+                    try
+                    {
+                        vm.Logbook.PrefillForNewEntry(
+                            vm.RxImage.OverrideCallsign,
+                            vm.RxImage.DetectedMode?.Id,
+                            vm.RxImage.StartedAt ?? DateTimeOffset.UtcNow,
+                            vm.RxImage.LookupName,
+                            vm.RxImage.LookupQth,
+                            vm.RxImage.LookupGrid,
+                            vm.RxImage.LatchedFrequencyHz ?? vm.RadioStatus.CurrentFrequencyHz,
+                            vm.RxImage.LatchedRigMode ?? vm.RadioStatus.CurrentRadioModeOrNull,
+                            vm.RxImage.CurrentEntryId,
+                            vm.DefaultRst ?? OperatorSettings.DefaultRstFallback,
+                            vm.RxImage.DecodedNrRst);
+                        vm.SelectedTabIndex = MainViewModel.LogbookTabIndex;
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.LogQsoRequestFailed(logger, ex);
+                        }
+                    }
                 };
 
                 // ui_transition_plan.md step 3 (T1-5 + T2-6): non-modal (Show, not ShowDialog) --
@@ -896,15 +907,26 @@ public partial class MainWindow : Window
                 // deliberately does not depend on ISstvSessionService (see RedecodeRequested's own
                 // doc comment) -- RxImagePaneViewModel already owns this exact responsibility for the
                 // Receive tab's own "Decode WAV…" button, so this just reaches across to it.
-                vm.RxHistory.RedecodeRequested += path =>
+                vm.RxHistory.RedecodeRequested += async path =>
                 {
                     // Auditor-caught (round 1 code-review): ICommand.Execute does not consult
                     // CanExecute the way a bound Button would -- explicit check so a Gallery click
                     // while the Receive tab's own file-picker decode is already in flight is a no-op
                     // here too, not just inside RedecodeFromPathAsync's own belt-and-suspenders guard.
-                    if (vm.RxImage.RedecodeFromPathCommand.CanExecute(path))
+                    // ExecuteAsync, not Execute: Execute rethrows a faulted task on the UI context, past any catch here.
+                    try
                     {
-                        vm.RxImage.RedecodeFromPathCommand.Execute(path);
+                        if (vm.RxImage.RedecodeFromPathCommand.CanExecute(path))
+                        {
+                            await vm.RxImage.RedecodeFromPathCommand.ExecuteAsync(path);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.RedecodeRequestFailed(logger, ex);
+                        }
                     }
                 };
 
@@ -1098,28 +1120,50 @@ public partial class MainWindow : Window
                         // none of them are ever shown in a window of their own -- read it back after
                         // every action, not just Switch, or Clone/Rename/Delete failures go silent the
                         // exact same way Switch's used to.
+                        // Runs from an async-void Click handler: nothing may escape, or the app ends.
                         async Task InvokeConfigurationActionAsync(Func<Task> action)
                         {
-                            await Task.Yield();
-                            await action();
-                            if (configVm.ErrorMessage is { } errorMessage)
+                            try
                             {
+                                await Task.Yield();
                                 try
                                 {
-                                    var dialogVm = new QuickSwitchFailedDialogViewModel(errorMessage);
-                                    var dialog = new QuickSwitchFailedDialogView { DataContext = dialogVm };
-                                    await dialog.ShowDialog(this);
+                                    await action();
                                 }
                                 catch (Exception ex)
                                 {
                                     if (logger is not null)
                                     {
-                                        Log.QuickSwitchFailedDialogFailed(logger, ex);
+                                        Log.ConfigurationActionFailed(logger, ex);
                                     }
                                 }
-                            }
 
-                            RefreshAfterConfigurationChange();
+                                if (configVm.ErrorMessage is { } errorMessage)
+                                {
+                                    try
+                                    {
+                                        var dialogVm = new QuickSwitchFailedDialogViewModel(errorMessage);
+                                        var dialog = new QuickSwitchFailedDialogView { DataContext = dialogVm };
+                                        await dialog.ShowDialog(this);
+                                    }
+                                    catch (Exception ex)
+                                    {
+                                        if (logger is not null)
+                                        {
+                                            Log.QuickSwitchFailedDialogFailed(logger, ex);
+                                        }
+                                    }
+                                }
+
+                                RefreshAfterConfigurationChange();
+                            }
+                            catch (Exception ex)
+                            {
+                                if (logger is not null)
+                                {
+                                    Log.ConfigurationActionFailed(logger, ex);
+                                }
+                            }
                         }
 
                         MenuItem BuildActionItem(string localeKey, Func<Task> action)
@@ -1289,7 +1333,17 @@ public partial class MainWindow : Window
                         Log.ExitRequested(logger);
                     }
 
-                    Close();
+                    try
+                    {
+                        Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        if (logger is not null)
+                        {
+                            Log.ExitRequestFailed(logger, ex);
+                        }
+                    }
                 };
             }
         };
@@ -1422,6 +1476,18 @@ public partial class MainWindow : Window
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Exit requested; closing main window")]
         public static partial void ExitRequested(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "File > Exit failed to close the main window")]
+        public static partial void ExitRequestFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Log QSO request failed")]
+        public static partial void LogQsoRequestFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Gallery re-decode request failed")]
+        public static partial void RedecodeRequestFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Configurations menu action failed")]
+        public static partial void ConfigurationActionFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Debug, Message = "Constructing and showing AboutWindowView")]
         public static partial void ConstructingAboutWindow(ILogger logger);
