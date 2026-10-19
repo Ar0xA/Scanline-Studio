@@ -185,7 +185,7 @@ public sealed partial class TxImageEditorPaneViewModel
             catch (Exception ex)
             {
                 LogImportFailed(from, ex);
-                StatusMessage = _localization.GetString(failureKey);
+                StatusMessage = _localization.GetString(IsTooLarge(ex) ? "Panes.TxImageEditor.ImageTooLarge" : failureKey);
                 return;
             }
 
@@ -436,6 +436,8 @@ public sealed partial class TxImageEditorPaneViewModel
         InsertImageElement(source, new ImageSourceOrigin(ImageSourceKind.RxHistory, entry.Id));
     }
 
+    private static bool IsTooLarge(Exception ex) => ex is ImageLoadException { Reason: ImageLoadFailure.TooLarge };
+
     /// <summary>Shared by all 4 Phase 2/missing-feature-sweep image sources -- same crop-centered
     /// seed/undo/select/recompute shape as <see cref="AddOverlayElement"/>/<see cref="AddBoxElement"/>.
     /// Default Contain fit (not Stretch) -- an inserted photo keeping its own aspect ratio by default
@@ -537,6 +539,7 @@ public sealed partial class TxImageEditorPaneViewModel
 
             var loaded = new List<(string Path, IImageSource Downsampled, int NaturalWidth, int NaturalHeight)>();
             var failureCount = 0;
+            var tooLargeCount = 0;
             foreach (var path in capped)
             {
                 try
@@ -560,12 +563,18 @@ public sealed partial class TxImageEditorPaneViewModel
                 {
                     Log.AddImageFromDroppedFileFailed(_logger, path, ex);
                     failureCount++;
+                    if (IsTooLarge(ex))
+                    {
+                        tooLargeCount++;
+                    }
                 }
             }
 
             if (loaded.Count == 0)
             {
-                StatusMessage = _localization.GetString("Panes.TxImageEditor.AddImageFailed");
+                // Only a uniform cause gets the specific message; a mix keeps the generic one.
+                StatusMessage = _localization.GetString(
+                    failureCount > 0 && tooLargeCount == failureCount ? "Panes.TxImageEditor.ImageTooLarge" : "Panes.TxImageEditor.AddImageFailed");
                 return;
             }
 

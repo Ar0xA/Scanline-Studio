@@ -5133,6 +5133,27 @@ public sealed class PaneViewModelTests
         Assert.NotNull(vm.ErrorMessage);
     }
 
+    [AvaloniaTheory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task TxControlsPaneViewModel_SelectImageCommand_TooLarge_ShowsTheSpecificMessage(bool editorOpen)
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var imageFileLoader = new FakeImageFileLoader();
+        imageFileLoader.FailForPath["/tmp/huge.png"] = new ScanlineStudio.Abstractions.Imaging.ImageLoadException(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, "x");
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/huge.png" };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, new FakeStockImageLibrary(), new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        if (editorOpen)
+        {
+            await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        }
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.TxControls.Error.ImageTooLarge", vm.ErrorMessage);
+    }
+
     [AvaloniaFact]
     public async Task TxControlsPaneViewModel_CancellingEditorWithAnImageElement_DisposesTheElementsOwnBitmapToo()
     {

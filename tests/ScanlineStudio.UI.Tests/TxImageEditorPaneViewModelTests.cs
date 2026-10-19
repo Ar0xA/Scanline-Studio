@@ -3060,6 +3060,46 @@ public sealed class TxImageEditorPaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_AllFilesTooLarge_SaysSo()
+    {
+        var loader = new FakeImageFileLoader();
+        loader.FailForPath["/tmp/a.jpg"] = new ScanlineStudio.Abstractions.Imaging.ImageLoadException(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, "x");
+        loader.FailForPath["/tmp/b.jpg"] = new ScanlineStudio.Abstractions.Imaging.ImageLoadException(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, "x");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/a.jpg", "/tmp/b.jpg"]);
+
+        Assert.Equal("Panes.TxImageEditor.ImageTooLarge", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImagesFromDroppedFilesAsync_MixedFailures_KeepsTheGenericMessage()
+    {
+        var loader = new FakeImageFileLoader();
+        loader.FailForPath["/tmp/a.jpg"] = new ScanlineStudio.Abstractions.Imaging.ImageLoadException(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, "x");
+        loader.FailForPath["/tmp/b.jpg"] = new InvalidOperationException("decode failed");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), new FakeFilePickerService(), loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImagesFromDroppedFilesAsync(["/tmp/a.jpg", "/tmp/b.jpg"]);
+
+        Assert.Equal("Panes.TxImageEditor.AddImageFailed", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
+    public async Task AddImageFromClipboardAsync_TooLarge_SaysSo()
+    {
+        var tempPath = Path.GetTempFileName();
+        var picker = new FakeFilePickerService { ClipboardPathToReturn = tempPath };
+        var loader = new FakeImageFileLoader();
+        loader.FailForPath[tempPath] = new ScanlineStudio.Abstractions.Imaging.ImageLoadException(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, "x");
+        var vm = CreateEditor(CreateSource(4, 4), SmallMode, new FakeTransmitImagePreparer(), picker, loader, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore());
+
+        await vm.AddImageFromClipboardCommand.ExecuteAsync(null);
+
+        Assert.Equal("Panes.TxImageEditor.ImageTooLarge", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
     public async Task AddImagesFromDroppedFilesAsync_SomeFilesFail_AddsTheRestAndReportsFailureCount()
     {
         var loader = new FakeImageFileLoader { ResultToReturn = CreateSource(2, 2) };

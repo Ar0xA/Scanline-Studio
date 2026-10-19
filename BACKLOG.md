@@ -505,6 +505,8 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
 User data, safety and error paths:
 - **FLAKY-AUTOSAVE-SCRATCH.** OPEN, test-only — `SstvSessionServiceAudioAutoSaveTests.ScratchRetention_MoreThanEightUnconsumedSlices_EvictsOldestFirst_NewestExempt`
   failed in 2 of 3 full Application.Tests runs on 2026-10-19 and passes 5/5 standalone: a timing dependency under load.
+  `TrySaveReceptionAudioAsync_CalledTwiceForTheSameReception_SecondCallReturnsFalse` in the same class also failed once
+  under full-suite load (2026-10-19); treat the whole class as suspect.
 - **CQ-09-F2-FOLLOWUPS.** OPEN, minor. (a) With `QrzLookup` unreadable, Options shows "keyring locked" plus an Unlock
   button that cannot help (`QrzCredentialService.ReadAsync` returns Unavailable; `OptionsWindowViewModel.QrzAndForwarding.cs`
   ~:65); a distinct "unreadable" status would fix it. (b) A plaintext password inside `QrzLookup.unreadable` is never
@@ -516,8 +518,9 @@ User data, safety and error paths:
   (write-access users only; pass it through `env:`). No dependabot config keeps the pinned action SHAs current.
 - **CQ-09-F8.** Preset exclude/redact lists are string literals; new sections are included by default
   (`ConfigurationPresetStore.cs:26-27,45-47`). New secret fields are not pinned by tests.
-- **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
-  test (`ImageFileLoader.cs:17,29`).
+- **CQ-10-F4-REST.** OPEN, minor — `StockImageLibrary` and `ReceivedFrameExporter` still decode with ImageSharp
+  directly (no size cap, no `ImageLoadException`). Also: for a picture over 4096 px, an image element's natural size
+  ("reset to original size") is now the downscaled size, not the file's own; user impact not checked.
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
   `coverage-thresholds.json`. Related: COV.
 - **CQ-05-F6 / CQ-06-F5.** Raw English `ex.Message` and English file-picker type names reach the UI.
@@ -633,6 +636,13 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-10-F4.** DONE 2026-10-19 — `ImageFileLoader` reads the header first. Over 250 MP it refuses with
+  `ImageLoadException(TooLarge)` before any pixel allocation. A long side over 4096 px decodes scaled to fit 4096×4096
+  (`DecoderOptions.TargetSize`, first frame only). Every failure is logged and becomes `ImageLoadException`
+  (NotAnImage / Corrupt / TooLarge / Unreadable). The TX picker and the editor's image add show a "too large" message
+  for TooLarge, the generic one otherwise. Tradeoff: a very tight crop of a >4096 px photo can be slightly softer on air
+  (help text says so). Allocation-failure → TooLarge branch untested (no allocator injection). 16 new tests,
+  7 mutations caught. Auditor: 1 plan review + 1 code review, go. Rest: CQ-10-F4-REST.
 - **CQ-09-F2-FOLLOWUPS (c).** DONE 2026-10-19 — an unreadable `DrmRx` or `StationId` section no longer stops receive or
   file decode. DrmRx: the start seed is skipped, so the toggle keeps its last persisted/Set value (fresh process: on).
   StationId: receive-side defaults. Both log a Warning naming the section. Read-only, never writes. An unreadable

@@ -1473,7 +1473,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 // must NOT touch the editor at all -- there's a real, otherwise-untouched session
                 // (elements, adjustments, crop) still sitting there the operator hasn't lost yet.
                 Log.LoadTxSourceImageFailed(_logger, fileName, ex);
-                ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+                ErrorMessage = LoadFailedMessage(ex);
                 return true;
             }
 
@@ -1513,7 +1513,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor = null;
             _currentEditorIsBlank = false;
             _currentEditorFileName = null;
-            ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
+            ErrorMessage = LoadFailedMessage(ex);
             EditorClosed?.Invoke();
             return true;
         }
@@ -1521,6 +1521,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         await OpenEditorWithLoadedSourceAsync(original, fileName, contactVariables, seedLiveContact, SourcePathOf(source));
         return true;
     }
+
+    private string LoadFailedMessage(Exception ex) => _localization.GetString(
+        ex is ImageLoadException { Reason: ImageLoadFailure.TooLarge } ? "Panes.TxControls.Error.ImageTooLarge" : "Panes.TxControls.Error.LoadFailed");
 
     private static string? SourcePathOf(object source) => source switch
     {

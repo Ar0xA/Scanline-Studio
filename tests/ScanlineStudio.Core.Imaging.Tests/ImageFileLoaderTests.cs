@@ -132,6 +132,169 @@ public sealed class ImageFileLoaderTests
         }
     }
 
+    [Theory]
+    [InlineData(5000, 100, 4096, 82)]
+    [InlineData(100, 5000, 82, 4096)]
+    [InlineData(4097, 10, 4096, 10)]
+    [InlineData(4096, 10, 4096, 10)]
+    public async Task LoadOriginalAsync_LongerThanTheCap_IsScaledToFitKeepingAspect(int width, int height, int expectedWidth, int expectedHeight)
+    {
+        var path = await WriteFixturePngAsync(width, height, new Rgb24(9, 8, 7));
+        try
+        {
+            var image = await new ImageFileLoader().LoadOriginalAsync(path);
+
+            Assert.Equal(expectedWidth, image.Width);
+            Assert.Equal(expectedHeight, image.Height);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_ExifRotatedPictureOverTheCap_IsScaledThenAutoOriented()
+    {
+        var path = await WriteFixtureJpegWithOrientationAsync(width: 5000, height: 100, orientation: 6);
+        try
+        {
+            var image = await new ImageFileLoader().LoadOriginalAsync(path);
+
+            Assert.Equal(82, image.Width);
+            Assert.Equal(4096, image.Height);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Theory]
+    [InlineData(20000, 20000)]
+    [InlineData(50000, 50000)]
+    public async Task LoadOriginalAsync_HeaderOverThePixelLimit_IsRefusedBeforeDecoding(int width, int height)
+    {
+        var path = WritePngHeaderOnly(width, height);
+        try
+        {
+            var ex = await Assert.ThrowsAsync<ScanlineStudio.Abstractions.Imaging.ImageLoadException>(() => new ImageFileLoader().LoadOriginalAsync(path));
+
+            Assert.Equal(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.TooLarge, ex.Reason);
+            Assert.Null(ex.InnerException);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_TextFile_IsNotAnImage()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-image-loader-test-{Guid.NewGuid()}.png");
+        await File.WriteAllTextAsync(path, "this is not a picture");
+        await AssertFailsWith(path, ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.NotAnImage);
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_EmptyFile_IsNotAnImage()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-image-loader-test-{Guid.NewGuid()}.jpg");
+        await File.WriteAllBytesAsync(path, []);
+        await AssertFailsWith(path, ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.NotAnImage);
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_TruncatedPng_IsCorrupt()
+    {
+        var full = await WriteFixturePngAsync(64, 64, new Rgb24(1, 2, 3));
+        var bytes = await File.ReadAllBytesAsync(full);
+        File.Delete(full);
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-image-loader-test-{Guid.NewGuid()}.png");
+        await File.WriteAllBytesAsync(path, bytes[..60]);
+        await AssertFailsWith(path, ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.Corrupt);
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_MissingFile_IsUnreadable()
+    {
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-image-loader-missing-{Guid.NewGuid()}.png");
+        var ex = await Assert.ThrowsAsync<ScanlineStudio.Abstractions.Imaging.ImageLoadException>(() => new ImageFileLoader().LoadOriginalAsync(path));
+        Assert.Equal(ScanlineStudio.Abstractions.Imaging.ImageLoadFailure.Unreadable, ex.Reason);
+        Assert.IsAssignableFrom<IOException>(ex.InnerException);
+    }
+
+    [Fact]
+    public async Task LoadOriginalAsync_Cancelled_ThrowsCancellationNotAnImageLoadException()
+    {
+        var path = await WriteFixturePngAsync(8, 8, new Rgb24(1, 2, 3));
+        try
+        {
+            using var cts = new CancellationTokenSource();
+            cts.Cancel();
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => new ImageFileLoader().LoadOriginalAsync(path, cts.Token));
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    private static async Task AssertFailsWith(string path, ScanlineStudio.Abstractions.Imaging.ImageLoadFailure reason)
+    {
+        try
+        {
+            var ex = await Assert.ThrowsAsync<ScanlineStudio.Abstractions.Imaging.ImageLoadException>(() => new ImageFileLoader().LoadOriginalAsync(path));
+            Assert.Equal(reason, ex.Reason);
+            Assert.NotNull(ex.InnerException);
+        }
+        finally
+        {
+            File.Delete(path);
+        }
+    }
+
+    // A PNG signature, a valid IHDR claiming the given size, and IEND: enough for Identify, no pixel data.
+    private static string WritePngHeaderOnly(int width, int height)
+    {
+        var bytes = new List<byte> { 0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A };
+        var ihdr = new List<byte>();
+        ihdr.AddRange(BigEndian((uint)width));
+        ihdr.AddRange(BigEndian((uint)height));
+        ihdr.AddRange(new byte[] { 8, 2, 0, 0, 0 });
+        AddChunk(bytes, "IHDR", ihdr.ToArray());
+        AddChunk(bytes, "IEND", []);
+        var path = Path.Combine(Path.GetTempPath(), $"yoniq-image-loader-test-{Guid.NewGuid()}.png");
+        File.WriteAllBytes(path, bytes.ToArray());
+        return path;
+    }
+
+    private static void AddChunk(List<byte> png, string type, byte[] data)
+    {
+        png.AddRange(BigEndian((uint)data.Length));
+        var typed = System.Text.Encoding.ASCII.GetBytes(type).Concat(data).ToArray();
+        png.AddRange(typed);
+        png.AddRange(BigEndian(Crc32(typed)));
+    }
+
+    private static byte[] BigEndian(uint value) => [(byte)(value >> 24), (byte)(value >> 16), (byte)(value >> 8), (byte)value];
+
+    private static uint Crc32(byte[] data)
+    {
+        var crc = 0xFFFFFFFFu;
+        foreach (var b in data)
+        {
+            crc ^= b;
+            for (var k = 0; k < 8; k++)
+            {
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+            }
+        }
+
+        return ~crc;
+    }
+
     private static async Task<string> WriteFixturePngAsync(int width, int height, Rgb24 fillColor)
     {
         using var image = new Image<Rgb24>(width, height);
