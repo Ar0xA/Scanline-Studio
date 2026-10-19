@@ -44,7 +44,7 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
     /// re-typing it.</summary>
     public const string ActivePresetSectionKey = "ConfigurationPreset";
 
-    private static readonly string[] ExcludedSectionKeys = ["WindowGeometry", "TxPaneUi", "RxPaneUi", "VersionNotice", "UpdateCheck", ActivePresetSectionKey];
+    private static readonly string[] ExcludedSectionKeys = ["WindowGeometry", "TxPaneUi", "RxPaneUi", "VersionNotice", "UpdateCheck", "DefaultTemplates", ActivePresetSectionKey];
 
     // Cross-platform-safe by construction, not by relying on Path.GetInvalidFileNameChars() (which
     // under-rejects on Linux -- that platform's own invalid set is effectively just '\0' and '/',

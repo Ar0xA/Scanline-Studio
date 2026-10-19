@@ -494,6 +494,7 @@
           <li>Beim Laden über ungespeicherte Arbeit wird zuerst nachgefragt: <strong>Ungespeicherte Änderungen verwerfen?</strong>, unter Nennung der Vorlage, die sie ersetzen würde. Ein Platz mit der Anzeige <strong>Geladen</strong> ist derjenige, aus dem der aktuelle Inhalt der Zeichenfläche stammt. Sobald seitdem etwas geändert wurde, zeigt er <strong>Geladen • bearbeitet</strong>.</li>
           <li>Das Löschen aus dem Ready Rack verlangt eine Bestätigung, die Vorlage und Platznummer nennt. Das Löschen aus der Liste der Vorlagenbibliothek verlangt ebenfalls eine Bestätigung, die die Vorlage nennt.</li>
           <li>Mit <strong>EXPORTIEREN</strong> ein Paket als einzelne Datei speichern, das sich mit anderen Funkamateuren teilen lässt, und mit <strong>IMPORTIEREN</strong> ein von jemand anderem geteiltes Paket laden.</li>
+          <li>Beim ersten Start dieser Version erhält die Vorlagenbibliothek sechs Startvorlagen: zwei für CQ-Rufe, zwei für Antworten mit Rapport und zwei für 73. Es sind normale Vorlagen — sie lassen sich frei bearbeiten, umbenennen, anheften oder löschen. Sie werden nur einmal hinzugefügt, ersetzen nie eine vorhandene Vorlage, und eine gelöschte Startvorlage kommt nicht zurück.</li>
           <li><strong>LEGACY-IMPORT</strong> lädt eine <code>.mtm</code>- oder <code>.mti</code>-Vorlagendatei aus einer alten YONIQ/MMSSTV-Installation. Der größte Teil des Inhalts (Text, Position, Farbe, Bilder, Boxen) wird übernommen; einige nur dort vorhandene Effekte (Farbverläufe mit mehreren Stufen, gestrichelte oder dekorative Linienstile, Unterstreichen/Durchstreichen, die meisten Makro-Platzhalter außer dem eigenen Rufzeichen des Absenders) haben hier keine Entsprechung und werden angenähert oder weggelassen. Eine Statusmeldung weist darauf hin, wenn etwas angepasst werden musste. Die Einzelheiten stehen im Protokoll.</li>
         </ol>
         <footer class="article-footer"><a href="#guide-title">Nach oben</a></footer>
@@ -694,7 +695,7 @@
           <table>
             <thead><tr><th>Einstellung</th><th>Bedeutung</th></tr></thead>
             <tbody>
-              <tr><td>Squelch-Schwelle</td><td>Höhere Werte unterdrücken mehr Rauschen, erfordern aber ein stärkeres Signal.</td></tr>
+              <tr><td>Squelch-Schwelle</td><td>Vier Stufen: Niedrig, Mittel (Standard), Hoch, Maximal. Höhere Werte unterdrücken mehr Rauschen, erfordern aber ein stärkeres Signal.</td></tr>
               <tr><td>RX-Bandpassfilter</td><td>„Normal“ deaktiviert das Filter; „Breit“ ist der empfohlene Standard; „Steil“ und „Sehr steil“ unterdrücken mehr benachbarte Signalenergie, sind aber weniger tolerant gegenüber Drift.</td></tr>
               <tr><td>Demodulator</td><td><a class="term" href="#glossary-hilbert">Hilbert-Transformation</a> ist der an das Legacy-Verhalten angelehnte Standard. <a class="term" href="#glossary-pll">PLL</a> und Nulldurchgang sind wählbare Alternativen. Das AVT-Training verwendet intern unabhängig davon immer PLL.</td></tr>
               <tr><td>RX-Pufferung</td><td>„Aus“ verhindert das Neuzeichnen bereits empfangener Zeilen; „Ein“ hält Zeilen im Arbeitsspeicher; „Erweitert“ nutzt eine Zwischenspeicherung auf dem Datenträger für lange oder schwierige Empfänge.</td></tr>

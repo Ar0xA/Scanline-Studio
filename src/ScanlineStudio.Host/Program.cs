@@ -273,6 +273,17 @@ internal static partial class Program
             Log.CultureRestoreFailed(logger, ex);
         }
 
+        // After the culture restore so starter names are localized, before the window so the
+        // Template Library's first listing already includes them. First launch only.
+        try
+        {
+            host.Services.GetRequiredService<IDefaultTemplateSeeder>().SeedIfNeededAsync().WaitAsync(TimeSpan.FromSeconds(15)).GetAwaiter().GetResult();
+        }
+        catch (Exception ex)
+        {
+            Log.DefaultTemplateSeedFailed(logger, ex);
+        }
+
         // Phase 1 dark mode / Phase 2 font-size presets: same "must run before SetupWithLifetime"
         // reasoning as the culture-restore block immediately above -- SetupWithLifetime constructs
         // the actual App instance and starts rendering MainWindow, so applying either later would
@@ -1125,6 +1136,7 @@ internal static partial class Program
         // ITransmitImagePreparer, never ImageSharp directly.
         services.AddSingleton<IImageSourceWriter, ImageSourceWriter>();
         services.AddSingleton<ITemplateStore, TemplateStore>();
+        services.AddSingleton<IDefaultTemplateSeeder, DefaultTemplateSeeder>();
 
         // Phase 4 image-tooling UI -- spec/07-image-pipeline.md's "Stock image library"/"RX history"
         // sections. ReceiveHistoryRecorder is resolved once, explicitly, below (nothing else in the
@@ -1512,6 +1524,9 @@ internal static partial class Program
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Failed to restore the persisted UI culture; continuing in English")]
         public static partial void CultureRestoreFailed(ILogger logger, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Starter template install failed or did not finish in time; it may complete in the background or retry next launch")]
+        public static partial void DefaultTemplateSeedFailed(ILogger logger, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Restored persisted UI theme '{Theme}'")]
         public static partial void AppThemeRestored(ILogger logger, string theme);
