@@ -89,4 +89,5 @@ public sealed record OptionsSnapshot(
     int ZeroCrossingOutputOrder,
     double ZeroCrossingOutputCutoffHz,
     double ZeroCrossingSmoothingFrequencyHz,
-    IReadOnlyList<AdifUdpDestination> AdifUdpDestinations);
+    IReadOnlyList<AdifUdpDestination> AdifUdpDestinations,
+    IReadOnlyList<string>? UnreadableSections = null);

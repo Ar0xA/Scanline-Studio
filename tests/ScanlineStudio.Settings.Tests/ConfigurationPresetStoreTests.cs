@@ -152,6 +152,26 @@ public sealed partial class ConfigurationPresetStoreTests : IDisposable
     }
 
     [Fact]
+    public async Task SavePresetAsync_AndLoad_DropSetAsideUnreadableSections()
+    {
+        var store = CreateStore();
+        var raw = JsonDocument.Parse("{\"Password\":42,\"Note\":\"hunter2\"}").RootElement.Clone();
+        var content = new AppSettings { Sections = new() { ["QrzLookup.unreadable"] = raw, ["Other"] = raw } };
+
+        await store.SavePresetAsync("Test", content);
+        var rawText = await File.ReadAllTextAsync(Path.Combine(_presetsDirectory, "Test.json"));
+        Assert.DoesNotContain("unreadable", rawText, StringComparison.Ordinal);
+
+        // A hand-edited preset that already carries one is dropped on load too.
+        await File.WriteAllTextAsync(
+            Path.Combine(_presetsDirectory, "Hand.json"),
+            "{\"SchemaVersion\":" + AppSettings.CurrentSchemaVersion + ",\"Sections\":{\"QrzLookup.unreadable\":{\"Password\":\"hunter2\"}}}");
+        var loaded = await store.LoadPresetAsync("Hand");
+        Assert.NotNull(loaded);
+        Assert.DoesNotContain("QrzLookup.unreadable", loaded!.Sections.Keys);
+    }
+
+    [Fact]
     public async Task SavePresetAsync_RedactingASecret_DoesNotLogAWarning()
     {
         // A save redacting a secret is the normal, silent, expected outcome -- only a LOAD finding

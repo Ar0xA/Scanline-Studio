@@ -17,9 +17,21 @@ public sealed partial class OptionsWindowViewModel
     // The last save wrote everything else; only the HamDRM apply failed, so the post-save warnings still apply.
     private bool _onlyDrmReceiveApplyFailed;
 
-    private async Task LoadDrmReceiveAsync()
+    private async Task LoadDrmReceiveAsync(List<string> unreadable)
     {
-        bool saved = await _sstvSession.GetDrmReceiveEnabledAsync();
+        bool saved;
+        try
+        {
+            saved = await _sstvSession.GetDrmReceiveEnabledAsync();
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            // Stays at the default; an apply only writes on a change and then fails without overwriting.
+            Log.SectionUnreadable(_logger, DrmRxSectionKey, ex);
+            unreadable.Add(DrmRxSectionKey);
+            saved = DrmReceiveDefaults.Enabled;
+        }
+
         _drmReceiveEnabledApplied = saved;
         DrmReceiveEnabled = saved;
     }

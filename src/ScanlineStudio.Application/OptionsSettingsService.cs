@@ -137,18 +137,19 @@ public sealed partial class OptionsSettingsService
     public async Task<OptionsSnapshot> LoadAsync(CancellationToken ct = default)
     {
         _loadedSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        var unreadable = new List<string>();
 
-        var localization = _loadedSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
-        var audio = _loadedSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
-        var radio = _loadedSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
-        var operatorSettings = _loadedSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
-        var decoder = _loadedSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
-        var qrzLookup = _loadedSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-        var stationId = _loadedSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
+        var localization = ReadSectionOrDefault(_loadedSettings, LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings, unreadable);
+        var audio = ReadSectionOrDefault(_loadedSettings, AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings, unreadable);
+        var radio = ReadSectionOrDefault(_loadedSettings, RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings, unreadable);
+        var operatorSettings = ReadSectionOrDefault(_loadedSettings, OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings, unreadable);
+        var decoder = ReadSectionOrDefault(_loadedSettings, SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings, unreadable);
+        var qrzLookup = ReadSectionOrDefault(_loadedSettings, QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, unreadable);
+        var stationId = ReadSectionOrDefault(_loadedSettings, StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings, unreadable);
         // MigrateIfNeeded (not a plain GetSection) so this dialog shows exactly what
         // AdifUdpStreamer.SendLoggedQsoAsync will actually send -- an upgrading user's already-
         // working legacy GridTracker config must appear here, not read back as an empty list.
-        var adifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(_loadedSettings);
+        var adifUdp = ReadAdifUdpOrDefault(_loadedSettings, unreadable);
 
         return new OptionsSnapshot(
             CultureCode: localization.CultureCode,
@@ -223,7 +224,8 @@ public sealed partial class OptionsSettingsService
             NrRstEnabled: stationId.NrRstEnabled ?? StationIdSettings.DefaultNrRstEnabled,
             NrRstText: stationId.NrRstText,
             SoundFileMmvPath: stationId.SoundFileMmvPath,
-            AdifUdpDestinations: adifUdp.Destinations ?? []);
+            AdifUdpDestinations: adifUdp.Destinations ?? [],
+            UnreadableSections: unreadable);
     }
 
     public async Task SaveAsync(OptionsSnapshot snapshot, CancellationToken ct = default)
@@ -259,10 +261,11 @@ public sealed partial class OptionsSettingsService
         // (a QRZ session-cache token, an operator default-power field, ...), every Options Save
         // would silently reset it, with no existing test able to catch it. Read previous* up front
         // and preserve via `with` uniformly, matching AfcEnabled/ClientId's own established pattern.
-        var previousLocalization = currentSettings.GetSection(LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings) ?? new LocalizationSettings();
-        var previousOperator = currentSettings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings) ?? new OperatorSettings();
-        var previousQrzLookup = currentSettings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
-        var previousAudio = currentSettings.GetSection(AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings) ?? new AudioDeviceSettings();
+        var setAside = new List<string>();
+        var previousLocalization = ReadSectionOrDefault(currentSettings, LocalizationSettings.SectionKey, LocalizationSettingsJsonContext.Default.LocalizationSettings, setAside);
+        var previousOperator = ReadSectionOrDefault(currentSettings, OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings, setAside);
+        var previousQrzLookup = ReadSectionOrDefault(currentSettings, QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, setAside);
+        var previousAudio = ReadSectionOrDefault(currentSettings, AudioDeviceSettings.SectionKey, AudioSettingsJsonContext.Default.AudioDeviceSettings, setAside);
         sampleRateToPersist = SstvSampleRate.IsSupported(snapshot.SampleRate)
             ? snapshot.SampleRate
             : SstvSampleRate.NormalizePersisted(previousAudio.SampleRate);
@@ -284,17 +287,25 @@ public sealed partial class OptionsSettingsService
         var txLpfFrequencyToPersist = snapshot.TxLpfFrequencyHz is >= 100.0 and <= 3000.0
             ? snapshot.TxLpfFrequencyHz
             : previousAudio.TxLpfFrequencyHz ?? 2000.0;
-        var previousRadio = currentSettings.GetSection(RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings) ?? new RadioConnectionSettings();
-        var previousDecoder = currentSettings.GetSection(SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings) ?? new SstvDecoderSettings();
-        var previousStationId = currentSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings) ?? new StationIdSettings();
+        var previousRadio = ReadSectionOrDefault(currentSettings, RadioConnectionSettings.SectionKey, RadioSettingsJsonContext.Default.RadioConnectionSettings, setAside);
+        var previousDecoder = ReadSectionOrDefault(currentSettings, SstvDecoderSettings.SectionKey, SstvDecoderSettingsJsonContext.Default.SstvDecoderSettings, setAside);
+        var previousStationId = ReadSectionOrDefault(currentSettings, StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings, setAside);
         // MigrateIfNeeded (not a plain GetSection ?? new X()) -- same reasoning as LoadAsync above:
         // a user who opens the dialog and immediately hits Save, with only a legacy GridTracker
         // section on disk, must persist the MIGRATED ClientId/destination, not silently drop it back
         // to an empty AdifUdpStreamingSettings just because the new section was never explicitly
         // read through this exact call before. Confirmed pure/synchronous -- safe inside mutate.
-        var previousAdifUdp = AdifUdpStreamingSettings.MigrateIfNeeded(currentSettings);
+        var previousAdifUdp = ReadAdifUdpOrDefault(currentSettings, setAside);
 
-        return currentSettings
+        // Every section read above is rewritten below; keep the raw text of an unreadable one first.
+        var baseSettings = currentSettings;
+        foreach (var key in setAside)
+        {
+            Log.SectionSetAside(_logger, key, key + AppSettingsSectionExtensions.UnreadableSuffix, baseSettings.Sections.ContainsKey(key + AppSettingsSectionExtensions.UnreadableSuffix));
+            baseSettings = baseSettings.SetSectionAside(key);
+        }
+
+        return baseSettings
             .WithSection(LocalizationSettings.SectionKey, previousLocalization with { CultureCode = snapshot.CultureCode }, LocalizationSettingsJsonContext.Default.LocalizationSettings)
             .WithSection(
                 AudioDeviceSettings.SectionKey,
@@ -442,8 +453,49 @@ public sealed partial class OptionsSettingsService
     public Task<QrzPasswordWriteOutcome> SaveQrzPasswordAsync(string? newPassword, string? loadedPassword, CancellationToken ct = default) =>
         _qrzCredentials.WriteAsync(newPassword, loadedPassword, ct);
 
+    /// <summary>Reads one section for this dialog. An unreadable section yields defaults and its key is
+    /// added to <paramref name="unreadable"/>, instead of throwing out of the whole load or save.</summary>
+    private T ReadSectionOrDefault<T>(AppSettings settings, string key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, List<string> unreadable)
+        where T : new()
+    {
+        if (settings.TryReadSection(key, typeInfo, out var value, out var error))
+        {
+            return value ?? new T();
+        }
+
+        Log.SectionUnreadable(_logger, key, error);
+        unreadable.Add(key);
+        return new T();
+    }
+
+    /// <summary><see cref="AdifUdpStreamingSettings.MigrateIfNeeded"/> reads one key: the new section
+    /// if present, else the legacy GridTracker one. The key that failed is reported; on save the new
+    /// section is written either way, so setting a bad legacy key aside only keeps its raw text.</summary>
+    private AdifUdpStreamingSettings ReadAdifUdpOrDefault(AppSettings settings, List<string> unreadable)
+    {
+        try
+        {
+            return AdifUdpStreamingSettings.MigrateIfNeeded(settings);
+        }
+        catch (System.Text.Json.JsonException ex)
+        {
+            var key = settings.Sections.ContainsKey(AdifUdpStreamingSettings.SectionKey)
+                ? AdifUdpStreamingSettings.SectionKey
+                : LegacyGridTrackerStreamingSettings.SectionKey;
+            Log.SectionUnreadable(_logger, key, ex);
+            unreadable.Add(key);
+            return new AdifUdpStreamingSettings();
+        }
+    }
+
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Settings section {SectionKey} could not be read; the Options dialog uses its defaults")]
+        public static partial void SectionUnreadable(ILogger logger, string sectionKey, Exception? ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable settings section {SectionKey} kept as {AsideKey} (replaced an earlier copy: {ReplacedEarlier}) and rewritten from the Options dialog")]
+        public static partial void SectionSetAside(ILogger logger, string sectionKey, string asideKey, bool replacedEarlier);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Options saved: radioBackend={RadioBackendId}, sampleRate={SampleRate}, culture={CultureCode}")]
         public static partial void Saved(ILogger logger, string radioBackendId, int sampleRate, string? cultureCode);
     }

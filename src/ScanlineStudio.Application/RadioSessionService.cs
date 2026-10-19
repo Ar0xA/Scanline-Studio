@@ -462,10 +462,20 @@ public sealed partial class RadioSessionService : IRadioSessionService, IPttTest
     public async Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default)
     {
         await _settingsStore.UpdateAsync(
-            appSettings => appSettings.WithSection(
-                RadioSafetySettings.SectionKey,
-                new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
-                RadioSafetySettingsJsonContext.Default.RadioSafetySettings),
+            appSettings =>
+            {
+                // The write below replaces the whole section; keep the raw text of an unreadable one first.
+                if (!appSettings.TryReadSection(RadioSafetySettings.SectionKey, RadioSafetySettingsJsonContext.Default.RadioSafetySettings, out _, out var error))
+                {
+                    Log.SafetySectionSetAside(_logger, error);
+                    appSettings = appSettings.SetSectionAside(RadioSafetySettings.SectionKey);
+                }
+
+                return appSettings.WithSection(
+                    RadioSafetySettings.SectionKey,
+                    new RadioSafetySettings { SwrCutoffEnabled = spec.SwrCutoffEnabled, SwrCutoffThreshold = spec.SwrCutoffThreshold },
+                    RadioSafetySettingsJsonContext.Default.RadioSafetySettings);
+            },
             ct).ConfigureAwait(false);
         RaiseSafetySettingsChanged(spec);
     }
@@ -539,6 +549,9 @@ public sealed partial class RadioSessionService : IRadioSessionService, IPttTest
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable RadioSafety settings section kept as RadioSafety.unreadable before saving new values")]
+        public static partial void SafetySectionSetAside(ILogger logger, Exception? ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "Draining temporary PTT tests before shutdown")]
         public static partial void TestPttShutdownStarted(ILogger logger);
 

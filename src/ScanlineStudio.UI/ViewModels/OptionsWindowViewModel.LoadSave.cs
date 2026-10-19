@@ -42,17 +42,18 @@ public sealed partial class OptionsWindowViewModel
             await LoadQrzPasswordFieldAsync(allowPrompt: false);
             RefreshSerialPorts();
 
+            var unreadable = new List<string>(snapshot.UnreadableSections ?? []);
             var appSettings = await _settingsStore.LoadAsync();
-            RememberWindowPosition = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings)?.RememberWindowPosition ?? true;
-            JpegQuality = Math.Clamp(appSettings.GetSection(ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings)?.JpegQuality ?? 85, 1, 100);
+            RememberWindowPosition = ReadSectionOrNull(appSettings, WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings, unreadable)?.RememberWindowPosition ?? true;
+            JpegQuality = Math.Clamp(ReadSectionOrNull(appSettings, ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings, unreadable)?.JpegQuality ?? 85, 1, 100);
             // One shared GetSection call for both fields (code-review fix: was two independent
             // deserializations of the same section), matching Program.cs's own one-shared-read shape.
-            var appearanceSettings = appSettings.GetSection(AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
+            var appearanceSettings = ReadSectionOrNull(appSettings, AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings, unreadable);
             AppTheme = appearanceSettings?.Theme ?? AppTheme.Light;
             FontScale = appearanceSettings?.FontScale ?? AppFontScale.Normal;
             DecodingIndicatorBlinks = appearanceSettings?.DecodingIndicatorBlinks ?? AppearanceSettings.DefaultDecodingIndicatorBlinks;
-            LoadDrmOptions(appSettings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings));
-            await LoadDrmReceiveAsync();
+            LoadDrmOptions(ReadSectionOrNull(appSettings, DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings, unreadable));
+            await LoadDrmReceiveAsync(unreadable);
 
             // SWR auto-cutoff (2026-08-26, relocated here from TxControlsPaneView's own Output card
             // per user request -- see RadioSafetySpec's own doc comment for why this is Abstractions,
@@ -61,9 +62,18 @@ public sealed partial class OptionsWindowViewModel
             // reconstructed). NOT part of OptionsSnapshot/_optionsSettingsService -- RadioSafety is its
             // own settings section, saved via _radioSession.SaveSafetySettingsAsync (SaveAsync below),
             // same reasoning as why RadioConnectionSettings itself isn't in the snapshot either.
-            var safetySpec = await _radioSession.GetSafetySettingsAsync();
-            SwrCutoffEnabled = safetySpec.SwrCutoffEnabled;
-            SwrCutoffThreshold = safetySpec.SwrCutoffThreshold;
+            try
+            {
+                var safetySpec = await _radioSession.GetSafetySettingsAsync();
+                SwrCutoffEnabled = safetySpec.SwrCutoffEnabled;
+                SwrCutoffThreshold = safetySpec.SwrCutoffThreshold;
+            }
+            catch (System.Text.Json.JsonException ex)
+            {
+                // Cutoff stays off, which is what the TX pane enforces for the same unreadable section.
+                Log.SectionUnreadable(_logger, RadioSafetySectionKey, ex);
+                unreadable.Add(RadioSafetySectionKey);
+            }
 
             await _audioDeviceEnumerator.RefreshAsync();
             CaptureDevices.Clear();
@@ -103,6 +113,11 @@ public sealed partial class OptionsWindowViewModel
                     ?? PlaybackDevices.FirstOrDefault(d => d.IsDefault)
                 : PlaybackDevices.FirstOrDefault(d => d.IsDefault);
 
+            if (unreadable.Count > 0)
+            {
+                SaveErrorMessage = _localization.GetString("Options.Load.UnreadableSections", string.Join(", ", unreadable));
+            }
+
             _loadSucceeded = true;
         }
         catch (Exception ex)
@@ -117,6 +132,38 @@ public sealed partial class OptionsWindowViewModel
             // else ever notifies it (unlike SaveCommand, which this method already covered).
             ApplyCommand.NotifyCanExecuteChanged();
         }
+    }
+
+    // Literal keys: the owning settings types live in Core projects this UI layer must not reference.
+    private const string RadioSafetySectionKey = "RadioSafety";
+    private const string DrmRxSectionKey = "DrmRx";
+
+    /// <summary>Reads one section this dialog owns directly. An unreadable section returns null (the
+    /// caller's defaults) and its key is added to <paramref name="unreadable"/>.</summary>
+    private T? ReadSectionOrNull<T>(AppSettings settings, string key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, List<string> unreadable)
+        where T : class
+    {
+        if (settings.TryReadSection(key, typeInfo, out var value, out var error))
+        {
+            return value;
+        }
+
+        Log.SectionUnreadable(_logger, key, error);
+        unreadable.Add(key);
+        return null;
+    }
+
+    /// <summary>Returns <paramref name="settings"/> with <paramref name="key"/> set aside when it
+    /// cannot be read, so the write that follows does not lose the raw text.</summary>
+    private AppSettings SetAsideIfUnreadable<T>(AppSettings settings, string key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo)
+    {
+        if (settings.TryReadSection(key, typeInfo, out _, out _))
+        {
+            return settings;
+        }
+
+        Log.SectionSetAside(_logger, key, settings.Sections.ContainsKey(key + AppSettingsSectionExtensions.UnreadableSuffix));
+        return settings.SetSectionAside(key);
     }
 
     private void ApplyFromSnapshot(OptionsSnapshot snapshot)
@@ -721,6 +768,10 @@ public sealed partial class OptionsWindowViewModel
             var drmUpdate = CaptureDrmOptionsUpdate();
             await _settingsStore.UpdateAsync(appSettings =>
             {
+                appSettings = SetAsideIfUnreadable(appSettings, DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings);
+                appSettings = SetAsideIfUnreadable(appSettings, WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings);
+                appSettings = SetAsideIfUnreadable(appSettings, ImageExportSettings.SectionKey, ImageExportSettingsJsonContext.Default.ImageExportSettings);
+                appSettings = SetAsideIfUnreadable(appSettings, AppearanceSettings.SectionKey, AppearanceSettingsJsonContext.Default.AppearanceSettings);
                 var currentDrm = appSettings.GetSection(DrmSettings.SectionKey, DrmSettingsJsonContext.Default.DrmSettings) ?? new DrmSettings();
                 appSettings = appSettings.WithSection(DrmSettings.SectionKey, drmUpdate(currentDrm), DrmSettingsJsonContext.Default.DrmSettings);
                 var currentGeometry = appSettings.GetSection(WindowGeometrySettings.SectionKey, WindowGeometrySettingsJsonContext.Default.WindowGeometrySettings) ?? new WindowGeometrySettings();

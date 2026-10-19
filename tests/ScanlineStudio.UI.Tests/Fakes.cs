@@ -440,7 +440,10 @@ internal sealed class FakeSstvSessionService : ISstvSessionService
 
     public Exception? SetDrmReceiveEnabledFailure { get; set; }
 
-    public Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default) => Task.FromResult(SavedDrmReceiveEnabled);
+    public Exception? GetDrmReceiveEnabledFailure { get; set; }
+
+    public Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default) =>
+        GetDrmReceiveEnabledFailure is { } failure ? Task.FromException<bool>(failure) : Task.FromResult(SavedDrmReceiveEnabled);
 
     public Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default)
     {
@@ -1426,7 +1429,10 @@ internal sealed class FakeRadioSessionService : IRadioSessionService, IDisposabl
 
     public RadioSafetySpec SafetySpec { get; set; } = new(false, RadioSafetySpec.DefaultSwrCutoffThreshold);
 
-    public Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default) => Task.FromResult(SafetySpec);
+    public Exception? GetSafetySettingsFailure { get; set; }
+
+    public Task<RadioSafetySpec> GetSafetySettingsAsync(CancellationToken ct = default) =>
+        GetSafetySettingsFailure is { } failure ? Task.FromException<RadioSafetySpec>(failure) : Task.FromResult(SafetySpec);
 
     public Task SaveSafetySettingsAsync(RadioSafetySpec spec, CancellationToken ct = default)
     {

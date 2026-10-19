@@ -1155,6 +1155,12 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading Options failed; dialog may render with defaults")]
         public static partial void LoadFailed(ILogger logger, Exception ex);
 
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Settings section {SectionKey} could not be read; the Options dialog shows its defaults")]
+        public static partial void SectionUnreadable(ILogger logger, string sectionKey, Exception? ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable settings section {SectionKey} kept under its .unreadable key (replaced an earlier copy: {ReplacedEarlier}) and rewritten from the Options dialog")]
+        public static partial void SectionSetAside(ILogger logger, string sectionKey, bool replacedEarlier);
+
         [LoggerMessage(Level = LogLevel.Debug, Message = "Save invoked: radioBackend={RadioBackendId}, sampleRate={SampleRate}, culture={CultureCode}")]
         public static partial void SaveInvoked(ILogger logger, string radioBackendId, int sampleRate, string? cultureCode);
 

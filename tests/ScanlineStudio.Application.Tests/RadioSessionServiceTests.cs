@@ -269,6 +269,21 @@ public sealed class RadioSessionServiceTests
     }
 
     [Fact]
+    public async Task SaveSafetySettingsAsync_UnreadableSection_KeepsItsRawTextAside_AndWritesTheNewValues()
+    {
+        var raw = System.Text.Json.JsonDocument.Parse("{\"SwrCutoffEnabled\":\"yes\"}").RootElement.Clone();
+        var settingsStore = new FakeSettingsStore { Settings = new AppSettings { Sections = new() { [RadioSafetySettings.SectionKey] = raw } } };
+        var service = new RadioSessionService(new FakeRadioController(), settingsStore, [], NullLogger<RadioSessionService>.Instance);
+
+        await service.SaveSafetySettingsAsync(new RadioSafetySpec(true, 2.5));
+
+        Assert.Equal(raw.GetRawText(), settingsStore.Settings.Sections[RadioSafetySettings.SectionKey + ".unreadable"].GetRawText());
+        var spec = await service.GetSafetySettingsAsync();
+        Assert.True(spec.SwrCutoffEnabled);
+        Assert.Equal(2.5, spec.SwrCutoffThreshold);
+    }
+
+    [Fact]
     public async Task SaveSafetySettingsAsync_RaisesSafetySettingsChanged_WithTheSavedValue()
     {
         // Code-review finding: TxControlsPaneViewModel's own live-propagation coverage

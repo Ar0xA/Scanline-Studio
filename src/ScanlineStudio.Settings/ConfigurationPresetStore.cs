@@ -339,6 +339,8 @@ public sealed partial class ConfigurationPresetStore : IConfigurationPresetStore
     {
         var sections = settings.Sections
             .Where(kvp => !ExcludedSectionKeys.Contains(kvp.Key, StringComparer.Ordinal))
+            // A set-aside unreadable section is raw text that redaction cannot parse; it may hold a secret.
+            .Where(kvp => !kvp.Key.EndsWith(AppSettingsSectionExtensions.UnreadableSuffix, StringComparison.Ordinal))
             .ToDictionary(kvp => kvp.Key, kvp => kvp.Value);
 
         RedactSensitiveFields(sections, logRedactions);
