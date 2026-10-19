@@ -116,13 +116,13 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="OpenBlankEditorAsync"/>).</summary>
     private bool _currentEditorIsBlank;
 
-    /// <summary>Mode-switch-mid-edit feature: the filename to close over for whichever editor is
-    /// CURRENTLY open, for <see cref="ReplaceEditorForModeSwitch"/>'s own
-    /// Applied/AppliedAndTransmitRequested wiring. <see cref="SelectedFileName"/> can't serve this
-    /// purpose -- it's only ever set by <see cref="OnEditorApplied"/>, so it's
-    /// <see langword="null"/> for a blank or just-opened-but-not-yet-applied editor, exactly the
-    /// population a mid-edit mode switch targets. Set alongside every editor construction
-    /// (<see cref="OpenEditorWithLoadedSourceAsync"/>), cleared alongside every
+    /// <summary>The file name of whichever editor is CURRENTLY open: read by <see cref="OnEditorApplied"/>
+    /// at Apply time and carried forward by <see cref="ReplaceEditorForModeSwitch"/>.
+    /// <see cref="SelectedFileName"/> can't serve this purpose -- it's only ever set by
+    /// <see cref="OnEditorApplied"/>, so it's <see langword="null"/> for a blank or
+    /// just-opened-but-not-yet-applied editor. Set alongside every editor construction
+    /// (<see cref="OpenEditorWithLoadedSourceAsync"/>, <see cref="ReplaceEditorForModeSwitch"/>) and by
+    /// <see cref="OpenEditorForSourceAsync"/>'s in-place background load, cleared alongside every
     /// <c>_currentEditor = null</c>.</summary>
     private string? _currentEditorFileName;
 
@@ -1477,8 +1477,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 return true;
             }
 
+            // A mode switch, New Template or a second pick during the await changes the editor; the stale pick must not land.
+            if (!ReferenceEquals(editor, _currentEditor) || editor.HasRealBackground)
+            {
+                Log.InPlaceBackgroundLoadSuperseded(_logger, fileName);
+                return true;
+            }
+
             editor.LoadBackground(inPlaceSource);
             TrackSourcePath(editor, SourcePathOf(source));
+            _currentEditorFileName = fileName;
             return true;
         }
 
@@ -1641,8 +1649,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 // is threaded explicitly by every caller instead -- see OpenEditorForSourceAsync's
                 // own doc comment for the full reasoning.
                 currentContactProvider: seedLiveContact ? BuildCurrentContactVariables : null);
-            editor.Applied += final => OnEditorApplied(fileName, editor, final);
-            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
+            editor.Applied += final => OnEditorApplied(editor, final);
+            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -1693,17 +1701,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// (<see cref="_editState"/>/<see cref="_loadedImage"/>/<see cref="PreviewImage"/>/
     /// <see cref="SelectedFileName"/>) -- only the close/dispose/<see cref="EditorClosed"/>-fire steps
     /// are gone. <see cref="_currentEditorIsBlank"/> is still set <see langword="false"/> here (an
-    /// applied editor is no longer the untouched blank placeholder) and <see cref="_currentEditorFileName"/>
-    /// is deliberately left untouched (already correctly set moments earlier in this same method, and
-    /// <see cref="_currentEditor"/> is never nulled anymore so there is nothing to keep it in sync
-    /// with). 3-round `yoniq-auditor` finding: with <see cref="IsEditorOpen"/> no longer toggling,
+    /// applied editor is no longer the untouched blank placeholder) and <see cref="SelectedFileName"/> is read
+    /// from <see cref="_currentEditorFileName"/>, which an in-place background load may have updated
+    /// since the editor opened. 3-round `yoniq-auditor` finding: with <see cref="IsEditorOpen"/> no longer toggling,
     /// <see cref="OnIsEditorOpenChanged"/>'s own notifications never fire for this transition anymore
     /// -- <see cref="QuickSelectModeCommand"/> and <see cref="CanChangeSourceOrMode"/>/
     /// <see cref="CanLoadBackground"/> must be re-notified directly here, or Browse/Stock/Copy-to-TX/
     /// the mode ComboBox would stay visibly enabled while silently refusing underneath (the same
     /// "enabled but inert" regression class this codebase has hit and fixed before, see
     /// <see cref="CanChangeSourceOrMode"/>'s own doc comment).</summary>
-    private void OnEditorApplied(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
+    private void OnEditorApplied(TxImageEditorPaneViewModel editor, IImageSource final)
     {
         if (!ReferenceEquals(editor, _currentEditor)) return;
         // editor.CurrentSource, NOT the pre-rotation IImageSource this method used to receive as
@@ -1718,7 +1725,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _loadedImage = final;
         _loadedImageSourcePath = CurrentBackgroundSourcePath(editor);
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
-        SelectedFileName = fileName;
+        SelectedFileName = _currentEditorFileName;
         ErrorMessage = null;
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
@@ -1737,10 +1744,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// IsTransmitting/IsRunningLoopbackSelfTest could in principle have flipped true between the
     /// button click and this handler running (both are UI-thread-only today, so not reachable in
     /// practice, but the guard costs nothing and avoids depending on that staying true).</summary>
-    private void OnEditorAppliedAndTransmit(string fileName, TxImageEditorPaneViewModel editor, IImageSource final)
+    private void OnEditorAppliedAndTransmit(TxImageEditorPaneViewModel editor, IImageSource final)
     {
         if (!ReferenceEquals(editor, _currentEditor)) return;
-        OnEditorApplied(fileName, editor, final);
+        OnEditorApplied(editor, final);
         if (TransmitCommand.CanExecute(null))
         {
             TransmitCommand.Execute(null);
@@ -1901,8 +1908,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
                 carriedOverUnsavedEdits: hadUnsavedEdits,
                 transmitStatusNow: () => (IsTransmitting, TransmitProgress, TransmitProgressText),
                 carriedOverDirtySinceCheckpoint: wasDirtySinceCheckpoint);
-            editor.Applied += final => OnEditorApplied(fileName, editor, final);
-            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(fileName, editor, final);
+            editor.Applied += final => OnEditorApplied(editor, final);
+            editor.AppliedAndTransmitRequested += final => OnEditorAppliedAndTransmit(editor, final);
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
@@ -2608,6 +2615,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Loading TX source image failed: {FileName}")]
         public static partial void LoadTxSourceImageFailed(ILogger logger, string fileName, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "In-place background load of {FileName} dropped: the editor was replaced or got a background while it loaded")]
+        public static partial void InPlaceBackgroundLoadSuperseded(ILogger logger, string fileName);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Opening the TX image editor failed: {FileName}")]
         public static partial void OpenTxEditorFailed(ILogger logger, string fileName, Exception ex);

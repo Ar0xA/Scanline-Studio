@@ -365,10 +365,12 @@ real QSSTV/EasyPal WAVs for P8.
   need their own design (QSSTV sends the source size capped at 1024).
 - **DRM-QGRID.** OPEN — a DRM slot on the TX quick-mode grid, cut from P4b: the grid types are shared with RX
   (`QuickModeGridViewModels.cs`, `RxImagePaneViewModel.cs` quick-grid), so DRM is selectable from the mode ComboBox only.
-- **TX-BLANKNAME.** OPEN — pre-existing: after a Browse into the default blank editor (in-place background load),
-  `SelectedFileName` still shows "Blank" after Apply, because the editor keeps the blank editor's file name
-  (`TxControlsPaneViewModel.OpenEditorForSourceAsync` in-place branch). Not caused by DRM; the DRM on-air name
-  uses its own tracked source path.
+- **TX-NAME-SYNC.** OPEN, minor — the TX file name is not re-synced with the background in three pre-existing cases:
+  (a) `ShowBackgroundPreview` (`TxControlsPaneViewModel.cs` ~:1075) pairs the last applied `SelectedFileName` with
+  the live `HasRealBackground`, so an in-place pick after an earlier Apply of a blank canvas shows "Blank" on the
+  card until the next Apply; (b) Undo of an in-place pick or Remove Background keeps the picked name, which TX
+  history then records; (c) Demote-backdrop-to-background (`TxImageEditorPaneViewModel.Bake.cs` ~:61) never
+  updates the name. Found by `yoniq-auditor` during TX-BLANKNAME, 2026-10-19.
 - **DRM-JP2TIME.** OPEN (record) — JP2 encode time on this machine (Ryzen 7 5800X, OpenJPEG 2.5.4, median of 5):
   640×480 20 KB 17 ms / 100 KB 19 ms; 800×600 20 KB 27 ms / 100 KB 28 ms (photo-like source; a flat card
   9-15 ms). Frame count for the recount: 12-46 ms. The 400 ms debounce, not the encode, dominates the estimate
@@ -641,6 +643,10 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **TX-BLANKNAME.** DONE 2026-10-19 — an in-place Browse/Stock pick into the blank editor now sets the editor's
+  file name, and Apply reads the current name instead of the one captured when the editor opened. A pick that
+  completes after the editor was replaced, or after another pick already set a background, is dropped and logged.
+  Five new tests in `PaneViewModelTests`, all mutation-proven. Auditor: 1 plan review + 1 code review, go.
 - **UX-MODESWITCH-DIRTY.** DONE 2026-10-19 — a mode switch no longer marks a clean loaded template dirty. The new
   editor's checkpoint-relative dirtiness is seeded from the old editor's `IsDirtySinceLastCheckpoint` (new ctor param
   `carriedOverDirtySinceCheckpoint`); `HasUnsavedEdits` still carries over for the blank-and-untouched check.

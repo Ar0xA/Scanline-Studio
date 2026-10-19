@@ -4906,6 +4906,124 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_BrowseIntoBlankEditorInPlace_ThenApply_ShowsThePickedFileName()
+    {
+        var (vm, _, editor, _) = await OpenBlankEditorForInPlaceBrowseAsync();
+
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(editor, ExtractCurrentEditor(vm));
+        Assert.True(editor.HasRealBackground);
+
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("a.png", vm.SelectedFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_BrowseIntoBlankEditorInPlace_ThenModeSwitch_ThenApply_ShowsThePickedFileName()
+    {
+        var (vm, modeB, _, _) = await OpenBlankEditorForInPlaceBrowseAsync();
+        await vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        var reopened = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
+        Assert.True(reopened.HasRealBackground);
+        reopened.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("a.png", vm.SelectedFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_StockPickIntoBlankEditorInPlace_ThenApply_ShowsTheStockFileName()
+    {
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [TestMode] };
+        var stockEntry = new StockImageEntry("s1", "stock.jpg", "/tmp/stock.jpg");
+        var stockLibrary = new FakeStockImageLibrary { FullImageToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, new FakeImageFileLoader(), stockLibrary, new FakeTransmitImagePreparer(), new FakeFilePickerService(), new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+
+        await vm.SelectStockImageCommand.ExecuteAsync(stockEntry);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Same(editor, ExtractCurrentEditor(vm));
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("stock.jpg", vm.SelectedFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_InPlaceBrowse_EditorReplacedWhileLoading_DropsThePickAndKeepsTheNewEditorsName()
+    {
+        var (vm, modeB, oldEditor, loader) = await OpenBlankEditorForInPlaceBrowseAsync();
+        loader.UseManualGating = true;
+
+        var pick = vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var pending = Assert.Single(loader.PendingLoads);
+        var replacement = await OpenEditorAsync(vm, () =>
+        {
+            vm.QuickSelectModeCommand.Execute(modeB.Id);
+            return Task.CompletedTask;
+        });
+        Assert.NotSame(oldEditor, replacement);
+
+        pending.SetResult(new ArrayImageSource(9, 7, new Rgb24[63]));
+        await pick;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.False(replacement.HasRealBackground);
+        Assert.Null(vm.ErrorMessage);
+        replacement.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("Panes.TxControls.BlankImageName", vm.SelectedFileName);
+    }
+
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_TwoOverlappingInPlacePicks_TheLaterCompletionIsDropped_NameMatchesTheBackground()
+    {
+        var (vm, _, editor, loader) = await OpenBlankEditorForInPlaceBrowseAsync();
+        var stockEntry = new StockImageEntry("s1", "stock.jpg", "/tmp/stock.jpg");
+        loader.UseManualGating = true;
+
+        var browse = vm.SelectImageCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+        var pending = Assert.Single(loader.PendingLoads);
+        await vm.SelectStockImageCommand.ExecuteAsync(stockEntry);
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(editor.HasRealBackground);
+
+        pending.SetResult(new ArrayImageSource(5, 5, new Rgb24[25]));
+        await browse;
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(9, editor.CurrentSource.Width);
+        editor.ApplyCommand.Execute(null);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal("stock.jpg", vm.SelectedFileName);
+    }
+
+    private static async Task<(TxControlsPaneViewModel Vm, SstvModeDefinition ModeB, TxImageEditorPaneViewModel Editor, FakeImageFileLoader Loader)> OpenBlankEditorForInPlaceBrowseAsync()
+    {
+        var modeA = TestMode;
+        var modeB = TestMode with { Id = "other", ImageWidth = 2, ImageHeight = 2 };
+        var sstvSession = new FakeSstvSessionService { AvailableModes = [modeA, modeB] };
+        var imageFileLoader = new FakeImageFileLoader { ResultToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var filePicker = new FakeFilePickerService { PathToReturn = "/tmp/a.png" };
+        var stockLibrary = new FakeStockImageLibrary { FullImageToReturn = new ArrayImageSource(9, 7, new Rgb24[63]) };
+        var vm = new TxControlsPaneViewModel(sstvSession, imageFileLoader, stockLibrary, new FakeTransmitImagePreparer(), filePicker, new FakeLocalizationService(), new FakeSettingsStore(), new FakeRadioSessionService(), new MacroTextResolver(), NullLogger<TxControlsPaneViewModel>.Instance, NullLogger<TxImageEditorPaneViewModel>.Instance, new FakeReceivedImageBuffer(), new FakeReceiveHistoryStore(), new FakeTemplateStore(), new FakeImageSourceWriter(), NullLogger<ReadyRackViewModel>.Instance);
+        vm.SelectedMode = modeA;
+        var editor = await OpenEditorAsync(vm, () => vm.OpenBlankEditorCommand.ExecuteAsync(null));
+        return (vm, modeB, editor, imageFileLoader);
+    }
+
+    [AvaloniaFact]
     public async Task TxControlsPaneViewModel_SelectImageCommand_LoadFailsWithOverlayElementsButNoBackground_LeavesTheEditorUntouched()
     {
         // Unlike the wholesale-replace failure path (which used to nuke the whole editor even for a
