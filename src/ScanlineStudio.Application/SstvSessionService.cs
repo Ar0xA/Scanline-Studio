@@ -865,6 +865,20 @@ public sealed partial class SstvSessionService : ISstvSessionService
 #pragma warning restore CA1031
     }
 
+    /// <summary>Read-only section read for receive start and file decode: an unreadable section is logged
+    /// and reported as false instead of throwing, so one bad section does not stop receive. Never writes.</summary>
+    private bool TryReadSectionForRx<T>(AppSettings settings, string key, System.Text.Json.Serialization.Metadata.JsonTypeInfo<T> typeInfo, out T? value)
+        where T : class
+    {
+        if (settings.TryReadSection(key, typeInfo, out value, out var error))
+        {
+            return true;
+        }
+
+        SafeLog(() => Log.RxSectionUnreadable(_logger, key, error));
+        return false;
+    }
+
     // T1-3 (production_audit.md): batches its output into fixed-size chunks instead of yielding one
     // float per await, so PlayWithPttAsync/PumpToPlaybackAsync can consume Tune's own tone the same
     // way as a real SSTV transmission's audio -- see PlayWithPttAsync's own comment for why. Plan-
@@ -1048,6 +1062,9 @@ public sealed partial class SstvSessionService : ISstvSessionService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Settings section {SectionKey} is unreadable; receive uses the last known or default values. Open Options and Save to repair it")]
+        public static partial void RxSectionUnreadable(ILogger logger, string sectionKey, Exception? ex);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "Decoder PushSamples threw ({Count} occurrences so far)")]
         public static partial void DecoderPushSamplesFailed(ILogger logger, int count, Exception ex);
 

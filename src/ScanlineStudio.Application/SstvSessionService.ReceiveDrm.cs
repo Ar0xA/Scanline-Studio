@@ -125,10 +125,13 @@ public sealed partial class SstvSessionService
     }
 
     // Start's seed: skipped when a Set landed after generationBeforeLoad, so a stale load never overwrites it.
+    // Also skipped when the section is unreadable: the toggle then keeps the last persisted or Set value.
     private void SeedDrmToggle(AppSettings appSettings, long generationBeforeLoad)
     {
-        bool persisted = appSettings.GetSection(DrmRxSettings.SectionKey, DrmRxSettingsJsonContext.Default.DrmRxSettings)?.RxEnabled
-            ?? DrmRxSettings.DefaultRxEnabled;
+        if (!TryReadSectionForRx(appSettings, DrmRxSettings.SectionKey, DrmRxSettingsJsonContext.Default.DrmRxSettings, out var section))
+            return;
+
+        bool persisted = section?.RxEnabled ?? DrmRxSettings.DefaultRxEnabled;
         lock (_drmToggleLock)
         {
             if (_drmToggleGeneration == generationBeforeLoad)

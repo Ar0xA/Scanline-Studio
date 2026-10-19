@@ -503,12 +503,12 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
 ### CQ-P2. OPEN — fix when touching the code
 
 User data, safety and error paths:
+- **FLAKY-AUTOSAVE-SCRATCH.** OPEN, test-only — `SstvSessionServiceAudioAutoSaveTests.ScratchRetention_MoreThanEightUnconsumedSlices_EvictsOldestFirst_NewestExempt`
+  failed in 2 of 3 full Application.Tests runs on 2026-10-19 and passes 5/5 standalone: a timing dependency under load.
 - **CQ-09-F2-FOLLOWUPS.** OPEN, minor. (a) With `QrzLookup` unreadable, Options shows "keyring locked" plus an Unlock
   button that cannot help (`QrzCredentialService.ReadAsync` returns Unavailable; `OptionsWindowViewModel.QrzAndForwarding.cs`
   ~:65); a distinct "unreadable" status would fix it. (b) A plaintext password inside `QrzLookup.unreadable` is never
-  moved to the keyring (help says to delete the entry). (c) RX start reads `DrmRx` (`SeedDrmToggle`,
-  `SstvSessionService.ReceiveDrm.cs` ~:130) and `StationId` (`SstvSessionService.Receive.cs` ~:97) with `GetSection`, so an
-  unreadable section may stop RX from starting until Options repairs it; check whether a caller catches it. (d) A
+  moved to the keyring (help says to delete the entry). (d) A
   malformed `QrzLookup` inside a preset file overwrites a readable live one on apply and drops the live plaintext
   password without setting it aside (`ConfigurationPresetService.cs` ~:275). Pre-existing.
 - **CQ-11-F14-FOLLOWUPS.** OPEN, minor. If CI is re-enabled: `ci.yml` checkout still persists credentials and has no
@@ -633,6 +633,11 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-09-F2-FOLLOWUPS (c).** DONE 2026-10-19 — an unreadable `DrmRx` or `StationId` section no longer stops receive or
+  file decode. DrmRx: the start seed is skipped, so the toggle keeps its last persisted/Set value (fresh process: on).
+  StationId: receive-side defaults. Both log a Warning naming the section. Read-only, never writes. An unreadable
+  `Audio` section still stops receive and transmit on purpose (device and TX level). 5 new tests, 4 mutations caught.
+  Auditor: 2 plan reviews + 1 code review, go.
 - **CQ-11-F14.** DONE 2026-10-19 — every `uses:` in the three workflows is pinned to a commit SHA (checkout v4.4.0,
   setup-dotnet v4.3.1, msvc-dev-cmd v1.13.0; each matched its floating tag, so behaviour is unchanged). Both release
   checkouts set `persist-credentials: false`; the upload step uses `GH_TOKEN`. Auditor: 1 code review, go.

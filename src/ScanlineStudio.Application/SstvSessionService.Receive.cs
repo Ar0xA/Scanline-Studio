@@ -94,8 +94,9 @@ public sealed partial class SstvSessionService
         long drmToggleGenerationBeforeLoad = ReadDrmToggleGeneration();
         var appSettings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
         SeedDrmToggle(appSettings, drmToggleGenerationBeforeLoad);
-        var stationIdSettings = appSettings.GetSection(StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings)
-            ?? new StationIdSettings();
+        // Receive-only decode toggles: an unreadable section falls back to defaults rather than stopping receive.
+        _ = TryReadSectionForRx(appSettings, StationIdSettings.SectionKey, StationIdSettingsJsonContext.Default.StationIdSettings, out var stationIdSection);
+        var stationIdSettings = stationIdSection ?? new StationIdSettings();
         _decoder.StationIdDecodeEnabled = stationIdSettings.FskIdRxEnabled ?? StationIdSettings.DefaultFskIdRxEnabled;
 
         // fsk_cwid.md §8.2: same "re-read the persisted section, cache into a field" pattern as
