@@ -45,6 +45,7 @@ public sealed partial class MacrosReferenceWindowViewModel : ViewModelBase
             new MacroTokenReference("%m", localization.GetString("Macros.Token.OperatorCallsign")),
             new MacroTokenReference("%D", localization.GetString("Macros.Token.Date")),
             new MacroTokenReference("%T", localization.GetString("Macros.Token.Time")),
+            new MacroTokenReference("%v", localization.GetString("Macros.Token.Version")),
             new MacroTokenReference("{name}", localization.GetString("Macros.Token.Name")),
             new MacroTokenReference("{grid}", localization.GetString("Macros.Token.Grid")),
             new MacroTokenReference("{freq}", localization.GetString("Macros.Token.Frequency")),

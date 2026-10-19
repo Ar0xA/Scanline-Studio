@@ -18,11 +18,11 @@ public sealed class MacrosReferenceWindowViewModelTests
         var vm = CreateViewModel();
         Dispatcher.UIThread.RunJobs();
 
-        // MacroTextResolver.cs's own known-token set: %m/%D/%T (percent-tokens) plus
+        // MacroTextResolver.cs's own known-token set: %m/%D/%T/%v (percent-tokens) plus
         // name/grid/freq/mode/dist/bearing (brace-tokens) -- this dialog has no user-extensible
         // list, so this is meant to be the complete, fixed set.
         Assert.Equal(
-            ["%m", "%D", "%T", "{name}", "{grid}", "{freq}", "{mode}", "{dist}", "{bearing}"],
+            ["%m", "%D", "%T", "%v", "{name}", "{grid}", "{freq}", "{mode}", "{dist}", "{bearing}"],
             vm.Tokens.Select(t => t.Token));
         Assert.All(vm.Tokens, t => Assert.False(string.IsNullOrWhiteSpace(t.Description)));
     }

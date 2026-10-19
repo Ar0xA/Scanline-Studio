@@ -26,6 +26,8 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
     private static readonly Rgb24 Yellow = new(255, 214, 0);
     private static readonly Rgb24 Navy = new(16, 48, 112);
     private static readonly Rgb24 DarkRed = new(112, 16, 16);
+    private static readonly Rgb24 GradientRed = new(255, 80, 80);
+    private static readonly Rgb24 GradientBlue = new(90, 150, 255);
 
     // Half the starters get a bundled backdrop (original art, scripts/generate_template_backdrops.py).
     internal static readonly IReadOnlyDictionary<string, string> Backdrops = new Dictionary<string, string>(StringComparer.Ordinal)
@@ -163,43 +165,58 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
     [
         ("Templates.Default.CqBanner",
         [
-            Box(0.5, 0.12, 1.0, 0.24, 0, Black, 0.55),
-            Text(0.5, 0.12, 0.92, 0.22, 1, "CQ CQ CQ", 0.16, White, Black, 0.012),
-            Box(0.5, 0.9, 1.0, 0.2, 2, Black, 0.55),
-            Text(0.5, 0.9, 0.92, 0.18, 3, "DE %m", 0.13, Yellow, Black, 0.012),
+            .. VersionLine(),
+            Box(0.5, 0.175, 1.0, 0.22, 2, Black, 0.55),
+            Text(0.5, 0.175, 0.92, 0.2, 3, "CQ CQ CQ", 0.16, White, Black, 0.012),
+            Box(0.5, 0.9, 1.0, 0.2, 4, Black, 0.55),
+            Text(0.5, 0.9, 0.92, 0.18, 5, "DE %m", 0.13, Yellow, Black, 0.012),
         ]),
         ("Templates.Default.CqClassic",
         [
-            Text(0.22, 0.2, 0.4, 0.34, 0, "CQ", 0.28, Yellow, Black, 0.02, shadow: true),
-            Text(0.22, 0.42, 0.34, 0.14, 1, "SSTV", 0.09, White, Black, 0.015),
-            Text(0.66, 0.88, 0.64, 0.18, 2, "DE %m", 0.12, White, Black, 0.015, shadow: true),
+            .. VersionLine(),
+            Text(0.22, 0.235, 0.4, 0.34, 2, "CQ", 0.28, Yellow, Black, 0.02, shadow: true),
+            Text(0.22, 0.455, 0.34, 0.14, 3, "SSTV", 0.09, White, Black, 0.015),
+            Text(0.66, 0.88, 0.64, 0.18, 4, "DE %m", 0.12, White, Black, 0.015, shadow: true),
         ]),
         ("Templates.Default.ReplyRstBanner",
         [
-            Box(0.5, 0.1, 1.0, 0.2, 0, Navy, 0.7),
-            Text(0.5, 0.1, 0.94, 0.18, 1, "{his_call} DE %m", 0.11, White, Black, 0.01),
-            Box(0.5, 0.9, 1.0, 0.2, 2, Navy, 0.7),
-            Text(0.5, 0.9, 0.94, 0.18, 3, "UR RSV {rsv}", 0.12, Yellow, Black, 0.01),
+            .. VersionLine(),
+            Box(0.5, 0.165, 1.0, 0.2, 2, Navy, 0.7),
+            Text(0.5, 0.165, 0.94, 0.18, 3, "{his_call} DE %m", 0.11, White, Black, 0.01),
+            Box(0.5, 0.9, 1.0, 0.2, 4, Navy, 0.7),
+            Text(0.5, 0.9, 0.94, 0.18, 5, "UR RSV {rsv}", 0.12, Yellow, Black, 0.01),
         ]),
         ("Templates.Default.ReplyBigCall",
         [
-            Text(0.5, 0.14, 0.92, 0.26, 0, "{his_call}", 0.18, Yellow, Black, 0.02, shadow: true),
-            Box(0.5, 0.9, 1.0, 0.2, 1, Black, 0.55),
-            Text(0.27, 0.9, 0.5, 0.18, 2, "RSV {rsv}", 0.11, White, Black, 0.01),
-            Text(0.75, 0.9, 0.46, 0.18, 3, "DE %m", 0.11, Yellow, Black, 0.01),
+            .. VersionLine(),
+            Text(0.5, 0.2, 0.92, 0.26, 2, "{his_call}", 0.18, Yellow, Black, 0.02, shadow: true),
+            Box(0.5, 0.9, 1.0, 0.2, 3, Black, 0.55),
+            Text(0.27, 0.9, 0.5, 0.18, 4, "RSV {rsv}", 0.11, White, Black, 0.01),
+            Text(0.75, 0.9, 0.46, 0.18, 5, "DE %m", 0.11, Yellow, Black, 0.01),
         ]),
         ("Templates.Default.SeventyThreeBanner",
         [
-            Text(0.26, 0.09, 0.48, 0.16, 0, "TNX QSO", 0.1, White, Black, 0.015, shadow: true),
-            Box(0.5, 0.9, 1.0, 0.2, 1, DarkRed, 0.7),
-            Text(0.5, 0.9, 0.94, 0.18, 2, "73 {his_call} DE %m", 0.11, White, Black, 0.01),
+            .. VersionLine(),
+            Text(0.26, 0.155, 0.48, 0.16, 2, "TNX QSO", 0.1, White, Black, 0.015, shadow: true),
+            Box(0.5, 0.9, 1.0, 0.2, 3, DarkRed, 0.7),
+            Text(0.5, 0.9, 0.94, 0.18, 4, "73 {his_call} DE %m", 0.11, White, Black, 0.01),
         ]),
         ("Templates.Default.SeventyThreeBig",
         [
-            Text(0.5, 0.1, 0.92, 0.18, 0, "TNX QSO {his_call}", 0.1, White, Black, 0.015, shadow: true),
-            Text(0.8, 0.74, 0.36, 0.38, 1, "73", 0.3, Yellow, Black, 0.02, shadow: true, rotation: -8),
-            Text(0.3, 0.9, 0.56, 0.18, 2, "DE %m", 0.11, White, Black, 0.015, shadow: true),
+            .. VersionLine(),
+            Text(0.5, 0.165, 0.92, 0.18, 2, "TNX QSO {his_call}", 0.1, White, Black, 0.015, shadow: true),
+            Text(0.8, 0.74, 0.36, 0.38, 3, "73", 0.3, Yellow, Black, 0.02, shadow: true, rotation: -8),
+            Text(0.3, 0.9, 0.56, 0.18, 4, "DE %m", 0.11, White, Black, 0.015, shadow: true),
         ]),
+    ];
+
+    // Thin strip across the top naming the sending software, like legacy's "MMSSTV %v" starters.
+    private static PersistedTemplateElement[] VersionLine() =>
+    [
+        // Light red and blue so the gradient stays readable on the dark strip over any picture.
+        Box(0.5, 0.0325, 1.0, 0.065, 0, Black, 0.85),
+        new PersistedTextElement(0.5, 0.0325, 0.56, 0.06, 1, Locked: false, "Scanline Studio %v", 0.05, White, Font, StrokeColor: null, StrokeThickness: 0,
+            GradientEnabled: true, GradientKind: TextGradientKind.Horizontal, GradientStartColor: GradientRed, GradientEndColor: GradientBlue, Bold: true),
     ];
 
     private static PersistedTextElement Text(double x, double y, double w, double h, int z, string text, double size, Rgb24 color, Rgb24 stroke, double strokeThickness, bool shadow = false, double rotation = 0) =>

@@ -7,6 +7,24 @@ public sealed class MacroTextResolverTests
     private readonly MacroTextResolver _resolver = new();
 
     [Fact]
+    public void VersionToken_ResolvesToTheAppVersion()
+    {
+        var resolver = new MacroTextResolver("1.2.3-beta");
+
+        Assert.Equal("Scanline Studio 1.2.3-beta", resolver.Resolve("Scanline Studio %v", new OperatorSettings()));
+    }
+
+    [Fact]
+    public void VersionToken_DefaultsToTheBuildVersionWithoutTheCommitSuffix()
+    {
+        var resolved = new MacroTextResolver().Resolve("%v", new OperatorSettings());
+
+        Assert.False(string.IsNullOrWhiteSpace(resolved));
+        Assert.DoesNotContain('+', resolved);
+        Assert.NotEqual("%%", resolved);
+    }
+
+    [Fact]
     public void ResolvesCallsignToken()
     {
         var settings = new OperatorSettings { Callsign = "W1AW" };

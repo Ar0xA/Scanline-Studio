@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Reflection;
 using System.Text;
 using System.Text.RegularExpressions;
 using ScanlineStudio.Abstractions.Radio;
@@ -70,6 +71,27 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
     [GeneratedRegex(@"\{([A-Za-z0-9_]+)\}")]
     private static partial Regex BraceTokenPattern();
 
+    private readonly string _appVersion;
+
+    public MacroTextResolver()
+        : this(ReadAppVersion())
+    {
+    }
+
+    /// <summary><paramref name="appVersion"/> is what <c>%v</c> resolves to; a test seam.</summary>
+    public MacroTextResolver(string appVersion)
+    {
+        _appVersion = appVersion;
+    }
+
+    // Every assembly shares Directory.Build.props' <Version>; the SDK appends "+sha", stripped here.
+    private static string ReadAppVersion()
+    {
+        var info = typeof(MacroTextResolver).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? string.Empty;
+        var plus = info.IndexOf('+', StringComparison.Ordinal);
+        return (plus >= 0 ? info[..plus] : info).Trim();
+    }
+
     public string Resolve(string rawText, OperatorSettings operatorSettings, RadioState? radioState = null, IReadOnlyDictionary<string, string>? variables = null)
     {
         if (string.IsNullOrEmpty(rawText))
@@ -77,11 +99,11 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
             return rawText;
         }
 
-        var resolved = ResolvePercentTokens(rawText, operatorSettings);
+        var resolved = ResolvePercentTokens(rawText, operatorSettings, _appVersion);
         return ResolveBraceTokens(resolved, operatorSettings, radioState, variables);
     }
 
-    private static string ResolvePercentTokens(string rawText, OperatorSettings operatorSettings)
+    private static string ResolvePercentTokens(string rawText, OperatorSettings operatorSettings, string appVersion)
     {
         var sb = new StringBuilder(rawText.Length);
         // Doc note (Tier A Batch 10 chunk 10b): legacy's %D/%T don't read the system clock directly
@@ -115,6 +137,7 @@ public sealed partial class MacroTextResolver : IMacroTextResolver
                 'm' => string.IsNullOrWhiteSpace(operatorSettings.Callsign) ? OperatorSettings.CallsignFallback : operatorSettings.Callsign,
                 'D' => FormatDate(now), // Main.cpp:10762-10766 (UTC)
                 'T' => $"{now.Hour:D2}:{now.Minute:D2}", // Main.cpp:10772-10776 (UTC)
+                'v' => appVersion, // Main.cpp:10792-10793 (VERID VERBETA); the program name stays template text
                 _ => "%%", // Main.cpp:10817-10819 -- unrecognized AND literal %% both land here
             });
         }
