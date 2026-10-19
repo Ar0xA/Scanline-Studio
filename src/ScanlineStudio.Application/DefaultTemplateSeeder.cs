@@ -27,17 +27,38 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
     private static readonly Rgb24 Navy = new(16, 48, 112);
     private static readonly Rgb24 DarkRed = new(112, 16, 16);
 
+    // Half the starters get a bundled backdrop (original art, scripts/generate_template_backdrops.py).
+    internal static readonly IReadOnlyDictionary<string, string> Backdrops = new Dictionary<string, string>(StringComparer.Ordinal)
+    {
+        ["Templates.Default.CqClassic"] = "tower-dusk.png",
+        ["Templates.Default.ReplyBigCall"] = "waterfall.png",
+        ["Templates.Default.SeventyThreeBig"] = "globe-grid.png",
+    };
+
+    internal const string BackdropAssetFileName = "backdrop.png";
+    private const int BackdropPixelWidth = 640;
+    private const int BackdropPixelHeight = 512;
+
     private readonly ITemplateStore _templateStore;
     private readonly ISettingsStore _settingsStore;
     private readonly ILocalizationService _localization;
     private readonly ILogger<DefaultTemplateSeeder> _logger;
+    private readonly string _backdropDirectory;
 
     public DefaultTemplateSeeder(ITemplateStore templateStore, ISettingsStore settingsStore, ILocalizationService localization, ILogger<DefaultTemplateSeeder> logger)
+        : this(templateStore, settingsStore, localization, logger, Path.Combine(AppContext.BaseDirectory, "assets", "templates", "backdrops"))
+    {
+    }
+
+    /// <summary><paramref name="backdropDirectory"/> is a test seam; production reads the backdrops
+    /// copied beside the executable.</summary>
+    public DefaultTemplateSeeder(ITemplateStore templateStore, ISettingsStore settingsStore, ILocalizationService localization, ILogger<DefaultTemplateSeeder> logger, string backdropDirectory)
     {
         _templateStore = templateStore;
         _settingsStore = settingsStore;
         _localization = localization;
         _logger = logger;
+        _backdropDirectory = backdropDirectory;
     }
 
     public async Task<int> SeedIfNeededAsync(CancellationToken ct = default)
@@ -77,7 +98,9 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
 
             try
             {
-                await _templateStore.SaveAsync(_templateStore.CreateTemplateId(name), name, new PersistedTemplateDocument(elements), ct).ConfigureAwait(false);
+                var templateId = _templateStore.CreateTemplateId(name);
+                var document = await WithBackdropAsync(templateId, nameKey, elements, ct).ConfigureAwait(false);
+                await _templateStore.SaveAsync(templateId, name, document, ct).ConfigureAwait(false);
                 added++;
                 handled.Add(nameKey);
                 await RecordHandledAsync(handled, ct).ConfigureAwait(false);
@@ -94,6 +117,37 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
         return added;
     }
 
+    // The asset goes into the brand-new template folder before SaveAsync, which renders the thumbnail
+    // from it. A missing bundled file degrades to the overlay-only template rather than failing.
+    private async Task<PersistedTemplateDocument> WithBackdropAsync(string templateId, string nameKey, IReadOnlyList<PersistedTemplateElement> elements, CancellationToken ct)
+    {
+        if (!Backdrops.TryGetValue(nameKey, out var backdropFile))
+        {
+            return new PersistedTemplateDocument(elements);
+        }
+
+        var source = Path.Combine(_backdropDirectory, backdropFile);
+        if (!File.Exists(source))
+        {
+            Log.BackdropMissing(_logger, source);
+            return new PersistedTemplateDocument(elements);
+        }
+
+        var assetPath = _templateStore.GetAssetPath(templateId, BackdropAssetFileName);
+        Directory.CreateDirectory(Path.GetDirectoryName(assetPath)!);
+        await using (var input = File.OpenRead(source))
+        await using (var output = new FileStream(assetPath, FileMode.CreateNew, FileAccess.Write))
+        {
+            await input.CopyToAsync(output, ct).ConfigureAwait(false);
+        }
+
+        var backdrop = new PersistedImageElement(
+            X: 0.5, Y: 0.5, Width: 1.0, Height: 1.0, Z: -1, Locked: true,
+            BackdropAssetFileName, ImageFitMode.Cover, PersistedImageSourceKind.File, OriginPayload: null,
+            IsBackground: true, NaturalPixelWidth: BackdropPixelWidth, NaturalPixelHeight: BackdropPixelHeight);
+        return new PersistedTemplateDocument([backdrop, .. elements]);
+    }
+
     private Task<AppSettings> RecordHandledAsync(HashSet<string> handled, CancellationToken ct) =>
         _settingsStore.UpdateAsync(s =>
         {
@@ -103,7 +157,7 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
             return s.WithSection(DefaultTemplatesSettings.SectionKey, current with { HandledNameKeys = [.. handled.Order(StringComparer.Ordinal)] }, DefaultTemplatesSettingsJsonContext.Default.DefaultTemplatesSettings);
         }, ct);
 
-    // Overlays only (no image assets), so they sit on top of whatever picture is loaded.
+    // Text and box layers; see Backdrops for the three that also get a picture underneath.
     // Template text is on-air QSO wording, not UI text, so it is not localized.
     internal static IReadOnlyList<(string NameKey, IReadOnlyList<PersistedTemplateElement> Elements)> BuildStarterSet() =>
     [
@@ -162,6 +216,9 @@ public sealed partial class DefaultTemplateSeeder : IDefaultTemplateSeeder
 
         [LoggerMessage(Level = LogLevel.Information, Message = "Starter template '{Name}' skipped: a template with that name already exists")]
         public static partial void SkippedExisting(ILogger logger, string name);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Starter backdrop '{Path}' is missing; saving that template without it")]
+        public static partial void BackdropMissing(ILogger logger, string path);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Starter template '{Name}' could not be saved; it will be retried next launch")]
         public static partial void SaveFailed(ILogger logger, string name, Exception ex);

@@ -88,6 +88,13 @@
           CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- Starter-template backdrops (DefaultTemplateSeeder); PNGs only, the generator script stays in scripts/. -->
+  <ItemGroup>
+    <None Include="..\..\assets\templates\**\*.png"
+          Link="assets\templates\%(RecursiveDir)%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
   <!-- Offline user guide: plain static files copied beside the executable so Help > User guide
        can hand help/index.html to the OS default browser. The recursive glob also picks up any
        translated help/<languageCode>/index.html (BACKLOG.md R7, HelpGuidePathResolver); it only

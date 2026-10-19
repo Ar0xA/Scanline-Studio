@@ -28,8 +28,10 @@ public sealed class DefaultTemplateSeederTests : IDisposable
         }
     }
 
-    private DefaultTemplateSeeder CreateSeeder(ITemplateStore? store = null) =>
-        new(store ?? _store, _settings, new KeyEchoLocalization(), NullLogger<DefaultTemplateSeeder>.Instance);
+    private static readonly string BackdropDirectory = Path.Combine(FindRepoRoot(), "assets", "templates", "backdrops");
+
+    private DefaultTemplateSeeder CreateSeeder(ITemplateStore? store = null, string? backdropDirectory = null) =>
+        new(store ?? _store, _settings, new KeyEchoLocalization(), NullLogger<DefaultTemplateSeeder>.Instance, backdropDirectory ?? BackdropDirectory);
 
     private static int StarterCount => DefaultTemplateSeeder.BuildStarterSet().Count;
 
@@ -79,7 +81,44 @@ public sealed class DefaultTemplateSeederTests : IDisposable
         foreach (var (key, elements) in DefaultTemplateSeeder.BuildStarterSet())
         {
             var loaded = await _store.LoadAsync(byName[key].Id);
-            Assert.Equal(elements, loaded.Elements);
+            Assert.Equal(elements, loaded.Elements.Where(e => e is not PersistedImageElement));
+        }
+    }
+
+    [Fact]
+    public async Task HalfTheStarters_GetALockedBackgroundBackdrop()
+    {
+        await CreateSeeder().SeedIfNeededAsync();
+
+        Assert.Equal(StarterCount / 2, DefaultTemplateSeeder.Backdrops.Count);
+        foreach (var template in await _store.ListAsync())
+        {
+            var images = (await _store.LoadAsync(template.Id)).Elements.OfType<PersistedImageElement>().ToList();
+            if (!DefaultTemplateSeeder.Backdrops.ContainsKey(template.Name))
+            {
+                Assert.Empty(images);
+                continue;
+            }
+
+            var backdrop = Assert.Single(images);
+            Assert.True(backdrop.IsBackground);
+            Assert.True(backdrop.Locked);
+            Assert.Equal((0.5, 0.5, 1.0, 1.0), (backdrop.X, backdrop.Y, backdrop.Width, backdrop.Height));
+            var assetPath = _store.GetAssetPath(template.Id, backdrop.AssetFileName);
+            var bundled = Path.Combine(BackdropDirectory, DefaultTemplateSeeder.Backdrops[template.Name]);
+            Assert.Equal(await File.ReadAllBytesAsync(bundled), await File.ReadAllBytesAsync(assetPath));
+        }
+    }
+
+    [Fact]
+    public async Task AMissingBackdropFile_StillSavesTheTemplateWithoutIt()
+    {
+        var added = await CreateSeeder(backdropDirectory: Path.Combine(_root, "no-such-dir")).SeedIfNeededAsync();
+
+        Assert.Equal(StarterCount, added);
+        foreach (var template in await _store.ListAsync())
+        {
+            Assert.DoesNotContain((await _store.LoadAsync(template.Id)).Elements, e => e is PersistedImageElement);
         }
     }
 
