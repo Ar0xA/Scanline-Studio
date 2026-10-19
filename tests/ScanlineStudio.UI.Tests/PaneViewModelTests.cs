@@ -842,6 +842,60 @@ public sealed class PaneViewModelTests
     // Gallery tab's own ShowTodayOnly toggle.
 
     [AvaloniaFact]
+    public void PreviousFrames_PastCapacity_EvictedThumbnailIsNulledThenDisposedAfterTheBackgroundPost()
+    {
+        var sstvSession = new FakeSstvSessionService();
+        var historyStore = new FakeReceiveHistoryStore { ThumbnailToReturn = new ArrayImageSource(1, 1, [new Rgb24(1, 2, 3)]) };
+        var vm = new RxImagePaneViewModel(sstvSession, new FakeLocalizationService(), new FakeLogbookSessionService(), new FakeFilePickerService(), historyStore, new FakeSettingsStore(), NullLogger<RxImagePaneViewModel>.Instance);
+        var start = DateTimeOffset.UtcNow;
+        for (var i = 0; i < 6; i++)
+        {
+            historyStore.RaiseRecorded(new ReceiveHistoryEntry($"entry{i}", start.AddSeconds(i), "sc1", $"/tmp/frame{i}.png", null, ReceiveDecodeState.Completed));
+            Dispatcher.UIThread.RunJobs();
+        }
+
+        Assert.Equal(6, vm.PreviousFrames.Count);
+        var oldest = vm.PreviousFrames[^1];
+        Assert.Equal("entry0", oldest.Entry.Id);
+        var oldestBitmap = oldest.Thumbnail!;
+        bool? disposedWhenNulled = null;
+        oldest.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(RxHistoryEntryViewModel.Thumbnail) && oldest.Thumbnail is null)
+            {
+                // Normal priority runs before the Background dispose post; an immediate dispose would already show here.
+                Dispatcher.UIThread.Post(() => disposedWhenNulled = IsBitmapDisposed(oldestBitmap), DispatcherPriority.Normal);
+            }
+        };
+
+        historyStore.RaiseRecorded(new ReceiveHistoryEntry("entry6", start.AddSeconds(6), "sc1", "/tmp/frame6.png", null, ReceiveDecodeState.Completed));
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal(6, vm.PreviousFrames.Count);
+        Assert.DoesNotContain(oldest, vm.PreviousFrames);
+        Assert.Null(oldest.Thumbnail);
+        Assert.False(disposedWhenNulled, "dispose must wait for the Background-priority post");
+        Assert.True(IsBitmapDisposed(oldestBitmap));
+        Assert.All(vm.PreviousFrames, f => Assert.False(IsBitmapDisposed(f.Thumbnail!)));
+    }
+
+    private static bool IsBitmapDisposed(Bitmap bitmap)
+    {
+        try
+        {
+            using (((WriteableBitmap)bitmap).Lock())
+            {
+            }
+
+            return false;
+        }
+        catch (ObjectDisposedException)
+        {
+            return true;
+        }
+    }
+
+    [AvaloniaFact]
     public void PreviousFrames_CompletedEntryRecorded_IsAdded()
     {
         var sstvSession = new FakeSstvSessionService();

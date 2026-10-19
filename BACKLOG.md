@@ -138,11 +138,11 @@ about `:5446`) and nothing posts a clear for it. Later overlay drags or X/Y edit
 they cannot be undone, and they read clean after a save, so "New Template" can discard them without a
 confirm. Found by `yoniq-auditor` 2026-09-22, not reproduced in a test yet.
 
-### PREVFRAMES-THUMB. OPEN — Receive-tab previous-frames thumbnails are never disposed
+### SENTFRAMES-THUMB. OPEN, minor — TX-tab sent-frames thumbnails are not disposed on trim
 
-`RxImagePaneViewModel.PreviousFrames` (`:2206-2227`) creates its own thumbnail bitmaps and drops the trimmed
-ones without disposing them. Same leak class as the fixed Gallery thumbnails, separate owner. Found by
-`yoniq-auditor` 2026-09-22.
+`TxControlsPaneViewModel.RecordSentFrame` (~:2197-2200) trims `SentFrames` without disposing the evicted
+thumbnail; only the pane's `Dispose` frees the survivors. Same leak class as PREVFRAMES-THUMB (fixed the same
+way: null the binding, then a Background-priority dispose post). Found by `yoniq-auditor` 2026-10-19.
 
 ### GALLERY-VIRT. DECISION, then OPEN — virtualize the Gallery grid
 
@@ -643,6 +643,9 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **PREVFRAMES-THUMB.** DONE 2026-10-19 — the Receive-tab previous-frames strip now nulls a trimmed row's thumbnail
+  and disposes it with a Background-priority post, as the Gallery eviction does. One new test that tells a deferred
+  dispose from an immediate one; both mutations caught. Auditor: 1 plan review + 1 code review, go.
 - **TX-BLANKNAME.** DONE 2026-10-19 — an in-place Browse/Stock pick into the blank editor now sets the editor's
   file name, and Apply reads the current name instead of the one captured when the editor opened. A pick that
   completes after the editor was replaced, or after another pick already set a background, is dropped and logged.

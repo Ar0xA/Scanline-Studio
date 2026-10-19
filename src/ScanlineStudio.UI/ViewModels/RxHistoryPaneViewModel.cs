@@ -2218,7 +2218,8 @@ public sealed partial class RxHistoryPaneViewModel : ViewModelBase
 
 /// <summary>One Gallery row. Observable (not a record) so a lazily-loaded or evicted thumbnail can
 /// reach an already-bound grid cell; the bitmap itself is owned by
-/// <see cref="RxHistoryPaneViewModel"/>'s thumbnail cache, never disposed through this type.</summary>
+/// <see cref="RxHistoryPaneViewModel"/>'s thumbnail cache (Gallery rows) or by
+/// <see cref="RxImagePaneViewModel"/> (<c>PreviousFrames</c> rows), never disposed through this type.</summary>
 public sealed partial class RxHistoryEntryViewModel(ReceiveHistoryEntry entry, Bitmap? thumbnail) : ObservableObject
 {
     public ReceiveHistoryEntry Entry { get; } = entry;

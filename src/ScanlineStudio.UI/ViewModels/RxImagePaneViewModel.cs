@@ -2239,6 +2239,14 @@ public sealed partial class RxImagePaneViewModel : ViewModelBase, IDisposable
         PreviousFrames.Insert(insertAt, new RxHistoryEntryViewModel(entry, thumbnail));
         while (PreviousFrames.Count > PreviousFramesCapacity)
         {
+            var evicted = PreviousFrames[^1];
+            // This strip is the bitmap's only owner; null the binding first and dispose after rendering lets go, as the Gallery does.
+            if (evicted.Thumbnail is { } bitmap)
+            {
+                evicted.Thumbnail = null;
+                Dispatcher.UIThread.Post(bitmap.Dispose, DispatcherPriority.Background);
+            }
+
             PreviousFrames.RemoveAt(PreviousFrames.Count - 1);
         }
     }

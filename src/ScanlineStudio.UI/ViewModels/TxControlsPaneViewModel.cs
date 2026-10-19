@@ -2167,15 +2167,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Appends to <see cref="SentFrames"/>, newest first, evicting past
-    /// <see cref="SentFramesCapacity"/> -- direct mirror of <c>RxImagePaneViewModel.AddPreviousFrameAsync</c>'s
-    /// own insert/evict shape. <paramref name="image"/> is the post-macro-rebake frame actually
+    /// <see cref="SentFramesCapacity"/> -- same insert/trim shape as <c>RxImagePaneViewModel.AddPreviousFrameAsync</c>
+    /// (which, unlike this list, also disposes the trimmed thumbnail). <paramref name="image"/> is the post-macro-rebake frame actually
     /// handed to <see cref="ISstvSessionService.TransmitAsync"/> (or, on a cancel/failure before the
     /// rebake completed, the pre-rebake frame that was about to be sent) -- never re-read from
     /// <see cref="_loadedImage"/>, which the operator may have already replaced by the time this
     /// runs. <see cref="TransmittedFrameViewModel.Thumbnail"/> is a FRESH conversion, never
     /// <see cref="PreviewImage"/> itself (disposed on every reassignment, see
-    /// <see cref="OnPreviewImageChanged"/>). Not disposed on eviction here -- see <see cref="Dispose"/>
-    /// and <c>RxImagePaneViewModel.PreviousFrames</c>' own identical non-disposing precedent.</summary>
+    /// <see cref="OnPreviewImageChanged"/>). Not disposed on eviction here -- see <see cref="Dispose"/>.</summary>
     private void RecordSentFrame(IImageSource image, TxTarget target, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, long? frequencyHz, string? sourceFileName, DrmSend? drm, DrmTxResult? drmResult)
     {
         var outcomeLabel = _localization.GetString(outcome switch
@@ -2522,9 +2521,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <summary>Cancels and disposes an in-flight transmit's <see cref="_transmitCts"/> if the pane
     /// is torn down mid-transmission -- otherwise that transmit (and the rig's PTT) would run to
     /// completion on its own with nothing left to stop it early. Also disposes every
-    /// <see cref="SentFrames"/> thumbnail -- unlike <c>RxImagePaneViewModel.PreviousFrames</c>,
-    /// which never disposes at all (backed by a persisted store, so a leaked thumbnail bitmap is
-    /// bounded by that pane's own lifetime either way), <see cref="SentFrames"/> is this pane's
+    /// <see cref="SentFrames"/> thumbnail -- <see cref="SentFrames"/> is this pane's
     /// only reference to those bitmaps; not disposing here would leak them for good past teardown.
     /// Deliberately NOT disposed on eviction (<see cref="RecordSentFrame"/>'s own doc comment) --
     /// only here, at the pane's own end of life.</summary>
