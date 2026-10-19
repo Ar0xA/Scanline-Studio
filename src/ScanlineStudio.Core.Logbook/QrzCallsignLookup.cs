@@ -163,13 +163,19 @@ public sealed partial class QrzCallsignLookup : IQrzCallsignLookup, IDisposable
         }
     }
 
-    /// <summary>Never logs the constructed request URI -- it contains <paramref name="password"/>
-    /// as a plaintext query parameter.</summary>
+    /// <summary>Sends the credentials in a form-encoded POST body, never in the request URI, so no
+    /// URI logger, proxy log, or exception message can carry <paramref name="password"/>. QRZ's XML
+    /// endpoint reads the same fields from a POST body as from a GET query.</summary>
     private async Task<(string? Key, string? Error)> LoginAsync(string username, string password, CancellationToken ct)
     {
-        var url = $"{Endpoint}?username={Uri.EscapeDataString(username)}&password={Uri.EscapeDataString(password)}&agent={Agent}";
+        using var form = new FormUrlEncodedContent(
+        [
+            new KeyValuePair<string, string>("username", username),
+            new KeyValuePair<string, string>("password", password),
+            new KeyValuePair<string, string>("agent", Agent),
+        ]);
         var client = _httpClientFactory.CreateClient(HttpClientName);
-        using var response = await client.GetAsync(url, ct).ConfigureAwait(false);
+        using var response = await client.PostAsync(Endpoint, form, ct).ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
         var body = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
 

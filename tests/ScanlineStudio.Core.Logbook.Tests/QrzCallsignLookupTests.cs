@@ -59,7 +59,9 @@ public sealed class QrzCallsignLookupTests
         </QRZDatabase>
         """;
 
-    private static bool IsLoginRequest(HttpRequestMessage request) => request.RequestUri!.Query.Contains("username=");
+    private static bool IsLoginRequest(HttpRequestMessage request) => request.Method == HttpMethod.Post;
+
+    private static string ReadBody(HttpRequestMessage request) => request.Content!.ReadAsStringAsync().GetAwaiter().GetResult();
 
     [Fact]
     public async Task LookupAsync_LoginThenLookupSucceeds_ReturnsComposedNameAndQth()
@@ -237,32 +239,37 @@ public sealed class QrzCallsignLookupTests
     }
 
     [Fact]
-    public async Task LookupAsync_CredentialsAndCallsignAreUrlEscaped()
+    public async Task LookupAsync_CredentialsGoOnlyInTheEscapedPostBody_CallsignIsUrlEscaped()
     {
-        HttpRequestMessage? capturedLoginRequest = null;
-        HttpRequestMessage? capturedLookupRequest = null;
+        const string username = "zzuser7q";
+        const string password = "p@ss;word&more";
+        var requests = new List<(HttpMethod Method, string Uri, string? Body)>();
         var handler = new FakeHttpMessageHandler
         {
             ResponseFactory = request =>
             {
-                if (IsLoginRequest(request))
+                requests.Add((request.Method, request.RequestUri!.ToString(), request.Content is null ? null : ReadBody(request)));
+                return new HttpResponseMessage(HttpStatusCode.OK)
                 {
-                    capturedLoginRequest = request;
-                    return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(LoginSuccessXml) };
-                }
-
-                capturedLookupRequest = request;
-                return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(LookupSuccessXml) };
+                    Content = new StringContent(IsLoginRequest(request) ? LoginSuccessXml : LookupSuccessXml),
+                };
             },
         };
         var lookup = new QrzCallsignLookup(new FakeHttpClientFactory(handler), NullLogger<QrzCallsignLookup>.Instance);
 
-        await lookup.LookupAsync("W1AW/P", "user", "p@ss;word&more");
+        await lookup.LookupAsync("W1AW/P", username, password);
 
-        Assert.NotNull(capturedLoginRequest);
-        Assert.Contains("p%40ss%3Bword%26more", capturedLoginRequest!.RequestUri!.Query);
-        Assert.NotNull(capturedLookupRequest);
-        Assert.Contains("W1AW%2FP", capturedLookupRequest!.RequestUri!.Query);
+        // Independent of how requests are classified: no URI may carry the credentials, raw or escaped.
+        Assert.All(requests, r =>
+        {
+            Assert.DoesNotContain(username, r.Uri, StringComparison.Ordinal);
+            Assert.DoesNotContain("p@ss", r.Uri, StringComparison.Ordinal);
+            Assert.DoesNotContain("p%40ss", r.Uri, StringComparison.Ordinal);
+        });
+        var login = Assert.Single(requests, r => r.Body?.Contains("p%40ss%3Bword%26more", StringComparison.Ordinal) == true);
+        Assert.Equal(HttpMethod.Post, login.Method);
+        Assert.Contains("username=" + username, login.Body, StringComparison.Ordinal);
+        Assert.Contains(requests, r => r.Method == HttpMethod.Get && r.Uri.Contains("W1AW%2FP", StringComparison.Ordinal));
     }
 
     [Fact]
@@ -308,8 +315,7 @@ public sealed class QrzCallsignLookupTests
                 if (IsLoginRequest(request))
                 {
                     loginCount++;
-                    var query = request.RequestUri!.Query;
-                    var succeeds = query.Contains("password=goodpass");
+                    var succeeds = ReadBody(request).Contains("password=goodpass");
                     return new HttpResponseMessage(HttpStatusCode.OK)
                     {
                         Content = new StringContent(succeeds ? LoginSuccessXml : LoginFailureXml),

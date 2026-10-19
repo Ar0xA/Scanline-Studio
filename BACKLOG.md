@@ -512,8 +512,6 @@ User data, safety and error paths:
   P3 in the report, but auditor top-10 #8 (supply-chain risk to shipped binaries).
 - **CQ-09-F8.** Preset exclude/redact lists are string literals; new sections are included by default
   (`ConfigurationPresetStore.cs:26-27,45-47`). New secret fields are not pinned by tests.
-- **CQ-10-F2.** QRZ password is in the GET query string; only `Program.cs:1161` keeps it out of `app.log`
-  (`QrzCallsignLookup.cs:170`). Enforce in the client.
 - **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
   test (`ImageFileLoader.cs:17,29`).
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
@@ -625,6 +623,11 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **CQ-10-F2.** DONE 2026-10-19 — the QRZ XML login now sends username/password in a form POST body, never in the
+  request URI (`QrzCallsignLookup.LoginAsync`). A live probe showed QRZ reads POST-body credentials ("incorrect" vs
+  "required"). `RemoveAllLoggers()` stays on the QrzXmlLookup client: the lookup GET still carries the session key.
+  **Release gate:** one Options › Test credentials run with a real account (not done; no credentials here). Test
+  rewritten to check every request URI, 2 mutations caught. Auditor: 1 plan review + 1 code review, go.
 - **SENTFRAMES-THUMB.** DONE 2026-10-19 — the TX-tab sent-frames strip now disposes a trimmed thumbnail after a
   Background-priority post, like PREVFRAMES-THUMB. `Thumbnail` is get-only, so there is no binding to null first.
   Unverified: an open Enlarge flyout on the oldest row at the moment a transmit ends (Avalonia is expected to close it

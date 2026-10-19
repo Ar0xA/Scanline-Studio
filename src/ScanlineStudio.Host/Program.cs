@@ -1204,9 +1204,8 @@ internal static partial class Program
         // rationale as QrzXmlLookup below: a hung QRZ connection must not pin the Logbook pane's
         // upload path on the default 100s (functional-audit finding: QrzLogbookUploader requests
         // this exact name via IHttpClientFactory.CreateClient, so without this registration it got
-        // default HttpClient options -- 100s -- instead). Credentials travel in a POST body here,
-        // not a GET query string, so (unlike QrzXmlLookup below) the default request-logging
-        // handler never logs them in plaintext -- RemoveAllLoggers() is not needed.
+        // default HttpClient options -- 100s -- instead). Credentials travel in a POST body here, and
+        // no session key is in the URI (unlike QrzXmlLookup below), so RemoveAllLoggers() is not needed.
         services.AddHttpClient("QrzLogbookApi", c => c.Timeout = TimeSpan.FromSeconds(15));
         services.AddSingleton<IQrzLogbookUploader, QrzLogbookUploader>();
 
@@ -1216,15 +1215,10 @@ internal static partial class Program
         // rationale as QrzLogbookApi above: a hung QRZ connection must not pin a Receive-tab
         // "Lookup QRZ" button disabled for the default 100s.
         //
-        // RemoveAllLoggers() IS needed here, unlike QrzLogbookApi above (real-window-testing-caught
-        // gap in an earlier draft): IHttpClientFactory's own built-in LoggingHttpMessageHandler logs
-        // the full request URI at Information level by default -- and this API sends credentials as
-        // GET query parameters (QRZ's own wire format, not this app's choice), so without this call,
-        // a real QRZ password lands in ~/.local/share/ScanlineStudio/logs/app.log in plaintext every
-        // time this client is used, regardless of anything QrzCallsignLookup's own Log class does or
-        // doesn't log. Confirmed via a real manual test against the live QRZ server: the log line
-        // read "GET https://xmldata.qrz.com/xml/current/?username=...&password=<plaintext>&agent=..."
-        // before this fix.
+        // RemoveAllLoggers() IS needed here, unlike QrzLogbookApi above: IHttpClientFactory's own
+        // LoggingHttpMessageHandler logs the full request URI at Information level, and the lookup GET
+        // carries the QRZ session key (valid for hours, a bearer credential) as a query parameter.
+        // The login itself sends username/password in a POST body (QrzCallsignLookup.LoginAsync).
         services.AddHttpClient("QrzXmlLookup", c => c.Timeout = TimeSpan.FromSeconds(15)).RemoveAllLoggers();
         services.AddSingleton<IQrzCallsignLookup, QrzCallsignLookup>();
 
@@ -1264,7 +1258,7 @@ internal static partial class Program
         // deliberately calls SetPttAsync with CancellationToken.None). RemoveAllLoggers() here is for
         // hot-path log volume (up to ~16 requests/sec at the default 250ms poll interval, each RPC
         // logged at Information by IHttpClientFactory's own handler) -- NOT credential leakage like
-        // QrzXmlLookup above; flrig's URI carries no credentials.
+        // QrzXmlLookup's session key above; flrig's URI carries no credentials.
         services.AddHttpClient("Flrig", c => c.Timeout = TimeSpan.FromSeconds(10)).RemoveAllLoggers();
 
         // Options-dialog-facing Hamlib path/rig-list probing (spec/03-cat-layer.md's "Discovery
