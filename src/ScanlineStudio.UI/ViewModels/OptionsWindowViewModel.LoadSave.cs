@@ -35,6 +35,8 @@ public sealed partial class OptionsWindowViewModel
     /// failure isn't specific to any one field.</summary>
     private async Task LoadSafeAsync()
     {
+        // A fallback served to any load below means a shown value may be default or older: never save it.
+        var fallbackServesBefore = _settingsStore.FallbackServeCount;
         try
         {
             var snapshot = await _optionsSettingsService.LoadAsync();
@@ -116,6 +118,13 @@ public sealed partial class OptionsWindowViewModel
             if (unreadable.Count > 0)
             {
                 SaveErrorMessage = _localization.GetString("Options.Load.UnreadableSections", string.Join(", ", unreadable));
+            }
+
+            if (_settingsStore.FallbackServeCount != fallbackServesBefore)
+            {
+                Log.LoadServedFallback(_logger);
+                SaveErrorMessage = _localization.GetString("Options.Load.SettingsUnavailable");
+                return;
             }
 
             _loadSucceeded = true;

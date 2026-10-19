@@ -41,11 +41,24 @@ internal sealed class FakeSettingsStore : ISettingsStore, IDisposable
 
     public IObservable<AppSettings> Changes => _changes;
 
+    public long FallbackServeCount { get; set; }
+
+    /// <summary>1-based numbers of the <see cref="LoadAsync"/> calls that count as a fallback serve
+    /// (the real store's unreadable-file case).</summary>
+    public HashSet<int> FallbackOnLoads { get; } = new();
+
+    public int LoadCount { get; private set; }
+
     public async Task<AppSettings> LoadAsync(CancellationToken ct = default)
     {
         if (Gate is not null)
         {
             await Gate.WaitAsync(ct).ConfigureAwait(false);
+        }
+
+        if (FallbackOnLoads.Contains(++LoadCount))
+        {
+            FallbackServeCount++;
         }
 
         if (LoadAsyncException is { } ex)

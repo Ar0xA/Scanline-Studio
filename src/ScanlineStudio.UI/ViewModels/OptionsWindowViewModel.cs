@@ -1152,6 +1152,9 @@ public sealed partial class OptionsWindowViewModel : ViewModelBase, IDisposable
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Options loaded while the settings file could not be read; Save and Apply stay disabled")]
+        public static partial void LoadServedFallback(ILogger logger);
+
         [LoggerMessage(Level = LogLevel.Error, Message = "Loading Options failed; dialog may render with defaults")]
         public static partial void LoadFailed(ILogger logger, Exception ex);
 

@@ -45,6 +45,10 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
     /// next successful load by any caller clears it.</summary>
     private string? _unavailableReason;
 
+    private long _fallbackServeCount;
+
+    public long FallbackServeCount => Interlocked.Read(ref _fallbackServeCount);
+
     /// <summary>Written under <see cref="_fileLock"/> on a pool thread, taken on the UI thread: Interlocked only.</summary>
     private SettingsRecoveryNotice? _notice;
     private readonly ILogger<JsonSettingsStore> _logger;
@@ -299,6 +303,7 @@ public sealed partial class JsonSettingsStore : ISettingsStore, ISettingsFileRel
     private AppSettings MarkUnavailable(string path, string reason, AppSettings served)
     {
         _unavailableReason = reason;
+        Interlocked.Increment(ref _fallbackServeCount);
         Interlocked.Exchange(ref _notice, new SettingsRecoveryNotice(SettingsRecoveryKind.Unavailable, path));
         return served;
     }

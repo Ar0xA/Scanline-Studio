@@ -772,6 +772,7 @@
   "Options.Title": "Options",
   "Options.HelpGlyph": "[?]",
   "Options.Save": "Save",
+  "Options.Load.SettingsUnavailable": "The settings file could not be read, so Options shows default or older values and cannot save. Close Options and open it again later.",
   "Options.Load.UnreadableSections": "Some saved settings could not be read ({0}). Their defaults are shown. Saving replaces them; the old text stays in settings.json as '<name>.unreadable'.",
   "Options.Apply": "Apply",
   "Options.Apply.Help": "Saves every change in this dialog without closing it.",

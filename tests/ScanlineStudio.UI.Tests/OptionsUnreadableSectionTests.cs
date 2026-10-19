@@ -201,10 +201,41 @@ public sealed class OptionsUnreadableSectionTests
     [AvaloniaFact]
     public void Dialog_NoUnreadableSection_ShowsNoNotice()
     {
-        var (vm, localization) = CreateVm(new FakeSettingsStore());
+        var store = new FakeSettingsStore();
+        var (vm, localization) = CreateVm(store);
 
         Assert.Null(vm.SaveErrorMessage);
         Assert.Empty(ReportedSections(localization));
+        Assert.True(vm.SaveCommand.CanExecute(null));
+        Assert.True(vm.ApplyCommand.CanExecute(null));
+        Assert.True(store.LoadCount >= 3, $"only {store.LoadCount} settings loads; the fallback theory below needs at least 3");
+    }
+
+    [AvaloniaTheory]
+    [InlineData(1)]
+    [InlineData(2)]
+    [InlineData(3)]
+    public void Dialog_AnySettingsLoadServedAFallback_DisablesSaveAndApply_AndSaysWhy(int fallbackLoad)
+    {
+        var store = StoreWith(AppearanceSettings.SectionKey);
+        store.FallbackOnLoads.Add(fallbackLoad);
+
+        var (vm, _) = CreateVm(store);
+
+        Assert.False(vm.SaveCommand.CanExecute(null));
+        Assert.False(vm.ApplyCommand.CanExecute(null));
+        Assert.Equal("Options.Load.SettingsUnavailable", vm.SaveErrorMessage);
+    }
+
+    [AvaloniaFact]
+    public void Dialog_FallbackServedBeforeTheDialogOpened_DoesNotDisableSave()
+    {
+        var store = new FakeSettingsStore { FallbackServeCount = 5 };
+
+        var (vm, _) = CreateVm(store);
+
+        Assert.True(vm.SaveCommand.CanExecute(null));
+        Assert.Null(vm.SaveErrorMessage);
     }
 
     private static bool DrmReceiveDefaultsForTest => ScanlineStudio.Application.DrmReceiveDefaults.Enabled;

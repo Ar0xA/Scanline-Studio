@@ -5,6 +5,12 @@ public interface ISettingsStore
 {
     Task<AppSettings> LoadAsync(CancellationToken ct = default);
 
+    /// <summary>How many file reads so far (loads, and the re-read inside a save or update) served fallback
+    /// values (defaults or the backup) because the settings file could not be read. A caller that compares it
+    /// before and after its loads knows whether any value it read may be a fallback. Thread-safe; a store that
+    /// never falls back keeps it at 0. A wrapping store must forward it, or the Options save guard is off.</summary>
+    long FallbackServeCount => 0;
+
     Task SaveAsync(AppSettings settings, CancellationToken ct = default);
 
     /// <summary>T0-2: atomic read-modify-write. Loads the current settings, applies

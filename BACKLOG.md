@@ -48,11 +48,10 @@ captures close that.
 - **PA-2-c.** Capture new TX fixtures for the 4 never-covered functions: `LineSC2180`, `LineP`, `LineMP`,
   `LineMC`. One fixture per function is enough for channel ORDER.
 
-### PA-5. OPEN — assert every `{loc:Translate X}` key resolves
+### PA-5-CS. OPEN — C# localization keys are unchecked
 
-Extend `tests/ScanlineStudio.UI.Tests/NoHardcodedAxamlStringsTests.cs`. It holds one test (`:22-23`),
-which checks only the reverse direction (no hardcoded literals). A typo'd key ships as a broken label
-with nothing to catch it.
+PA-5 (done) covers `{loc:Translate}` keys in AXAML. About 375 literal `GetString("…")` keys in 36 UI files
+(mostly error/status strings) have the same failure mode: a typo ships as a raw key.
 
 ### PA-Two-more. OPEN — `MainWindow.axaml.cs` coverage
 
@@ -629,6 +628,15 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-09-F1-GAP.** DONE 2026-10-19 — the settings store counts every read that served fallback values
+  (`ISettingsStore.FallbackServeCount`); the Options dialog compares it before and after its loads and, if it moved,
+  keeps Save and Apply off with an "Options.Load.SettingsUnavailable" notice, so defaults never overwrite real
+  settings once the file is readable again. Fails safe (another component's fallback in the window also disables
+  Save). Rest: CQ-09-F1-GAP-REST. 6 new tests, 5 mutations caught. Auditor: 1 plan review + 1 code review, go.
+- **PA-5.** DONE 2026-10-19 — `EveryAxamlTranslateKey_ExistsInTheEnglishStringTable`: every `{loc:Translate}` key
+  in the UI's AXAML (comments skipped, any prefix, `Key=` and the full class name read) must map to a non-blank
+  en.json string; unreadable forms and a broken scan (<500 uses) fail it. No broken key found today. Rest: PA-5-CS.
+  Auditor: 1 code review, go.
 - **CQ-09-F2-FOLLOWUPS (b).** DONE 2026-10-19 — user-chosen "wipe on next save": every user QRZ password write (set,
   clear, plaintext) removes all "Password" properties from `QrzLookup.unreadable` (key removed if nothing else is left);
   no automatic recovery (an auto-salvage plan got a no-go: it could resurrect a deleted password). Startup migration
@@ -749,8 +757,9 @@ Listed with evidence in the area reports. Pick them up only when already working
   in effect (epochs stay; the only overlap left is the dispose backstop vs. a transmit whose bounded wait expired).
   No removed-features entry needed (legacy PTTLock is a different feature, :308); a cross-reference was added to the
   `m_TuneSat` entry. Auditor: 2 plan-review rounds + 1 code-review round, go.
-- **CQ-09-F1-GAP.** OPEN — the Options dialog opened during a transient settings-read failure shows defaults, and its
-  Save writes them once the file is readable again (`OptionsWindowViewModel.LoadSave.cs:40-104`).
+- **CQ-09-F1-GAP-REST.** OPEN, minor — the Options dialog's concurrent storage-locations load (started in the
+  constructor, outside the fallback-count window) can still read defaults during a settings-file outage; general Save
+  then writes those locations. Window is milliseconds wide.
 - **CQ-09-F1-RELOC.** OPEN, minor — `Program.cs` `ApplyPendingRelocations` (legacy bridge) moves only `settings.json`,
   not `settings.json.bak`; `RelocateAsync`'s destination check ignores a stale foreign `.bak` there.
 - **CQ-09-F4-OTHERS.** OPEN — `TemplateStore`, `ReceiveHistoryRecorder` and `LogbookSessionService` also `File.Move` a

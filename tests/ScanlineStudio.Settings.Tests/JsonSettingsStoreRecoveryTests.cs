@@ -221,6 +221,41 @@ public sealed partial class JsonSettingsStoreTests
     }
 
     [SkipOnWindowsFact]
+    public async Task UnreadableFile_EachLoadCountsAsAFallbackServe_ReadableLoadsDoNot()
+    {
+        // For CA1416, which does not understand [SkipOnWindowsFact].
+        if (OperatingSystem.IsWindows())
+        {
+            return;
+        }
+
+        await File.WriteAllTextAsync(_settingsFilePath, GoodJson);
+        using var store = CreateStore();
+        await store.LoadAsync();
+        Assert.Equal(0, store.FallbackServeCount);
+
+        File.SetUnixFileMode(_settingsFilePath, UnixFileMode.None);
+        if (CanReadDespiteNoPermissions(_settingsFilePath))
+        {
+            return;
+        }
+
+        try
+        {
+            await store.LoadAsync();
+            await store.LoadAsync();
+            Assert.Equal(2, store.FallbackServeCount);
+        }
+        finally
+        {
+            File.SetUnixFileMode(_settingsFilePath, UnixFileMode.UserRead | UnixFileMode.UserWrite);
+        }
+
+        await store.LoadAsync();
+        Assert.Equal(2, store.FallbackServeCount);
+    }
+
+    [SkipOnWindowsFact]
     public async Task CorruptFile_UnreadableBackup_RefusesChanges_BackupSurvivesTwoSaves()
     {
         // For CA1416, which does not understand [SkipOnWindowsFact].
