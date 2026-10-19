@@ -549,4 +549,54 @@ public sealed class QrzCredentialServiceTests
             return true;
         }
     }
+
+    [Fact]
+    public async Task ReadAsync_UnreadableSection_KeyringHoldsThePassword_FindsIt()
+    {
+        var store = new FakeCredentialStore();
+        store.Items[Key] = "pw";
+        var service = Create(BrokenStore(), store);
+
+        var read = await service.ReadAsync(allowPrompt: false);
+
+        Assert.Equal(CredentialReadStatus.Found, read.Status);
+        Assert.Equal("pw", read.Secret);
+        Assert.True(await service.IsPresentAsync());
+    }
+
+    [Fact]
+    public async Task ReadAsync_UnreadableSection_LockedKeyring_IsUnavailable_AndUnlockFindsIt()
+    {
+        var store = new FakeCredentialStore { Locked = true };
+        store.Items[Key] = "pw";
+        var service = Create(BrokenStore(), store);
+
+        Assert.Equal(CredentialReadStatus.Unavailable, (await service.ReadAsync(allowPrompt: false)).Status);
+        var unlocked = await service.ReadAsync(allowPrompt: true);
+        Assert.Equal(CredentialReadStatus.Found, unlocked.Status);
+        Assert.Equal("pw", unlocked.Secret);
+    }
+
+    [Fact]
+    public async Task ReadAsync_UnreadableSection_NoKeyring_IsAbsent_NotUnavailable()
+    {
+        var service = Create(BrokenStore(), new SettingsFileCredentialStore());
+
+        Assert.Equal(CredentialReadStatus.Absent, (await service.ReadAsync(allowPrompt: false)).Status);
+        Assert.False(await service.IsPresentAsync());
+    }
+
+    [Fact]
+    public async Task ReadAsync_UnreadableSection_LogsAWarning_AndLeavesTheSectionUntouched()
+    {
+        var settings = BrokenStore();
+        var logger = new SstvSessionServicePttSafetyTests.RecordingLogger<QrzCredentialService>();
+        var service = new QrzCredentialService(settings, CredentialStoreResolver.ForStore(new FakeCredentialStore()), logger);
+
+        await service.ReadAsync(allowPrompt: false);
+
+        Assert.Contains(logger.Entries, e => e.Level == Microsoft.Extensions.Logging.LogLevel.Warning && e.Message.Contains("QrzLookup settings section is unreadable", StringComparison.Ordinal));
+        Assert.Equal(BrokenSection.GetRawText(), settings.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText());
+        Assert.Null(AsideText(settings));
+    }
 }

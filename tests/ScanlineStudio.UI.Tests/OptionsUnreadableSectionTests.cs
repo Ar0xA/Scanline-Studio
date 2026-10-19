@@ -2,6 +2,7 @@ using System.Text.Json;
 using Avalonia.Headless.XUnit;
 using Avalonia.Threading;
 using Microsoft.Extensions.Logging.Abstractions;
+using ScanlineStudio.Abstractions.Settings;
 using ScanlineStudio.Application;
 using ScanlineStudio.Core.Logbook;
 using ScanlineStudio.Core.Radio;
@@ -23,10 +24,10 @@ public sealed class OptionsUnreadableSectionTests
     };
 
     private static (OptionsWindowViewModel Vm, FakeLocalizationService Localization) CreateVm(
-        FakeSettingsStore store, FakeRadioSessionService? radio = null, FakeSstvSessionService? session = null)
+        FakeSettingsStore store, FakeRadioSessionService? radio = null, FakeSstvSessionService? session = null, ICredentialStore? credentialStore = null)
     {
         var localization = new FakeLocalizationService();
-        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(store), localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), store, radio ?? new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), session ?? new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
+        var vm = new OptionsWindowViewModel(TestOptionsSettings.Create(store, credentialStore), localization, new FakeAudioDeviceEnumerator(), new FakeLogbookSessionService(), store, radio ?? new FakeRadioSessionService(), new FakeHamlibDiscoveryService(), new FakeFilePickerService(), session ?? new FakeSstvSessionService(), new FakeSerialPortEnumerator(), new FakeReceiveHistoryStore(), new FakeAppLocationsService(), new FakeApplicationRestarter(), new FakeAppearanceSettingsService(), NullLogger<OptionsWindowViewModel>.Instance);
         Dispatcher.UIThread.RunJobs();
         return (vm, localization);
     }
@@ -174,6 +175,27 @@ public sealed class OptionsUnreadableSectionTests
         Assert.True(section.Enabled);
         Assert.Equal("PA0XYZ", section.Username);
         Assert.Equal("pw", section.Password);
+    }
+
+    [AvaloniaFact]
+    public void Dialog_UnreadableQrzLookup_UnlockedKeyring_LoadsThePassword_AndIsNotShownAsLocked()
+    {
+        var keyring = new FakeUiCredentialStore();
+        keyring.Items[QrzCredentialService.CredentialKey] = "pw";
+
+        var (vm, _) = CreateVm(StoreWith(QrzLookupSettings.SectionKey), credentialStore: keyring);
+
+        Assert.False(vm.IsQrzKeyringLocked);
+        Assert.Equal("pw", vm.QrzLookupPassword);
+    }
+
+    [AvaloniaFact]
+    public void Dialog_UnreadableQrzLookup_NoKeyring_IsNotShownAsUnreachable()
+    {
+        var (vm, _) = CreateVm(StoreWith(QrzLookupSettings.SectionKey));
+
+        Assert.False(vm.IsQrzKeyringLocked);
+        Assert.False(vm.IsQrzKeyringUnreachable);
     }
 
     [AvaloniaFact]

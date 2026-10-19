@@ -97,7 +97,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
 
             // Steps 4-5: the bulk section merge and the active-preset marker write -- see
             // MergeIntoLiveSettingsAsync's own doc comment for the T0-2 collapse to one atomic call.
-            await MergeIntoLiveSettingsAsync(preset, name, ct).ConfigureAwait(false);
+            var skippedMalformedSection = await MergeIntoLiveSettingsAsync(preset, name, ct).ConfigureAwait(false);
 
             // Step 6: push every Application-layer-reachable section live. Each push is independently
             // try/catch'd -- round-1 code-review finding: without this, a single thrown TimeoutException
@@ -108,7 +108,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
             // finds nothing changed. OperationCanceledException is deliberately let through uncaught --
             // real cancellation must still propagate, not read as "partially applied."
             var rxAudioDeferred = false;
-            var partiallyApplied = false;
+            var partiallyApplied = skippedMalformedSection;
 
             try
             {
@@ -214,10 +214,14 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
     /// own change could be clobbered in -- that reasoning predates <see cref="ISettingsStore.UpdateAsync"/>
     /// existing; once it exists there's no remaining reason to accept any window at all, so this
     /// collapses to one call.</summary>
-    private async Task MergeIntoLiveSettingsAsync(AppSettings preset, string name, CancellationToken ct)
+    /// <returns><see langword="true"/> when a malformed preset QrzLookup/QrzUpload section was skipped
+    /// and the live one kept.</returns>
+    private async Task<bool> MergeIntoLiveSettingsAsync(AppSettings preset, string name, CancellationToken ct)
     {
+        var skippedMalformedSection = false;
         await _settingsStore.UpdateAsync(current =>
         {
+            skippedMalformedSection = false;
             // Step 4: MERGE every key PRESENT IN THE PRESET onto the current live settings -- NOT a
             // wholesale AppSettings.SaveAsync(preset), which would delete every section Phase 2's
             // store deliberately excludes (WindowGeometry/TxPaneUi/RxPaneUi) from the live
@@ -250,6 +254,23 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 merged[key] = value;
             }
 
+            // A malformed preset section must not replace the live one (it may hold the secret): restore the key and its set-aside copy exactly.
+            void KeepLiveSection(string key)
+            {
+                skippedMalformedSection = true;
+                foreach (var k in new[] { key, key + AppSettingsSectionExtensions.UnreadableSuffix })
+                {
+                    if (current.Sections.TryGetValue(k, out var live))
+                    {
+                        merged[k] = live;
+                    }
+                    else
+                    {
+                        merged.Remove(k);
+                    }
+                }
+            }
+
             // T0-8: ConfigurationPresetStore.Sanitize strips Password/ApiKey from every saved/
             // loaded preset (presets are user-shareable files) -- without this, applying ANY
             // preset that carries a QrzLookup/QrzUpload section would silently wipe the live
@@ -275,6 +296,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 catch (System.Text.Json.JsonException ex)
                 {
                     Log.QrzSecretCarryForwardFailed(_logger, QrzLookupSettings.SectionKey, ex);
+                    KeepLiveSection(QrzLookupSettings.SectionKey);
                 }
             }
 
@@ -290,6 +312,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 catch (System.Text.Json.JsonException ex)
                 {
                     Log.QrzSecretCarryForwardFailed(_logger, QrzUploadSettings.SectionKey, ex);
+                    KeepLiveSection(QrzUploadSettings.SectionKey);
                 }
             }
 
@@ -320,6 +343,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 ConfigurationPresetSettings.SectionKey, new ConfigurationPresetSettings { ActivePresetName = name },
                 ConfigurationPresetSettingsJsonContext.Default.ConfigurationPresetSettings);
         }, ct).ConfigureAwait(false);
+        return skippedMalformedSection;
     }
 
     /// <summary>The rate and device fields of <c>AudioDeviceSettings</c>, pushed UNCONDITIONALLY --
@@ -486,7 +510,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
         [LoggerMessage(Level = LogLevel.Information, Message = "Configuration preset switch requested: {Name}")]
         public static partial void SwitchRequested(ILogger logger, string name);
 
-        [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch: could not carry the live secret forward onto section {SectionKey} (malformed section) -- that field was left as the preset provided it")]
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch: the preset's {SectionKey} section is malformed; the live section was kept")]
         public static partial void QrzSecretCarryForwardFailed(ILogger logger, string sectionKey, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch: the live {SectionKey} section could not be read; its raw text was kept under its .unreadable key (replaced an earlier copy: {ReplacedEarlier})")]

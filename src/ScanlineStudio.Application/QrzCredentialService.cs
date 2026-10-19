@@ -48,12 +48,13 @@ public sealed partial class QrzCredentialService : IDisposable
         (await _storeResolver.GetAsync(ct).ConfigureAwait(false)).IsSecure;
 
     /// <summary>Never throws except for cancellation. Only a user-started action may pass
-    /// <paramref name="allowPrompt"/> = <see langword="true"/>.</summary>
+    /// <paramref name="allowPrompt"/> = <see langword="true"/>. An unreadable settings section counts as
+    /// "no settings.json password, flag unset", so the keyring is still read.</summary>
     public async Task<CredentialRead> ReadAsync(bool allowPrompt, CancellationToken ct = default)
     {
         try
         {
-            var section = await LoadSectionAsync(ct).ConfigureAwait(false);
+            var section = await LoadSectionForReadAsync(ct).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(section.Password))
             {
                 return CredentialRead.Found(section.Password);
@@ -89,7 +90,7 @@ public sealed partial class QrzCredentialService : IDisposable
     {
         try
         {
-            var section = await LoadSectionAsync(ct).ConfigureAwait(false);
+            var section = await LoadSectionForReadAsync(ct).ConfigureAwait(false);
             if (!string.IsNullOrEmpty(section.Password))
             {
                 return true;
@@ -425,6 +426,20 @@ public sealed partial class QrzCredentialService : IDisposable
     private async Task<QrzLookupSettings> LoadSectionAsync(CancellationToken ct) =>
         GetSection(await _settingsStore.LoadAsync(ct).ConfigureAwait(false));
 
+    /// <summary>For the read paths only: an unreadable section yields defaults (logged), so a keyring
+    /// password is still found and a locked keyring is still reported as locked.</summary>
+    private async Task<QrzLookupSettings> LoadSectionForReadAsync(CancellationToken ct)
+    {
+        var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+        if (settings.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var section, out var error))
+        {
+            return section ?? new QrzLookupSettings();
+        }
+
+        Log.SectionUnreadableOnRead(_logger, error);
+        return new QrzLookupSettings();
+    }
+
     private static QrzLookupSettings GetSection(AppSettings settings) =>
         settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
@@ -476,6 +491,9 @@ public sealed partial class QrzCredentialService : IDisposable
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password read from {Backend} unavailable: {Reason}")]
         public static partial void StoreReadUnavailable(ILogger logger, string backend, string? reason);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "QrzLookup settings section is unreadable; its password and keyring flag are ignored for this read")]
+        public static partial void SectionUnreadableOnRead(ILogger logger, Exception? ex);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "QRZ password read failed")]
         public static partial void ReadFailed(ILogger logger, Exception ex);

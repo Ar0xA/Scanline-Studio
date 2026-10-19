@@ -225,6 +225,63 @@ public sealed class ConfigurationPresetServiceTests : IDisposable
         Assert.NotEqual(raw.GetRawText(), settingsStore.Settings.Sections[key].GetRawText());
     }
 
+    [Theory]
+    [InlineData("QrzLookup")]
+    [InlineData("QrzUpload")]
+    public async Task SwitchToPresetAsync_MalformedPresetQrzSection_KeepsTheReadableLiveOne_AndReportsPartial(string key)
+    {
+        var initial = DefaultSettings().WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "N0CALL" }, OperatorSettingsJsonContext.Default.OperatorSettings);
+        initial = key == QrzLookupSettings.SectionKey
+            ? initial.WithSection(key, new QrzLookupSettings { Enabled = true, Username = "N0CALL", Password = "secret" }, QrzLookupSettingsJsonContext.Default.QrzLookupSettings)
+            : initial.WithSection(key, new QrzUploadSettings { Enabled = true, ApiKey = "KEY-1" }, QrzUploadSettingsJsonContext.Default.QrzUploadSettings);
+        var liveRaw = initial.Sections[key].GetRawText();
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(initial);
+        var preset = new AppSettings().WithSection(OperatorSettings.SectionKey, new OperatorSettings { Callsign = "PA0XYZ" }, OperatorSettingsJsonContext.Default.OperatorSettings);
+        preset.Sections[key] = System.Text.Json.JsonDocument.Parse("\"broken\"").RootElement.Clone();
+        await presetStore.SavePresetAsync("Test", preset);
+
+        var result = await service.SwitchToPresetAsync("Test");
+
+        Assert.Equal(ConfigurationPresetSwitchOutcome.Applied, result.Outcome);
+        Assert.True(result.PartiallyApplied);
+        Assert.Equal(liveRaw, settingsStore.Settings.Sections[key].GetRawText());
+        Assert.False(settingsStore.Settings.Sections.ContainsKey(key + ".unreadable"));
+        Assert.Equal("PA0XYZ", settingsStore.Settings.GetSection(OperatorSettings.SectionKey, OperatorSettingsJsonContext.Default.OperatorSettings)!.Callsign);
+    }
+
+    [Fact]
+    public async Task SwitchToPresetAsync_MalformedPresetQrzSection_NoLiveSection_LeavesTheKeyAbsent()
+    {
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(DefaultSettings());
+        var preset = new AppSettings();
+        preset.Sections[QrzLookupSettings.SectionKey] = System.Text.Json.JsonDocument.Parse("\"broken\"").RootElement.Clone();
+        await presetStore.SavePresetAsync("Test", preset);
+
+        await service.SwitchToPresetAsync("Test");
+
+        Assert.False(settingsStore.Settings.Sections.ContainsKey(QrzLookupSettings.SectionKey));
+        Assert.False(settingsStore.Settings.Sections.ContainsKey(QrzLookupSettings.SectionKey + ".unreadable"));
+    }
+
+    [Fact]
+    public async Task SwitchToPresetAsync_MalformedPresetQrzSection_OverAnUnreadableLiveOne_LeavesBothKeysExactlyAsTheyWere()
+    {
+        var liveRaw = System.Text.Json.JsonDocument.Parse("\"live broken\"").RootElement.Clone();
+        var earlierAside = System.Text.Json.JsonDocument.Parse("{\"Password\":\"old\"}").RootElement.Clone();
+        var initial = DefaultSettings();
+        initial.Sections[QrzLookupSettings.SectionKey] = liveRaw;
+        initial.Sections[QrzLookupSettings.SectionKey + ".unreadable"] = earlierAside;
+        var (service, _, _, _, settingsStore, _, presetStore, _) = CreateService(initial);
+        var preset = new AppSettings();
+        preset.Sections[QrzLookupSettings.SectionKey] = System.Text.Json.JsonDocument.Parse("\"preset broken\"").RootElement.Clone();
+        await presetStore.SavePresetAsync("Test", preset);
+
+        await service.SwitchToPresetAsync("Test");
+
+        Assert.Equal(liveRaw.GetRawText(), settingsStore.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText());
+        Assert.Equal(earlierAside.GetRawText(), settingsStore.Settings.Sections[QrzLookupSettings.SectionKey + ".unreadable"].GetRawText());
+    }
+
     [Fact]
     public async Task SwitchToPresetAsync_PresetWithoutTheQrzSection_LeavesAnUnreadableLiveOneAlone()
     {

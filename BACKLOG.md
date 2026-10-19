@@ -504,12 +504,9 @@ User data, safety and error paths:
   failed in 2 of 3 full Application.Tests runs on 2026-10-19 and passes 5/5 standalone: a timing dependency under load.
   `TrySaveReceptionAudioAsync_CalledTwiceForTheSameReception_SecondCallReturnsFalse` in the same class also failed once
   under full-suite load (2026-10-19); treat the whole class as suspect.
-- **CQ-09-F2-FOLLOWUPS.** OPEN, minor. (a) With `QrzLookup` unreadable, Options shows "keyring locked" plus an Unlock
-  button that cannot help (`QrzCredentialService.ReadAsync` returns Unavailable; `OptionsWindowViewModel.QrzAndForwarding.cs`
-  ~:65); a distinct "unreadable" status would fix it. (b) A plaintext password inside `QrzLookup.unreadable` is never
-  moved to the keyring (help says to delete the entry). (d) A
-  malformed `QrzLookup` inside a preset file overwrites a readable live one on apply and drops the live plaintext
-  password without setting it aside (`ConfigurationPresetService.cs` ~:275). Pre-existing.
+- **CQ-09-F2-FOLLOWUPS (b).** OPEN, minor — a plaintext password inside `QrzLookup.unreadable` is never moved to the
+  keyring (help says to delete the entry). Startup migration still logs MigrationFailed while `QrzLookup` is unreadable.
+  Related, pre-existing: Options Save and a preset over an unreadable `QrzLookup` reset `PasswordInCredentialStore`.
 - **CQ-11-F14-FOLLOWUPS.** OPEN, minor. If CI is re-enabled: `ci.yml` checkout still persists credentials and has no
   `permissions: contents: read`. Release workflows paste `${{ github.event.inputs.tag }}` straight into `run:` scripts
   (write-access users only; pass it through `env:`). No dependabot config keeps the pinned action SHAs current.
@@ -633,6 +630,11 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-09-F2-FOLLOWUPS (a)/(d).** DONE 2026-10-19 — (a) QRZ password reads treat an unreadable `QrzLookup` section
+  as defaults (Warning logged) and still read the keyring, so Options no longer shows a false "keyring locked" with a
+  useless Unlock; a really locked keyring still shows it. (d) A malformed `QrzLookup`/`QrzUpload` section inside a
+  preset no longer replaces the live one: the live key and its `.unreadable` copy are restored exactly and the switch
+  reports "partly applied". 10 new tests, 5 mutations caught. Auditor: 1 plan review + 1 code review, go.
 - **TX-NAME-SYNC.** DONE 2026-10-19 — the editor keeps a background identity token: a load, remove, promote, demote or a
   flatten onto the blank canvas makes a new one, a flatten onto a real photo keeps it, and undo restores it. The TX
   file name is used only while the token still matches, otherwise no name is shown or recorded in TX history (never a
