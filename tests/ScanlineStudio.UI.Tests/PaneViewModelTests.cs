@@ -4205,6 +4205,37 @@ public sealed class PaneViewModelTests
         Assert.Equal(expectedNewestFirst, vm.SentFrames.Select(e => e.Mode));
     }
 
+    [AvaloniaFact]
+    public async Task TxControlsPaneViewModel_SentFrames_PastCapacity_EvictedThumbnailIsDisposedAfterTheBackgroundPost()
+    {
+        var (vm, _, _, _) = CreateTxHistoryTestSetup();
+        for (var i = 0; i < 6; i++)
+        {
+            await TransmitOnceAsync(vm);
+        }
+
+        Assert.Equal(6, vm.SentFrames.Count);
+        var oldest = vm.SentFrames[^1];
+        var oldestBitmap = oldest.Thumbnail;
+        bool? disposedAtRemoval = null;
+        vm.SentFrames.CollectionChanged += (_, e) =>
+        {
+            if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Remove && e.OldItems!.Contains(oldest))
+            {
+                // Normal priority runs before the Background dispose post; an immediate dispose would already show here.
+                Dispatcher.UIThread.Post(() => disposedAtRemoval = IsBitmapDisposed(oldestBitmap), DispatcherPriority.Normal);
+            }
+        };
+
+        await TransmitOnceAsync(vm);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.DoesNotContain(oldest, vm.SentFrames);
+        Assert.False(disposedAtRemoval, "dispose must wait for the Background-priority post");
+        Assert.True(IsBitmapDisposed(oldestBitmap));
+        Assert.All(vm.SentFrames, f => Assert.False(IsBitmapDisposed(f.Thumbnail)));
+    }
+
     /// <summary>TransmitCoreAsync split (2026-09-19): Resend must transmit the exact recorded
     /// image/mode untouched, and must NOT rebake against the live editor's current state (the
     /// opposite of ordinary Transmit, which always refreshes macros). Mirrors

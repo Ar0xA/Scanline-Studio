@@ -131,12 +131,6 @@ enforce `spec/13-testing.md`'s stated 80%. Decide: raise the floor, or change th
 and `RadioSessionService.cs:75-81` and `:280-286`, with two different error strings for one condition.
 About 15 lines. Do it when already in those files.
 
-### SENTFRAMES-THUMB. OPEN, minor — TX-tab sent-frames thumbnails are not disposed on trim
-
-`TxControlsPaneViewModel.RecordSentFrame` (~:2197-2200) trims `SentFrames` without disposing the evicted
-thumbnail; only the pane's `Dispose` frees the survivors. Same leak class as PREVFRAMES-THUMB (fixed the same
-way: null the binding, then a Background-priority dispose post). Found by `yoniq-auditor` 2026-10-19.
-
 ### GALLERY-VIRT. DECISION, then OPEN — virtualize the Gallery grid
 
 Measured 2026-09-22 (UX-THUMB1 probe, `GalleryDisplayCapMeasurementProbe.cs`, gated
@@ -631,6 +625,11 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **SENTFRAMES-THUMB.** DONE 2026-10-19 — the TX-tab sent-frames strip now disposes a trimmed thumbnail after a
+  Background-priority post, like PREVFRAMES-THUMB. `Thumbnail` is get-only, so there is no binding to null first.
+  Unverified: an open Enlarge flyout on the oldest row at the moment a transmit ends (Avalonia is expected to close it
+  with the row; a redraw of the disposed bitmap would otherwise throw, now caught by the UI exception handler). One new
+  test, 2 mutations caught. Auditor: 1 plan review + 1 code review, go.
 - **UI-UNHANDLED.** DONE 2026-10-19 — an exception that escaped a UI-thread job (event handler, async-void
   continuation, posted work) ended the app. New `UnhandledUiExceptionHandler` on `Dispatcher.UIThread.UnhandledException`
   logs it, marks it handled, and shows a non-modal "Unexpected error" notice (one open at a time, 60 s cooldown after

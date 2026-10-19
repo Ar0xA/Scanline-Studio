@@ -2167,14 +2167,14 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>Appends to <see cref="SentFrames"/>, newest first, evicting past
-    /// <see cref="SentFramesCapacity"/> -- same insert/trim shape as <c>RxImagePaneViewModel.AddPreviousFrameAsync</c>
-    /// (which, unlike this list, also disposes the trimmed thumbnail). <paramref name="image"/> is the post-macro-rebake frame actually
+    /// <see cref="SentFramesCapacity"/>; like <c>RxImagePaneViewModel.AddPreviousFrameAsync</c>, the trimmed
+    /// thumbnail is disposed after a Background-priority post (RX also nulls its binding first; this get-only one cannot). <paramref name="image"/> is the post-macro-rebake frame actually
     /// handed to <see cref="ISstvSessionService.TransmitAsync"/> (or, on a cancel/failure before the
     /// rebake completed, the pre-rebake frame that was about to be sent) -- never re-read from
     /// <see cref="_loadedImage"/>, which the operator may have already replaced by the time this
     /// runs. <see cref="TransmittedFrameViewModel.Thumbnail"/> is a FRESH conversion, never
     /// <see cref="PreviewImage"/> itself (disposed on every reassignment, see
-    /// <see cref="OnPreviewImageChanged"/>). Not disposed on eviction here -- see <see cref="Dispose"/>.</summary>
+    /// <see cref="OnPreviewImageChanged"/>). Survivors are disposed by <see cref="Dispose"/>.</summary>
     private void RecordSentFrame(IImageSource image, TxTarget target, DateTimeOffset transmittedAt, TxHistoryOutcome outcome, long? frequencyHz, string? sourceFileName, DrmSend? drm, DrmTxResult? drmResult)
     {
         var outcomeLabel = _localization.GetString(outcome switch
@@ -2196,7 +2196,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             drm?.Settings, drm?.FileName, drmResult?.Jp2Bytes));
         while (SentFrames.Count > SentFramesCapacity)
         {
+            var evicted = SentFrames[^1];
             SentFrames.RemoveAt(SentFrames.Count - 1);
+            // This strip is the bitmap's only owner; dispose after rendering lets go of the removed row.
+            Dispatcher.UIThread.Post(evicted.Thumbnail.Dispose, DispatcherPriority.Background);
         }
     }
 
@@ -2523,8 +2526,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// completion on its own with nothing left to stop it early. Also disposes every
     /// <see cref="SentFrames"/> thumbnail -- <see cref="SentFrames"/> is this pane's
     /// only reference to those bitmaps; not disposing here would leak them for good past teardown.
-    /// Deliberately NOT disposed on eviction (<see cref="RecordSentFrame"/>'s own doc comment) --
-    /// only here, at the pane's own end of life.</summary>
+    /// Evicted entries are disposed by <see cref="RecordSentFrame"/> when they are trimmed.</summary>
     public void Dispose()
     {
         _localization.CultureChanged -= OnCultureChanged;
