@@ -28,14 +28,16 @@ jobs:
         rid: [osx-arm64]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ github.event.inputs.tag }}
+          # The upload step authenticates with GH_TOKEN; no later step needs git credentials on disk.
+          persist-credentials: false
 
       # SDK 10 builds (Avalonia 12's source generators need its compiler); the app still targets
       # net8.0, so the 8.0 runtime must also be present to run the tests.
       - name: Setup .NET SDK 10 and runtime 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x

@@ -15,12 +15,12 @@ jobs:
         os: [windows-latest, ubuntu-latest, macos-latest]
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # SDK 10 builds (Avalonia 12's source generators need its compiler); the app still targets
       # net8.0, so the 8.0 runtime must also be present to run the tests.
       - name: Setup .NET SDK 10 and runtime 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x
@@ -32,7 +32,7 @@ jobs:
       # tools are already on PATH on macos-latest) or Linux (gcc likewise).
       - name: Set up MSVC dev environment (Windows only)
         if: runner.os == 'Windows'
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
 
       # msvc-dev-cmd (above) exports Platform=x64 as a job-level env var so cl.exe's toolchain
       # resolves correctly, but ScanlineStudio.sln only defines "Any CPU" solution configurations -- MSBuild
@@ -73,12 +73,12 @@ jobs:
     timeout-minutes: 60
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # SDK 10 builds (Avalonia 12's source generators need its compiler); the app still targets
       # net8.0, so the 8.0 runtime must also be present to run the tests.
       - name: Setup .NET SDK 10 and runtime 8
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: |
             8.0.x

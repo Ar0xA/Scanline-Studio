@@ -511,9 +511,9 @@ User data, safety and error paths:
   unreadable section may stop RX from starting until Options repairs it; check whether a caller catches it. (d) A
   malformed `QrzLookup` inside a preset file overwrites a readable live one on apply and drops the live plaintext
   password without setting it aside (`ConfigurationPresetService.cs` ~:275). Pre-existing.
-- **CQ-11-F14.** `release-windows.yml` runs the unpinned `ilammy/msvc-dev-cmd@v1` in a `contents: write`
-  job, with checkout credentials persisted. Pin actions to commit SHAs and set `persist-credentials: false`.
-  P3 in the report, but auditor top-10 #8 (supply-chain risk to shipped binaries).
+- **CQ-11-F14-FOLLOWUPS.** OPEN, minor. If CI is re-enabled: `ci.yml` checkout still persists credentials and has no
+  `permissions: contents: read`. Release workflows paste `${{ github.event.inputs.tag }}` straight into `run:` scripts
+  (write-access users only; pass it through `env:`). No dependabot config keeps the pinned action SHAs current.
 - **CQ-09-F8.** Preset exclude/redact lists are string literals; new sections are included by default
   (`ConfigurationPresetStore.cs:26-27,45-47`). New secret fields are not pinned by tests.
 - **CQ-10-F4.** Image-file decoding: no logging, no exception translation, no size cap, no corrupt-file
@@ -633,6 +633,9 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-11-F14.** DONE 2026-10-19 — every `uses:` in the three workflows is pinned to a commit SHA (checkout v4.4.0,
+  setup-dotnet v4.3.1, msvc-dev-cmd v1.13.0; each matched its floating tag, so behaviour is unchanged). Both release
+  checkouts set `persist-credentials: false`; the upload step uses `GH_TOKEN`. Auditor: 1 code review, go.
 - **CQ-09-F2 follow-ups (DrmRx, QRZ writes, preset apply).** DONE 2026-10-19 — Options repairs an unreadable `DrmRx`
   section on the next Save/Apply even with the toggle untouched. QRZ password writes (plaintext, keyring set, keyring
   delete) set an unreadable `QrzLookup` aside and write, so entering the password and one Save repairs it (no more false
