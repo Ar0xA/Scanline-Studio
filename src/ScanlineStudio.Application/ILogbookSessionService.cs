@@ -33,7 +33,7 @@ public interface ILogbookSessionService
 
     /// <summary>Parses <paramref name="filePath"/> and persists every record it contains via
     /// <c>ILogbookRepository</c> (a batch import, not just a parse-and-preview) — returns the
-    /// persisted records.</summary>
+    /// persisted records. All-or-nothing (one transaction), and runs off the caller's thread.</summary>
     Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default);
 
     /// <summary>Looks up <paramref name="callsign"/> against QRZ.com's XML Callbook API (see

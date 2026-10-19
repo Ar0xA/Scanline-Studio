@@ -33,16 +33,18 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
         EnsureSchema();
     }
 
+    private const string InsertQsoSql = """
+        INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived, StartUtcTicks)
+        VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived, $startUtcTicks)
+        """;
+
     public async Task<QsoRecord> AddAsync(QsoRecord record, CancellationToken ct = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(ct).ConfigureAwait(false);
 
         using var command = connection.CreateCommand();
-        command.CommandText = """
-            INSERT INTO Qso (Id, Callsign, StartUtc, EndUtc, FrequencyHz, Mode, SstvModeId, RstSent, RstReceived, Name, Qth, GridSquare, Country, Notes, ReceivedImageId, QslSent, QslReceived, StartUtcTicks)
-            VALUES ($id, $callsign, $startUtc, $endUtc, $frequencyHz, $mode, $sstvModeId, $rstSent, $rstReceived, $name, $qth, $gridSquare, $country, $notes, $receivedImageId, $qslSent, $qslReceived, $startUtcTicks)
-            """;
+        command.CommandText = InsertQsoSql;
         BindParameters(command, record);
 
         try
@@ -57,6 +59,47 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         Log.QsoAdded(_logger, record.Id, record.Callsign);
         return record;
+    }
+
+    /// <summary>All-or-nothing: one connection, one transaction. A failure on any record rolls back the whole
+    /// batch, so a retried ADIF import never duplicates the rows a failed attempt had already written.</summary>
+    public async Task AddRangeAsync(IReadOnlyList<QsoRecord> records, CancellationToken ct = default)
+    {
+        if (records.Count == 0)
+        {
+            return;
+        }
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(ct).ConfigureAwait(false);
+        using var transaction = connection.BeginTransaction(deferred: false);
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = InsertQsoSql;
+
+        var failedAt = records[0].Id;
+        try
+        {
+            foreach (var record in records)
+            {
+                ct.ThrowIfCancellationRequested();
+                failedAt = record.Id;
+                // AddWithValue appends; clear first or every row re-binds all earlier rows' parameters too.
+                command.Parameters.Clear();
+                BindParameters(command, record);
+                await command.ExecuteNonQueryAsync(ct).ConfigureAwait(false);
+            }
+
+            failedAt = "commit";
+            transaction.Commit();
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            Log.QsoBatchWriteFailed(_logger, records.Count, failedAt, ex);
+            throw;
+        }
+
+        Log.QsoBatchAdded(_logger, records.Count);
     }
 
     public async Task UpdateAsync(QsoRecord record, CancellationToken ct = default)
@@ -390,6 +433,12 @@ public sealed partial class SqliteLogbookRepository : ILogbookRepository
 
         [LoggerMessage(Level = LogLevel.Error, Message = "Failed to write QSO {Id} to the logbook database")]
         public static partial void QsoWriteFailed(ILogger logger, string id, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Added {Count} QSOs in one transaction")]
+        public static partial void QsoBatchAdded(ILogger logger, int count);
+
+        [LoggerMessage(Level = LogLevel.Error, Message = "Batch insert of {Count} QSOs rolled back (failed at {Id})")]
+        public static partial void QsoBatchWriteFailed(ILogger logger, int count, string id, Exception ex);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "QSO deleted: {Id}")]
         public static partial void QsoDeleted(ILogger logger, string id);

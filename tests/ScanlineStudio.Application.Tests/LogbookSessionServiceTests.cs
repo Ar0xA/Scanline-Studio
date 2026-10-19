@@ -19,13 +19,14 @@ public sealed class LogbookSessionServiceTests
         FakeSettingsStore? settingsStore = null,
         FakeReceiveHistoryStoreForLogbook? receiveHistoryStore = null,
         IAdifExporter? adifExporter = null,
-        ICredentialStore? credentialStore = null)
+        ICredentialStore? credentialStore = null,
+        IAdifImporter? adifImporter = null)
     {
         settingsStore ??= new FakeSettingsStore();
         return new LogbookSessionService(
             repository ?? new FakeLogbookRepository(),
             adifExporter ?? new AdifExporter(),
-            new AdifImporter(),
+            adifImporter ?? new AdifImporter(),
             adifUdpStreamer ?? new FakeAdifUdpStreamer(),
             qrzUploader ?? new FakeQrzLogbookUploader(),
             qrzLookup ?? new FakeQrzCallsignLookup(),
@@ -362,6 +363,46 @@ public sealed class LogbookSessionServiceTests
         finally
         {
             File.Delete(path);
+        }
+    }
+
+    [Fact]
+    public async Task ImportAdifFileAsync_ReadParseAndInsertRunOffTheCallersThread()
+    {
+        // The gate blocks inside Import. If parse or insert ran on the caller, the call could not return before
+        // the gate opens; the bounded wait turns that into a failure, not a hang. (The file read before Import is not pinned.)
+        using var gate = new ManualResetEventSlim(false);
+        var importer = new GatedAdifImporter(gate);
+        var repository = new FakeLogbookRepository();
+        var service = CreateService(repository, adifImporter: importer);
+        var path = Path.Combine(Path.GetTempPath(), $"scanline-studio-import-test-{Guid.NewGuid()}.adi");
+        await File.WriteAllTextAsync(path, "<EOH><CALL:4>W1AW<QSO_DATE:8>20260101<TIME_ON:4>1200<EOR>");
+        try
+        {
+            var import = service.ImportAdifFileAsync(path);
+
+            Assert.False(import.IsCompleted);
+            gate.Set();
+            var imported = await import;
+            Assert.Equal("W1AW", Assert.Single(imported).Callsign);
+            Assert.Equal(1, repository.AddRangeCallCount);
+            Assert.Equal("W1AW", Assert.Single(repository.Records).Callsign);
+        }
+        finally
+        {
+            gate.Set();
+            File.Delete(path);
+        }
+    }
+
+    private sealed class GatedAdifImporter(ManualResetEventSlim gate) : IAdifImporter
+    {
+        private readonly AdifImporter _inner = new();
+
+        public IReadOnlyList<QsoRecord> Import(TextReader reader, System.Text.Encoding? sourceEncoding = null)
+        {
+            gate.Wait(TimeSpan.FromSeconds(10));
+            return _inner.Import(reader, sourceEncoding);
         }
     }
 

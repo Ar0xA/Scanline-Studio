@@ -38,8 +38,7 @@ namespace ScanlineStudio.UI.ViewModels;
 /// matching reverse foreign key (that interface method's own doc comment: "already designed for
 /// this exact link") -- both link paths here also write it via
 /// <see cref="ILogbookSessionService.UpdateQsoAsync"/>/<see cref="ILogbookSessionService.LogQsoAsync"/>.
-/// Not transactional across the two stores, same non-transactional precedent as
-/// <c>LogbookSessionService.ImportAdifFileAsync</c>.</summary>
+/// Not transactional across the two stores.</summary>
 public sealed partial class QsoLinkWindowViewModel : ViewModelBase
 {
     private readonly ILogbookSessionService _logbook;

@@ -1131,7 +1131,7 @@
   "Panes.Logbook.Error.SearchFailed": "Das Logbuch konnte nicht durchsucht werden.",
   "Panes.Logbook.Error.LogFailed": "Dieses QSO konnte nicht geloggt werden.",
   "Panes.Logbook.Error.UpdateFailed": "Die Änderungen an diesem QSO konnten nicht gespeichert werden.",
-  "Panes.Logbook.Error.ImportPartial": "Der Import ist zwischendurch fehlgeschlagen -- einige der obigen Zeilen wurden möglicherweise bereits hinzugefügt.",
+  "Panes.Logbook.Error.ImportFailed": "Import fehlgeschlagen; es wurden keine QSOs hinzugefügt. Details stehen im Anwendungsprotokoll.",
   "Panes.Logbook.Error.ExportFailed": "Der Export in diese Datei ist fehlgeschlagen.",
   "Panes.Logbook.Error.DeleteFailed": "Dieses QSO konnte nicht gelöscht werden.",
   "Panes.Logbook.Error.EntryNoLongerExists": "Dieses QSO existiert nicht mehr -- es wurde möglicherweise bereits an anderer Stelle gelöscht.",

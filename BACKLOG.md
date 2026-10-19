@@ -527,8 +527,6 @@ User data, safety and error paths:
   A global handler would swallow errors app-wide and leave state undefined. Two known sites in the same class:
   `RxHistoryPaneViewModel.cs` ~:1374 (`await ConfirmRequested(...)` unguarded) and the Options "Restart Now"
   `window.Closed += (_, _) => Close();` (`MainWindow.axaml.cs` ~:651). Found during CQ-06-F3, 2026-10-19.
-- **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
-  transaction (`LogbookPaneViewModel.cs:940`).
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
   `coverage-thresholds.json`. Related: COV.
 - **CQ-05-F6 / CQ-06-F5.** Raw English `ex.Message` and English file-picker type names reach the UI.
@@ -638,6 +636,12 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **CQ-08-F6.** DONE 2026-10-19 — ADIF import froze the UI: measured 2000 QSOs = 17.4 s, and the work never left the
+  UI thread (Microsoft.Data.Sqlite's async calls complete synchronously). Import now runs in `Task.Run` and inserts
+  through the new `ILogbookRepository.AddRangeAsync` (one transaction; the same 2000 inserts took 17 ms in the probe).
+  All-or-nothing: a failure adds no QSOs, so a retry cannot duplicate rows; the "partly imported" message became
+  "Import failed; no QSOs were added". Help en+de updated. 4 new tests, both mutations caught. Auditor: 1 plan
+  review + 1 code review, go.
 - **UX-COALESCE.** DONE 2026-10-19 — a Ctrl-drag duplicate armed the "OverlayGeometry" undo-coalesce marker
   without its idle clear, so later element moves/edits were not undoable and did not count as unsaved. New
   `ArmCoalescing` pairs the marker with the clear at every site. User-accepted side effect: a Ctrl-drag is usually two

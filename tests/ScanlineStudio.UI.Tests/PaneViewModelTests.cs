@@ -9733,6 +9733,21 @@ public sealed class PaneViewModelTests
     }
 
     [AvaloniaFact]
+    public async Task LogbookPaneViewModel_ImportAdifAsync_Fails_ReportsImportFailedEvenWhenARefreshWouldAlsoFail()
+    {
+        var logbook = new FakeLogbookSessionService { ThrowOnImport = new InvalidOperationException("simulated import failure") };
+        var filePicker = new FakeFilePickerService { AdifPathToReturn = "/tmp/import.adi" };
+        var vm = CreateLogbookPaneViewModel(logbook, filePicker);
+        Dispatcher.UIThread.RunJobs();
+        logbook.ThrowOnSearch = new InvalidOperationException("simulated refresh failure");
+
+        await vm.ImportAdifCommand.ExecuteAsync(null);
+        Dispatcher.UIThread.RunJobs();
+
+        Assert.Equal("Panes.Logbook.Error.ImportFailed", vm.StatusMessage);
+    }
+
+    [AvaloniaFact]
     public async Task LogbookPaneViewModel_ExportAdifAsync_UsesCurrentFilterAndReportsCount()
     {
         var logbook = new FakeLogbookSessionService();

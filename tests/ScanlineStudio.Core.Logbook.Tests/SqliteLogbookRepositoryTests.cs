@@ -545,6 +545,52 @@ public sealed class SqliteLogbookRepositoryTests
         return columns;
     }
 
+    [Fact]
+    public async Task AddRangeAsync_InsertsEveryRecord()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var start = new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero);
+            var records = Enumerable.Range(0, 50)
+                .Select(i => new QsoRecord($"batch-{i}", $"PA{i}AA", start.AddMinutes(i), null, null, null, null, null, null, null, null, null, null, null, null, false, false))
+                .ToList();
+
+            await repository.AddRangeAsync(records);
+
+            var stored = await repository.SearchAsync(new LogbookQuery());
+            Assert.Equal(50, stored.Count);
+            Assert.Equal(records.OrderBy(r => r.Id), stored.OrderBy(r => r.Id));
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
+    [Fact]
+    public async Task AddRangeAsync_FailureOnARecord_RollsBackTheWholeBatch()
+    {
+        var dbPath = TempDbPath();
+        try
+        {
+            var repository = new SqliteLogbookRepository(NullLogger<SqliteLogbookRepository>.Instance, dbPath);
+            var start = new DateTimeOffset(2026, 10, 19, 12, 0, 0, TimeSpan.Zero);
+            QsoRecord Record(string id) => new(id, "PA0AA", start, null, null, null, null, null, null, null, null, null, null, null, null, false, false);
+            await repository.AddAsync(Record("existing"));
+
+            await Assert.ThrowsAsync<SqliteException>(() => repository.AddRangeAsync([Record("new-1"), Record("new-2"), Record("existing"), Record("new-3")]));
+
+            var stored = await repository.SearchAsync(new LogbookQuery());
+            Assert.Equal("existing", Assert.Single(stored).Id);
+        }
+        finally
+        {
+            DeleteDb(dbPath);
+        }
+    }
+
     private static string TempDbPath() => Path.Combine(Path.GetTempPath(), $"scanline-studio-logbook-test-{Guid.NewGuid()}.db");
 
     private static void DeleteDb(string path)

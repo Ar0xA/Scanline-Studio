@@ -1131,7 +1131,7 @@
   "Panes.Logbook.Error.SearchFailed": "Could not search the logbook.",
   "Panes.Logbook.Error.LogFailed": "Could not log that QSO.",
   "Panes.Logbook.Error.UpdateFailed": "Could not save changes to that QSO.",
-  "Panes.Logbook.Error.ImportPartial": "Import failed partway through -- some rows above may already have been added.",
+  "Panes.Logbook.Error.ImportFailed": "Import failed; no QSOs were added. Details are in the application log.",
   "Panes.Logbook.Error.ExportFailed": "Could not export to that file.",
   "Panes.Logbook.Error.DeleteFailed": "Could not delete that QSO.",
   "Panes.Logbook.Error.EntryNoLongerExists": "That QSO no longer exists -- it may have already been deleted elsewhere.",

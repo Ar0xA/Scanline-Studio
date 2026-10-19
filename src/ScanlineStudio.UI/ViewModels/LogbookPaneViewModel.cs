@@ -942,20 +942,8 @@ public sealed partial class LogbookPaneViewModel : ViewModelBase
         catch (Exception ex)
         {
             Log.ImportFailed(_logger, ex);
-            // A malformed file can leave SOME rows already committed before the exception surfaces
-            // (LogbookSessionService.ImportAdifFileAsync persists record-by-record, non-
-            // transactionally) -- refresh so the user sees what DID get imported, and say so.
-            //
-            // Tier B audit finding: only report ImportPartial if that recovery refresh itself
-            // actually succeeded -- this used to overwrite unconditionally, so if the refresh ALSO
-            // failed, its own Error.SearchFailed message (which is the one telling the user the list
-            // they're looking at might not even reflect the partial import) was silently discarded
-            // in favor of a message implying the list is now trustworthy.
-            if (await RefreshInternalAsync())
-            {
-                StatusMessage = _localization.GetString("Panes.Logbook.Error.ImportPartial");
-            }
-
+            // The import is one transaction, so a failure added nothing and there is nothing new to refresh.
+            StatusMessage = _localization.GetString("Panes.Logbook.Error.ImportFailed");
             return;
         }
 

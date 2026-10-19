@@ -169,7 +169,12 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         }
     }
 
-    public async Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default)
+    // Task.Run: Microsoft.Data.Sqlite's async calls complete synchronously, so without it the file read,
+    // the parse and the insert all ran on the caller's (UI) thread -- 2000 rows froze the window for ~17 s.
+    public Task<IReadOnlyList<QsoRecord>> ImportAdifFileAsync(string filePath, CancellationToken ct = default) =>
+        Task.Run(() => ImportAdifFileCoreAsync(filePath, ct), ct);
+
+    private async Task<IReadOnlyList<QsoRecord>> ImportAdifFileCoreAsync(string filePath, CancellationToken ct)
     {
         using var reader = new StreamReader(filePath, DetectAdifFallbackEncoding(filePath), detectEncodingFromByteOrderMarks: true);
         // T1-17: StreamReader.CurrentEncoding only becomes accurate once BOM detection has actually
@@ -180,14 +185,10 @@ public sealed partial class LogbookSessionService : ILogbookSessionService
         reader.Peek();
         var parsed = _adifImporter.Import(reader, reader.CurrentEncoding);
 
-        var imported = new List<QsoRecord>(parsed.Count);
-        foreach (var record in parsed)
-        {
-            imported.Add(await _repository.AddAsync(record, ct).ConfigureAwait(false));
-        }
+        await _repository.AddRangeAsync(parsed, ct).ConfigureAwait(false);
 
-        Log.AdifImported(_logger, filePath, imported.Count);
-        return imported;
+        Log.AdifImported(_logger, filePath, parsed.Count);
+        return parsed;
     }
 
     /// <summary>T1-17 (production_audit.md): <see cref="StreamReader"/>'s own BOM detection

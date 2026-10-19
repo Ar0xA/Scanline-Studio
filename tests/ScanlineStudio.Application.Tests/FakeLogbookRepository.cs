@@ -19,6 +19,20 @@ internal sealed class FakeLogbookRepository : ILogbookRepository
         return Task.FromResult(record);
     }
 
+    public int AddRangeCallCount { get; private set; }
+
+    public Task AddRangeAsync(IReadOnlyList<QsoRecord> records, CancellationToken ct = default)
+    {
+        AddRangeCallCount++;
+        if (ThrowOnAdd is not null)
+        {
+            throw ThrowOnAdd;
+        }
+
+        Records.AddRange(records);
+        return Task.CompletedTask;
+    }
+
     public Task UpdateAsync(QsoRecord record, CancellationToken ct = default)
     {
         var index = Records.FindIndex(r => r.Id == record.Id);

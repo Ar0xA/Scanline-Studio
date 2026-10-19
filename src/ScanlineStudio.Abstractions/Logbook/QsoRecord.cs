@@ -45,6 +45,9 @@ public interface ILogbookRepository
 {
     Task<QsoRecord> AddAsync(QsoRecord record, CancellationToken ct = default);
 
+    /// <summary>Adds every record or none: a failure rolls back the whole batch.</summary>
+    Task AddRangeAsync(IReadOnlyList<QsoRecord> records, CancellationToken ct = default);
+
     Task UpdateAsync(QsoRecord record, CancellationToken ct = default);
 
     Task<IReadOnlyList<QsoRecord>> SearchAsync(LogbookQuery query, CancellationToken ct = default);
