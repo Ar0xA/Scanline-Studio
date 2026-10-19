@@ -130,6 +130,28 @@ public sealed class FileLoggerProviderTests : IDisposable
     }
 
     [Fact]
+    public void LogLine_StartsWithAnInvariantDateAndTime_EvenUnderACultureWithOtherSeparators()
+    {
+        var original = System.Globalization.CultureInfo.CurrentCulture;
+        var culture = (System.Globalization.CultureInfo)System.Globalization.CultureInfo.GetCultureInfo("en-US").Clone();
+        culture.DateTimeFormat.TimeSeparator = ".";
+        System.Globalization.CultureInfo.CurrentCulture = culture;
+        try
+        {
+            using var provider = new FileLoggerProvider(_logPath);
+            WriteLines(provider, "TestCategory", 1, "dated");
+            provider.Dispose();
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = original;
+        }
+
+        var line = Assert.Single(File.ReadAllLines(_logPath), l => l.Contains("dated", StringComparison.Ordinal));
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3} \[Information\] TestCategory: dated$", line);
+    }
+
+    [Fact]
     public void WritingPastTheSizeCap_RotatesTheLiveFileToDotOne()
     {
         // A tiny cap makes a handful of lines enough to cross it without needing megabytes of data.
@@ -207,8 +229,9 @@ public sealed class FileLoggerProviderTests : IDisposable
         // same provider-level WriteLine so rotation state (and the file on disk) stays consistent
         // across categories, not just within one logger instance. CategoryA alone must stay well
         // under the cap, or this test can't distinguish from the old per-logger-writer design (which
-        // would also show a .1 file after enough writes on ONE logger alone).
-        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 400, maxBackupFileCount: 5);
+        // would also show a .1 file after enough writes on ONE logger alone). The cap fits ~6 lines of
+        // ~70 bytes (dated timestamp), so the 12 lines rotate exactly once.
+        using var provider = new FileLoggerProvider(_logPath, maxFileSizeBytes: 480, maxBackupFileCount: 5);
 
         WriteLines(provider, "CategoryA", count: 2, message: new string('a', 20));
         Assert.False(File.Exists($"{_logPath}.1"), "should not have rotated yet from CategoryA alone");

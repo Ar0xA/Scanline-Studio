@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using ScanlineStudio.Settings;
 
@@ -420,7 +421,8 @@ internal sealed class FileLogger(string categoryName, FileLoggerProvider provide
             return;
         }
 
-        var line = $"{DateTime.Now:HH:mm:ss.fff} [{logLevel,-11}] {categoryName}: {formatter(state, exception)}";
+        // Invariant: in a custom format ':' is the culture's time separator, and a multi-day log needs the date.
+        var line = string.Create(CultureInfo.InvariantCulture, $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} [{logLevel,-11}] {categoryName}: {formatter(state, exception)}");
         if (exception is not null)
         {
             line += Environment.NewLine + exception;

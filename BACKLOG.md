@@ -533,7 +533,6 @@ User data, safety and error paths:
   Exit handlers have no try (`MainWindow.axaml.cs:1003-1031`).
 - **CQ-08-F6.** ADIF import does file I/O and probably the SQLite inserts on the UI thread, no
   transaction (`LogbookPaneViewModel.cs:940`).
-- **CQ-11-F3.** Log lines have no date (`FileLoggerProvider.cs:423`).
 - **CQ-11-F1.** Coverage check cannot pass: Core.Cw, Radio.Flrig, Radio.OmniRig missing from
   `coverage-thresholds.json`. Related: COV.
 - **CQ-05-F6 / CQ-06-F5.** Raw English `ex.Message` and English file-picker type names reach the UI.
@@ -643,6 +642,9 @@ Listed with evidence in the area reports. Pick them up only when already working
 
 ## 9. Verified done — 0.9.3-beta fixes (2026-10-16)
 
+- **CQ-11-F3.** DONE 2026-10-19 — `app.log` lines now start with `yyyy-MM-dd HH:mm:ss.fff` (local time), formatted
+  with the invariant culture. New test under a culture with a `.` time separator; the shared-rotation test's cap moved
+  400 → 480 for the longer line. Auditor: 1 code review, go.
 - **PREVFRAMES-THUMB.** DONE 2026-10-19 — the Receive-tab previous-frames strip now nulls a trimmed row's thumbnail
   and disposes it with a Background-priority post, as the Gallery eviction does. One new test that tells a deferred
   dispose from an immediate one; both mutations caught. Auditor: 1 plan review + 1 code review, go.
