@@ -503,6 +503,17 @@ User data, safety and error paths:
   failed in 2 of 3 full Application.Tests runs on 2026-10-19 and passes 5/5 standalone: a timing dependency under load.
   `TrySaveReceptionAudioAsync_CalledTwiceForTheSameReception_SecondCallReturnsFalse` in the same class also failed once
   under full-suite load (2026-10-19); treat the whole class as suspect.
+- **AUDIT-094.** OPEN, minor — unbiased post-ship audit of the 20 0.9.4 commits (2026-10-19): all fixes hold, no new
+  worse problems. Leftovers: (a) repairing an unreadable `Audio` section in Options resets TX Pwr to 100% silently
+  (`OptionsSettingsService.cs` ~:310-330); name Pwr in the notice/help. (b) Repairing an unreadable `Operator` saves a
+  blank callsign (visible). (c) `MigrateAsync` now probes the keyring (`ExistsAsync`, no prompt, bounded) on every start
+  for users with a QrzLookup section and no password. (d) `JsonSettingsStoreRecoveryTests` unreadable-file tests pass
+  without asserting when run as root (return instead of skip). (e) A UI exception that recurs every frame is now
+  swallowed forever (`UnhandledUiExceptionHandler`), churning the log. (f) Overlapping in-place picks: an earlier, slower
+  pick can win; the dropped one is only logged. (g) Esc during a Ctrl-drag duplicate leaves the clone on the canvas
+  (user-accepted in UX-COALESCE; it can go on air doubled).
+- **QRZ-LOGIN-GATE.** OPEN, release gate — run Options › QRZ › Test credentials once with a real account (CQ-10-F2
+  changed the login to a POST body; only a "wrong password" probe was done).
 - **QRZUPLOAD-ASIDE.** OPEN, minor — `QrzUpload.unreadable` can keep a plaintext upload ApiKey and nothing wipes it
   (the QrzLookup password copy is wiped on the next password write since CQ-09-F2-FOLLOWUPS (b)).
 - **CQ-11-F14-FOLLOWUPS.** OPEN, minor. If CI is re-enabled: `ci.yml` checkout still persists credentials and has no
