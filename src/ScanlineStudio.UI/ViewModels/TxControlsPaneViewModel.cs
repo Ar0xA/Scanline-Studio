@@ -123,8 +123,16 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// just-opened-but-not-yet-applied editor. Set alongside every editor construction
     /// (<see cref="OpenEditorWithLoadedSourceAsync"/>, <see cref="ReplaceEditorForModeSwitch"/>) and by
     /// <see cref="OpenEditorForSourceAsync"/>'s in-place background load, cleared alongside every
-    /// <c>_currentEditor = null</c>.</summary>
+    /// <c>_currentEditor = null</c>. Only valid while the editor's
+    /// <see cref="TxImageEditorPaneViewModel.BackgroundIdentity"/> still equals
+    /// <see cref="_currentEditorFileNameIdentity"/>; read it through <see cref="CurrentEditorFileName"/>.</summary>
     private string? _currentEditorFileName;
+
+    // The editor background the name belongs to; an undo, remove or demote that changes the background drops the name.
+    private object? _currentEditorFileNameIdentity;
+
+    // Whether the last Apply had a real background; the card shows the applied name only for a real one.
+    private bool _appliedHasRealBackground;
 
     /// <summary>The native-resolution original plus the crop/stretch/overlay/adjustment choices
     /// applied to it -- retained (not just the final mode-sized image) so a later mode change can
@@ -1071,8 +1079,10 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="SelectedFileName"/> itself. Still gated on <see cref="SelectedFileName"/> too (not
     /// <see cref="TxImageEditorPaneViewModel.HasRealBackground"/> alone) -- a freshly opened, not-yet-
     /// Applied editor with a real unapplied photo has no pane-level name/preview to show yet either,
-    /// same pre-existing limitation this property doesn't change.</summary>
-    public bool ShowBackgroundPreview => SelectedFileName is not null && (_currentEditor?.HasRealBackground ?? false);
+    /// same pre-existing limitation this property doesn't change. Also gated on the last Apply having
+    /// had a real background, so an in-place pick after an applied blank canvas does not show the
+    /// blank's name until the next Apply.</summary>
+    public bool ShowBackgroundPreview => SelectedFileName is not null && _appliedHasRealBackground && (_currentEditor?.HasRealBackground ?? false);
 
     /// <summary>Mode-switch-mid-edit feature: dropped the <c>IsCurrentEditorBlankAndUntouched()</c>
     /// carve-out -- a populated editor is now handled by <see cref="ReplaceEditorForModeSwitch"/>
@@ -1486,7 +1496,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
 
             editor.LoadBackground(inPlaceSource);
             TrackSourcePath(editor, SourcePathOf(source));
-            _currentEditorFileName = fileName;
+            TrackEditorFileName(editor, fileName);
             return true;
         }
 
@@ -1512,7 +1522,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
-            _currentEditorFileName = null;
+            TrackEditorFileName(null, null);
             ErrorMessage = LoadFailedMessage(ex);
             EditorClosed?.Invoke();
             return true;
@@ -1657,7 +1667,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.Cancelled += OnEditorCancelled;
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
-            _currentEditorFileName = fileName;
+            TrackEditorFileName(editor, fileName);
             TrackSourcePath(editor, sourcePath);
             editor.SetEstimatedFrameSeconds(_drmEstimatedSeconds);
             RequestDrmEstimate();
@@ -1690,7 +1700,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             _currentEditor?.Dispose();
             _currentEditor = null;
             _currentEditorIsBlank = false;
-            _currentEditorFileName = null;
+            TrackEditorFileName(null, null);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
         }
@@ -1705,7 +1715,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
     /// <see cref="SelectedFileName"/>) -- only the close/dispose/<see cref="EditorClosed"/>-fire steps
     /// are gone. <see cref="_currentEditorIsBlank"/> is still set <see langword="false"/> here (an
     /// applied editor is no longer the untouched blank placeholder) and <see cref="SelectedFileName"/> is read
-    /// from <see cref="_currentEditorFileName"/>, which an in-place background load may have updated
+    /// through <see cref="CurrentEditorFileName"/>, which an in-place background load may have updated
     /// since the editor opened. 3-round `yoniq-auditor` finding: with <see cref="IsEditorOpen"/> no longer toggling,
     /// <see cref="OnIsEditorOpenChanged"/>'s own notifications never fire for this transition anymore
     /// -- <see cref="QuickSelectModeCommand"/> and <see cref="CanChangeSourceOrMode"/>/
@@ -1728,7 +1738,9 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _loadedImage = final;
         _loadedImageSourcePath = CurrentBackgroundSourcePath(editor);
         PreviewImage = ImageSourceBitmapConverter.ToBitmap(final);
-        SelectedFileName = _currentEditorFileName;
+        _appliedHasRealBackground = editor.HasRealBackground;
+        SelectedFileName = CurrentEditorFileName(editor);
+        OnPropertyChanged(nameof(ShowBackgroundPreview));
         ErrorMessage = null;
         _currentEditorIsBlank = false;
         TransmitCommand.NotifyCanExecuteChanged();
@@ -1738,6 +1750,19 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(CanLoadBackground));
         RequestDrmEstimate();
     }
+
+    private void TrackEditorFileName(TxImageEditorPaneViewModel? editor, string? name)
+    {
+        _currentEditorFileName = name;
+        _currentEditorFileNameIdentity = name is null ? null : editor?.BackgroundIdentity;
+    }
+
+    /// <summary>The tracked file name, or <see langword="null"/> when <paramref name="editor"/>'s background is no
+    /// longer the picture that name was recorded for. Never a wrong name.</summary>
+    private string? CurrentEditorFileName(TxImageEditorPaneViewModel editor) =>
+        _currentEditorFileNameIdentity is not null && ReferenceEquals(editor.BackgroundIdentity, _currentEditorFileNameIdentity)
+            ? _currentEditorFileName
+            : null;
 
     /// <summary>ui_transition_plan.md step 2 (T1-2): the SEND row's "Apply &amp; Transmit" chain --
     /// applies exactly like a plain Apply (<see cref="OnEditorApplied"/>, which no longer closes the
@@ -1783,7 +1808,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
-        _currentEditorFileName = null;
+        TrackEditorFileName(null, null);
         EditorClosed?.Invoke();
     }
 
@@ -1802,7 +1827,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         _currentEditor?.Dispose();
         _currentEditor = null;
         _currentEditorIsBlank = false;
-        _currentEditorFileName = null;
+        TrackEditorFileName(null, null);
         TrackSourcePath(null, null);
         EditorClosed?.Invoke();
         RequestDrmEstimate();
@@ -1887,11 +1912,8 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
         var hadUnsavedEdits = oldEditor.HasUnsavedEdits;
         var wasDirtySinceCheckpoint = oldEditor.IsDirtySinceLastCheckpoint;
         var wasBlank = _currentEditorIsBlank;
-        // Non-null forgiveness is safe: every path that leaves _currentEditor non-null also sets
-        // _currentEditorFileName (OpenEditorWithLoadedSourceAsync's own fileName parameter is
-        // non-nullable), and this method's own guard above already confirmed _currentEditor is
-        // non-null.
-        var fileName = _currentEditorFileName!;
+        // Null when an undo, remove or demote changed the background since the name was recorded.
+        var fileName = CurrentEditorFileName(oldEditor);
         var oldModeId = oldEditor.TargetModeId;
         var sourcePath = CurrentBackgroundSourcePath(oldEditor);
 
@@ -1917,7 +1939,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             editor.PropertyChanged += OnCurrentEditorPropertyChanged;
             _currentEditor = editor;
             _currentEditorIsBlank = wasBlank;
-            _currentEditorFileName = fileName;
+            TrackEditorFileName(editor, fileName);
             TrackSourcePath(editor, sourcePath);
             editor.SetEstimatedFrameSeconds(_drmEstimatedSeconds);
             RequestDrmEstimate();
@@ -1940,7 +1962,7 @@ public sealed partial class TxControlsPaneViewModel : ViewModelBase, IDisposable
             IsEditorOpen = false;
             _currentEditor = null;
             _currentEditorIsBlank = false;
-            _currentEditorFileName = null;
+            TrackEditorFileName(null, null);
             ErrorMessage = _localization.GetString("Panes.TxControls.Error.LoadFailed");
             EditorClosed?.Invoke();
         }

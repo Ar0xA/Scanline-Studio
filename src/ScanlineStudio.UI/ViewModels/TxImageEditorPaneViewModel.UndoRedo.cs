@@ -66,7 +66,7 @@ public sealed partial class TxImageEditorPaneViewModel
 
     private EditorSnapshot CaptureSnapshot() =>
         new(_rotationCount, CropRect, PreserveAspect, LockAspectToMode, BuildAdjustments(), RawOverlayElements, TemplateVariables,
-            _sourceBaseline, _sourceBaselineRotation);
+            _sourceBaseline, _sourceBaselineRotation, _backgroundIdentity);
 
     private bool CanUndo() => _undoStack.Count > 0;
 
@@ -325,6 +325,8 @@ public sealed partial class TxImageEditorPaneViewModel
             ClearTemplateVariablesCommand.NotifyCanExecuteChanged();
 
             TemplateVariableRows.Clear();
+
+            _backgroundIdentity = snapshot.BackgroundIdentity;
 
             // TX workflow modernization plan, Phase 7: the delta-rotation reconciliation below is
             // only valid while the CURRENT source and the snapshot's source come from the same

@@ -352,12 +352,9 @@ real QSSTV/EasyPal WAVs for P8.
   need their own design (QSSTV sends the source size capped at 1024).
 - **DRM-QGRID.** OPEN — a DRM slot on the TX quick-mode grid, cut from P4b: the grid types are shared with RX
   (`QuickModeGridViewModels.cs`, `RxImagePaneViewModel.cs` quick-grid), so DRM is selectable from the mode ComboBox only.
-- **TX-NAME-SYNC.** OPEN, minor — the TX file name is not re-synced with the background in three pre-existing cases:
-  (a) `ShowBackgroundPreview` (`TxControlsPaneViewModel.cs` ~:1075) pairs the last applied `SelectedFileName` with
-  the live `HasRealBackground`, so an in-place pick after an earlier Apply of a blank canvas shows "Blank" on the
-  card until the next Apply; (b) Undo of an in-place pick or Remove Background keeps the picked name, which TX
-  history then records; (c) Demote-backdrop-to-background (`TxImageEditorPaneViewModel.Bake.cs` ~:61) never
-  updates the name. Found by `yoniq-auditor` during TX-BLANKNAME, 2026-10-19.
+- **TX-NAME-SYNC-REST.** OPEN, minor — only one TX file name is remembered at a time, so a background that returns
+  through several undos (Browse A, Remove, pick B, Undo twice) records no name instead of "A". The DRM source-path
+  tracker (`TrackSourcePath`) may have the same undo/remove staleness; not checked.
 - **DRM-JP2TIME.** OPEN (record) — JP2 encode time on this machine (Ryzen 7 5800X, OpenJPEG 2.5.4, median of 5):
   640×480 20 KB 17 ms / 100 KB 19 ms; 800×600 20 KB 27 ms / 100 KB 28 ms (photo-like source; a flat card
   9-15 ms). Frame count for the recount: 12-46 ms. The 400 ms debounce, not the encode, dominates the estimate
@@ -636,6 +633,12 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **TX-NAME-SYNC.** DONE 2026-10-19 — the editor keeps a background identity token: a load, remove, promote, demote or a
+  flatten onto the blank canvas makes a new one, a flatten onto a real photo keeps it, and undo restores it. The TX
+  file name is used only while the token still matches, otherwise no name is shown or recorded in TX history (never a
+  wrong name). The Background card also needs the last Apply to have had a real background, so an in-place pick
+  after an applied blank no longer shows "Blank". 10 new tests, 10 mutations caught. Auditor: 2 plan reviews +
+  1 code review, go. Rest: TX-NAME-SYNC-REST.
 - **CQ-10-F4.** DONE 2026-10-19 — `ImageFileLoader` reads the header first. Over 250 MP it refuses with
   `ImageLoadException(TooLarge)` before any pixel allocation. A long side over 4096 px decodes scaled to fit 4096×4096
   (`DecoderOptions.TargetSize`, first frame only). Every failure is logged and becomes `ImageLoadException`

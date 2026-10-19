@@ -131,6 +131,14 @@ public sealed partial class TxImageEditorPaneViewModel
     /// <summary>The background instance in use; a new instance means the background was replaced.</summary>
     public IImageSource BackgroundBaseline => _sourceBaseline;
 
+    // A new token when a different picture becomes the background (load, remove, promote, demote, or a
+    // flatten onto a blank canvas); a flatten onto a real photo keeps it. Saved with every undo step.
+    private object _backgroundIdentity = new();
+
+    /// <summary>Which picture the background is, independent of edits baked into it: unchanged by a Flatten
+    /// onto a real photo, replaced by a load, remove, promote or demote. Undo restores it.</summary>
+    public object BackgroundIdentity => _backgroundIdentity;
+
     /// <summary>User-reported bug (2026-09-15): "once i removed the background however stock browse
     /// and open editor are still greyed out." <c>TxControlsPaneViewModel.CanChangeSourceOrMode</c>
     /// gates Browse/Stock/Open Editor on <c>_currentEditorIsBlank</c> (a one-shot snapshot from
@@ -212,6 +220,7 @@ public sealed partial class TxImageEditorPaneViewModel
             // source can never be reached from the old baseline by rotation, so ApplyState must
             // restore it by instance.
             _sourceBaseline = placeholder;
+            _backgroundIdentity = new object();
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(placeholder);
         }
@@ -250,6 +259,7 @@ public sealed partial class TxImageEditorPaneViewModel
         {
             var placeholder = new BlankImageSource(_target.Width, _target.Height, BlankImageSource.DefaultColor);
             _sourceBaseline = placeholder;
+            _backgroundIdentity = new object();
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(placeholder);
         }
@@ -293,6 +303,7 @@ public sealed partial class TxImageEditorPaneViewModel
         try
         {
             _sourceBaseline = source;
+            _backgroundIdentity = new object();
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(source);
         }

@@ -69,6 +69,7 @@ public sealed partial class TxImageEditorPaneViewModel
         var wasPromoted = backdrop.Origin.Kind == ImageSourceKind.Promoted;
 
         var committed = await BakeElementIntoBackgroundAsync(backdrop, new BakeOperation(
+            KeepsBackgroundIdentity: false,
             SetBusy: busy =>
             {
                 _isDemoting = busy;
@@ -235,6 +236,7 @@ public sealed partial class TxImageEditorPaneViewModel
         }
 
         var committed = await BakeElementIntoBackgroundAsync(element, new BakeOperation(
+            KeepsBackgroundIdentity: true,
             SetBusy: busy =>
             {
                 _isFlattening = busy;
@@ -264,8 +266,10 @@ public sealed partial class TxImageEditorPaneViewModel
 
     /// <summary>What differs between Flatten and Demote inside <see cref="BakeElementIntoBackgroundAsync"/>.
     /// <paramref name="SetBusy"/> sets the command's own busy flag and refreshes its CanExecute;
-    /// <paramref name="BeforeCommit"/> runs after the stale check, before the undo push.</summary>
+    /// <paramref name="BeforeCommit"/> runs after the stale check, before the undo push.
+    /// <paramref name="KeepsBackgroundIdentity"/> keeps <see cref="BackgroundIdentity"/> when the baked-into background is a real picture.</summary>
     private sealed record BakeOperation(
+        bool KeepsBackgroundIdentity,
         Action<bool> SetBusy,
         string FailedKey,
         string OutsideFrameKey,
@@ -358,6 +362,12 @@ public sealed partial class TxImageEditorPaneViewModel
             // so ApplyState must restore it by instance (see its own branch and _sourceBaseline's
             // doc comment). Baseline rotation is the CURRENT rotation -- the baked image is in
             // whatever orientation the editor is in right now.
+            // Flatten onto a real photo is still that photo; a demote, or a flatten onto the blank canvas, is a new picture.
+            if (!op.KeepsBackgroundIdentity || _sourceBaseline is BlankImageSource)
+            {
+                _backgroundIdentity = new object();
+            }
+
             _sourceBaseline = baked;
             _sourceBaselineRotation = _rotationCount;
             ReplaceSourceAndWorkingCopy(baked);

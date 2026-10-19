@@ -182,5 +182,5 @@ public sealed partial class TxImageEditorPaneViewModel
         IReadOnlyDictionary<string, string> TemplateVariables,
         // TX workflow modernization plan, Phase 7 -- see _sourceBaseline's own doc comment for why
         // this is the baseline generation, not the live _originalSource.
-        IImageSource SourceBaseline, int SourceBaselineRotation);
+        IImageSource SourceBaseline, int SourceBaselineRotation, object BackgroundIdentity);
 }
