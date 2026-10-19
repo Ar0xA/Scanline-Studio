@@ -770,7 +770,7 @@
   "Options.Title": "Optionen",
   "Options.HelpGlyph": "[?]",
   "Options.Save": "Speichern",
-  "Options.Load.UnreadableSections": "Einige gespeicherte Einstellungen konnten nicht gelesen werden ({0}). Es werden ihre Standardwerte angezeigt. Speichern ersetzt die meisten davon; der alte Text bleibt in settings.json als '<Name>.unreadable' erhalten.",
+  "Options.Load.UnreadableSections": "Einige gespeicherte Einstellungen konnten nicht gelesen werden ({0}). Es werden ihre Standardwerte angezeigt. Speichern ersetzt sie; der alte Text bleibt in settings.json als '<Name>.unreadable' erhalten.",
   "Options.Apply": "Übernehmen",
   "Options.Apply.Help": "Speichert alle Änderungen in diesem Dialog, ohne ihn zu schließen.",
   "Options.Cancel": "Abbrechen",

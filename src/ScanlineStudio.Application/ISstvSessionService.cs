@@ -174,7 +174,8 @@ public interface ISstvSessionService : IAsyncDisposable
     Task<bool> GetDrmReceiveEnabledAsync(CancellationToken ct = default);
 
     /// <summary>Turns DRM RX on or off: persists the setting and applies it to a running RX session as soon as the RX
-    /// transition gate is free (at once, or when the current transition or file decode ends).</summary>
+    /// transition gate is free (at once, or when the current transition or file decode ends). An unreadable saved
+    /// section is kept as <c>DrmRx.unreadable</c> and rewritten.</summary>
     Task SetDrmReceiveEnabledAsync(bool enabled, CancellationToken ct = default);
 
     /// <summary>The operator's own configured callsign (<c>OperatorSettings.Callsign</c>), run

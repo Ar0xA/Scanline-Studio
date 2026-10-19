@@ -503,11 +503,14 @@ cq-01, cq-q1, cq-04/cq-q4, cq-q5, then cq-q2 file splits last. The bug pass pick
 ### CQ-P2. OPEN — fix when touching the code
 
 User data, safety and error paths:
-- **CQ-09-F2-FOLLOWUPS.** OPEN, minor (found in the CQ-09-F2 review): with `QrzLookup` unreadable, (a) Options shows
-  "keyring locked" plus an Unlock button that cannot help, and re-entering the password fails as "keyring write
-  failed" until one save without it (help documents the workaround); (b) applying a preset overwrites the unreadable
-  section without setting it aside (`ConfigurationPresetService.cs` ~:249-263); (c) a plaintext password inside
-  `QrzLookup.unreadable` is never migrated to the keyring. A malformed `DrmRx` section cannot be repaired from Options.
+- **CQ-09-F2-FOLLOWUPS.** OPEN, minor. (a) With `QrzLookup` unreadable, Options shows "keyring locked" plus an Unlock
+  button that cannot help (`QrzCredentialService.ReadAsync` returns Unavailable; `OptionsWindowViewModel.QrzAndForwarding.cs`
+  ~:65); a distinct "unreadable" status would fix it. (b) A plaintext password inside `QrzLookup.unreadable` is never
+  moved to the keyring (help says to delete the entry). (c) RX start reads `DrmRx` (`SeedDrmToggle`,
+  `SstvSessionService.ReceiveDrm.cs` ~:130) and `StationId` (`SstvSessionService.Receive.cs` ~:97) with `GetSection`, so an
+  unreadable section may stop RX from starting until Options repairs it; check whether a caller catches it. (d) A
+  malformed `QrzLookup` inside a preset file overwrites a readable live one on apply and drops the live plaintext
+  password without setting it aside (`ConfigurationPresetService.cs` ~:275). Pre-existing.
 - **CQ-11-F14.** `release-windows.yml` runs the unpinned `ilammy/msvc-dev-cmd@v1` in a `contents: write`
   job, with checkout credentials persisted. Pin actions to commit SHAs and set `persist-credentials: false`.
   P3 in the report, but auditor top-10 #8 (supply-chain risk to shipped binaries).
@@ -630,6 +633,11 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-09-F2 follow-ups (DrmRx, QRZ writes, preset apply).** DONE 2026-10-19 — Options repairs an unreadable `DrmRx`
+  section on the next Save/Apply even with the toggle untouched. QRZ password writes (plaintext, keyring set, keyring
+  delete) set an unreadable `QrzLookup` aside and write, so entering the password and one Save repairs it (no more false
+  "keyring write failed"). Applying a preset that carries `QrzLookup`/`QrzUpload` over an unreadable live one keeps the
+  live raw text as `.unreadable`. 10 new tests, 7 mutations caught. Auditor: 1 plan review + 1 code review, go.
 - **CQ-10-F2.** DONE 2026-10-19 — the QRZ XML login now sends username/password in a form POST body, never in the
   request URI (`QrzCallsignLookup.LoginAsync`). A live probe showed QRZ reads POST-body credentials ("incorrect" vs
   "required"). `RemoveAllLoggers()` stays on the QrzXmlLookup client: the lookup GET still carries the session key.

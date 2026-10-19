@@ -144,6 +144,39 @@ public sealed class OptionsUnreadableSectionTests
     }
 
     [AvaloniaFact]
+    public async Task Dialog_UnreadableDrmRx_FirstSaveRewritesItEvenWithTheToggleUntouched_SecondSaveDoesNot()
+    {
+        var session = new FakeSstvSessionService { GetDrmReceiveEnabledFailure = new JsonException("bad") };
+        var (vm, _) = CreateVm(new FakeSettingsStore(), session: session);
+        session.GetDrmReceiveEnabledFailure = null;
+
+        await vm.SaveCommand.ExecuteAsync(null);
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Equal([DrmReceiveDefaultsForTest], session.DrmReceiveEnabledCalls);
+    }
+
+    [AvaloniaFact]
+    public async Task Dialog_UnreadableQrzLookup_EnteringAPasswordAndOneSave_RepairsIt()
+    {
+        var store = StoreWith(QrzLookupSettings.SectionKey);
+        var raw = store.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText();
+        var (vm, _) = CreateVm(store);
+
+        vm.QrzLookupEnabled = true;
+        vm.QrzLookupUsername = "PA0XYZ";
+        vm.QrzLookupPassword = "pw";
+        await vm.SaveCommand.ExecuteAsync(null);
+
+        Assert.Null(vm.SaveErrorMessage);
+        Assert.Equal(raw, store.Settings.Sections[QrzLookupSettings.SectionKey + ".unreadable"].GetRawText());
+        var section = store.Settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings)!;
+        Assert.True(section.Enabled);
+        Assert.Equal("PA0XYZ", section.Username);
+        Assert.Equal("pw", section.Password);
+    }
+
+    [AvaloniaFact]
     public void Dialog_NoUnreadableSection_ShowsNoNotice()
     {
         var (vm, localization) = CreateVm(new FakeSettingsStore());

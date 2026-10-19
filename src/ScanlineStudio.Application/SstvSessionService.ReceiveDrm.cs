@@ -69,10 +69,20 @@ public sealed partial class SstvSessionService
             try
             {
                 await _settingsStore.UpdateAsync(
-                    s => s.WithSection(
-                        DrmRxSettings.SectionKey,
-                        (s.GetSection(DrmRxSettings.SectionKey, DrmRxSettingsJsonContext.Default.DrmRxSettings) ?? new DrmRxSettings()) with { RxEnabled = enabled },
-                        DrmRxSettingsJsonContext.Default.DrmRxSettings),
+                    s =>
+                    {
+                        // An unreadable section is kept verbatim under its .unreadable key, then rewritten.
+                        if (!s.TryReadSection(DrmRxSettings.SectionKey, DrmRxSettingsJsonContext.Default.DrmRxSettings, out var current, out var error))
+                        {
+                            SafeLog(() => Log.DrmRxSectionSetAside(_logger, s.Sections.ContainsKey(DrmRxSettings.SectionKey + AppSettingsSectionExtensions.UnreadableSuffix), error));
+                            s = s.SetSectionAside(DrmRxSettings.SectionKey);
+                        }
+
+                        return s.WithSection(
+                            DrmRxSettings.SectionKey,
+                            (current ?? new DrmRxSettings()) with { RxEnabled = enabled },
+                            DrmRxSettingsJsonContext.Default.DrmRxSettings);
+                    },
                     ct).ConfigureAwait(false);
             }
             catch (Exception ex) when (ex is not OperationCanceledException)
@@ -454,6 +464,9 @@ public sealed partial class SstvSessionService
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable DrmRx settings section kept as DrmRx.unreadable (replaced an earlier copy: {ReplacedEarlier}) before saving the HamDRM receive setting")]
+        public static partial void DrmRxSectionSetAside(ILogger logger, bool replacedEarlier, Exception? ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "DRM RX started (worker {Generation}, {SampleRate} Hz)")]
         public static partial void DrmRxStarted(ILogger logger, long generation, int sampleRate);
 

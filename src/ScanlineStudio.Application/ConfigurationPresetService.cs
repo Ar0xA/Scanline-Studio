@@ -229,6 +229,22 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
             // CURRENT SchemaVersion, not the preset's (Phase 2 round-2 decision 4) -- `with { Sections
             // = ... }` only replaces Sections.
             var merged = new Dictionary<string, System.Text.Json.JsonElement>(current.Sections);
+
+            // A preset section replacing an unreadable live QRZ section keeps the live raw text (it may hold the secret).
+            var liveQrzLookupReadable = current.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var liveQrzLookup, out _);
+            var liveQrzUploadReadable = current.TryReadSection(QrzUploadSettings.SectionKey, QrzUploadSettingsJsonContext.Default.QrzUploadSettings, out var liveQrzUpload, out _);
+            SetAsideIfReplaced(QrzLookupSettings.SectionKey, liveQrzLookupReadable);
+            SetAsideIfReplaced(QrzUploadSettings.SectionKey, liveQrzUploadReadable);
+
+            void SetAsideIfReplaced(string key, bool readable)
+            {
+                if (!readable && preset.Sections.ContainsKey(key) && current.Sections.TryGetValue(key, out var raw))
+                {
+                    Log.UnreadableLiveSectionSetAside(_logger, key, merged.ContainsKey(key + AppSettingsSectionExtensions.UnreadableSuffix));
+                    merged[key + AppSettingsSectionExtensions.UnreadableSuffix] = raw;
+                }
+            }
+
             foreach (var (key, value) in preset.Sections)
             {
                 merged[key] = value;
@@ -251,7 +267,6 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
                 try
                 {
                     // The credential-store flag is live machine state like the password itself, never preset content.
-                    var liveQrzLookup = current.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
                     var mergedQrzLookup = System.Text.Json.JsonSerializer.Deserialize(merged[QrzLookupSettings.SectionKey], QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
                     merged[QrzLookupSettings.SectionKey] = System.Text.Json.JsonSerializer.SerializeToElement(
                         mergedQrzLookup with { Password = liveQrzLookup?.Password, PasswordInCredentialStore = liveQrzLookup?.PasswordInCredentialStore },
@@ -267,7 +282,7 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
             {
                 try
                 {
-                    var liveApiKey = current.GetSection(QrzUploadSettings.SectionKey, QrzUploadSettingsJsonContext.Default.QrzUploadSettings)?.ApiKey;
+                    var liveApiKey = liveQrzUpload?.ApiKey;
                     var mergedQrzUpload = System.Text.Json.JsonSerializer.Deserialize(merged[QrzUploadSettings.SectionKey], QrzUploadSettingsJsonContext.Default.QrzUploadSettings) ?? new QrzUploadSettings();
                     merged[QrzUploadSettings.SectionKey] = System.Text.Json.JsonSerializer.SerializeToElement(
                         mergedQrzUpload with { ApiKey = liveApiKey }, QrzUploadSettingsJsonContext.Default.QrzUploadSettings);
@@ -473,6 +488,9 @@ public sealed partial class ConfigurationPresetService : IConfigurationPresetSer
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch: could not carry the live secret forward onto section {SectionKey} (malformed section) -- that field was left as the preset provided it")]
         public static partial void QrzSecretCarryForwardFailed(ILogger logger, string sectionKey, Exception ex);
+
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch: the live {SectionKey} section could not be read; its raw text was kept under its .unreadable key (replaced an earlier copy: {ReplacedEarlier})")]
+        public static partial void UnreadableLiveSectionSetAside(ILogger logger, string sectionKey, bool replacedEarlier);
 
         [LoggerMessage(Level = LogLevel.Warning, Message = "Configuration preset switch to {Name} rejected -- a transmission is in progress")]
         public static partial void SwitchRejectedTransmitting(ILogger logger, string name);

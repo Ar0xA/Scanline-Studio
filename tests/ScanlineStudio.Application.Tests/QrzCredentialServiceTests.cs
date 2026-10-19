@@ -19,6 +19,68 @@ public sealed class QrzCredentialServiceTests
     private static QrzCredentialService Create(FakeSettingsStore settings, ICredentialStore store) =>
         new(settings, CredentialStoreResolver.ForStore(store), NullLogger<QrzCredentialService>.Instance);
 
+    private static readonly System.Text.Json.JsonElement BrokenSection = System.Text.Json.JsonDocument.Parse("\"broken\"").RootElement.Clone();
+
+    private static FakeSettingsStore BrokenStore() =>
+        new() { Settings = new AppSettings { Sections = new() { [QrzLookupSettings.SectionKey] = BrokenSection } } };
+
+    private static string? AsideText(FakeSettingsStore store) =>
+        store.Settings.Sections.TryGetValue(QrzLookupSettings.SectionKey + ".unreadable", out var raw) ? raw.GetRawText() : null;
+
+    [Fact]
+    public async Task WriteAsync_UnreadableSection_Plaintext_SetsItAsideAndSaves()
+    {
+        var settings = BrokenStore();
+
+        var outcome = await Create(settings, new SettingsFileCredentialStore()).WriteAsync("pw", replacedPassword: null);
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, outcome);
+        Assert.Equal(BrokenSection.GetRawText(), AsideText(settings));
+        Assert.Equal("pw", Section(settings).Password);
+    }
+
+    [Fact]
+    public async Task WriteAsync_UnreadableSection_Keyring_SetsItAsideAndSaves()
+    {
+        var settings = BrokenStore();
+        var store = new FakeCredentialStore();
+
+        var outcome = await Create(settings, store).WriteAsync("pw", replacedPassword: null);
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, outcome);
+        Assert.Equal("pw", store.Items[Key]);
+        Assert.Equal(BrokenSection.GetRawText(), AsideText(settings));
+        Assert.True(Section(settings).PasswordInCredentialStore);
+        Assert.Null(Section(settings).Password);
+    }
+
+    [Fact]
+    public async Task WriteAsync_UnreadableSection_KeyringDelete_SetsItAsideAndSaves()
+    {
+        var settings = BrokenStore();
+        var store = new FakeCredentialStore();
+        store.Items[Key] = "old";
+
+        var outcome = await Create(settings, store).WriteAsync(null, replacedPassword: "old");
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, outcome);
+        Assert.False(store.Items.ContainsKey(Key));
+        Assert.Equal(BrokenSection.GetRawText(), AsideText(settings));
+        Assert.False(Section(settings).PasswordInCredentialStore);
+    }
+
+    [Fact]
+    public async Task WriteAsync_UnreadableSection_PlaintextNoChange_LeavesTheSectionAlone()
+    {
+        var settings = BrokenStore();
+
+        var outcome = await Create(settings, new SettingsFileCredentialStore()).WriteAsync(null, replacedPassword: null);
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, outcome);
+        Assert.Null(AsideText(settings));
+        Assert.Equal(BrokenSection.GetRawText(), settings.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText());
+    }
+
     [Fact]
     public async Task ReadAsync_NonEmptyJsonPassword_WinsOverTheStore()
     {

@@ -17,6 +17,9 @@ public sealed partial class OptionsWindowViewModel
     // The last save wrote everything else; only the HamDRM apply failed, so the post-save warnings still apply.
     private bool _onlyDrmReceiveApplyFailed;
 
+    // The saved section could not be read; the next Save/Apply rewrites it even if the toggle is untouched.
+    private bool _drmReceiveUnreadable;
+
     private async Task LoadDrmReceiveAsync(List<string> unreadable)
     {
         bool saved;
@@ -26,9 +29,9 @@ public sealed partial class OptionsWindowViewModel
         }
         catch (System.Text.Json.JsonException ex)
         {
-            // Stays at the default; an apply only writes on a change and then fails without overwriting.
             Log.SectionUnreadable(_logger, DrmRxSectionKey, ex);
             unreadable.Add(DrmRxSectionKey);
+            _drmReceiveUnreadable = true;
             saved = DrmReceiveDefaults.Enabled;
         }
 
@@ -40,12 +43,13 @@ public sealed partial class OptionsWindowViewModel
     private async Task<bool> ApplyDrmReceiveIfChangedAsync()
     {
         bool value = DrmReceiveEnabled;
-        if (value == _drmReceiveEnabledApplied)
+        if (value == _drmReceiveEnabledApplied && !_drmReceiveUnreadable)
             return true;
         try
         {
             await _sstvSession.SetDrmReceiveEnabledAsync(value);
             _drmReceiveEnabledApplied = value;
+            _drmReceiveUnreadable = false;
             DrmReceiveLog.Applied(_logger, value);
             return true;
         }

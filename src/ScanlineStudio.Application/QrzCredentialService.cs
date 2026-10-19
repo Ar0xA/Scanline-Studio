@@ -21,7 +21,8 @@ namespace ScanlineStudio.Application;
 /// (and with it Options Save and migration) forever; prompting calls are bounded by
 /// <see cref="QrzCredentialServiceOptions.PromptCallTimeout"/>. Every settings.json change is a
 /// compare-and-clear inside <see cref="ISettingsStore.UpdateAsync"/>, so a value changed by anyone else in
-/// between is never cleared.</summary>
+/// between is never cleared. An unreadable section is never compared or cleared: a write sets it aside
+/// verbatim as <c>QrzLookup.unreadable</c> and starts from defaults.</summary>
 public sealed partial class QrzCredentialService : IDisposable
 {
     public const string CredentialKey = "qrz-lookup-password";
@@ -226,10 +227,10 @@ public sealed partial class QrzCredentialService : IDisposable
         {
             await _settingsStore.UpdateAsync(current =>
             {
-                var now = GetSection(current);
+                var now = ReadForWrite(current, out var baseSettings);
                 return string.Equals(now.Password, value, StringComparison.Ordinal)
                     ? current
-                    : WithSection(current, now with { Password = value });
+                    : WithSection(baseSettings, now with { Password = value });
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -303,7 +304,7 @@ public sealed partial class QrzCredentialService : IDisposable
 
         await _settingsStore.UpdateAsync(current =>
         {
-            var now = GetSection(current);
+            var now = ReadForWrite(current, out var baseSettings);
             var clearPlaintext = !string.IsNullOrEmpty(now.Password)
                 && (string.Equals(now.Password, replacedPassword, StringComparison.Ordinal) || string.Equals(now.Password, newPassword, StringComparison.Ordinal));
             var updated = now with
@@ -311,7 +312,7 @@ public sealed partial class QrzCredentialService : IDisposable
                 Password = clearPlaintext ? null : now.Password,
                 PasswordInCredentialStore = true,
             };
-            return updated == now ? current : WithSection(current, updated);
+            return updated == now ? current : WithSection(baseSettings, updated);
         }, ct).ConfigureAwait(false);
 
         Log.Stored(_logger, store.BackendName);
@@ -373,14 +374,14 @@ public sealed partial class QrzCredentialService : IDisposable
     {
         await _settingsStore.UpdateAsync(current =>
         {
-            var now = GetSection(current);
+            var now = ReadForWrite(current, out var baseSettings);
             var clearPlaintext = !string.IsNullOrEmpty(now.Password) && string.Equals(now.Password, replacedPassword, StringComparison.Ordinal);
             var updated = now with
             {
                 Password = clearPlaintext ? null : now.Password,
                 PasswordInCredentialStore = false,
             };
-            return updated == now ? current : WithSection(current, updated);
+            return updated == now ? current : WithSection(baseSettings, updated);
         }, ct).ConfigureAwait(false);
 
         Log.Deleted(_logger, store.BackendName);
@@ -427,6 +428,21 @@ public sealed partial class QrzCredentialService : IDisposable
     private static QrzLookupSettings GetSection(AppSettings settings) =>
         settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
+    /// <summary>The section a password write starts from. An unreadable one yields defaults and
+    /// <paramref name="baseSettings"/> has it set aside, so the write keeps the raw text.</summary>
+    private QrzLookupSettings ReadForWrite(AppSettings current, out AppSettings baseSettings)
+    {
+        if (current.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var section, out var error))
+        {
+            baseSettings = current;
+            return section ?? new QrzLookupSettings();
+        }
+
+        Log.SectionSetAside(_logger, current.Sections.ContainsKey(QrzLookupSettings.SectionKey + AppSettingsSectionExtensions.UnreadableSuffix), error);
+        baseSettings = current.SetSectionAside(QrzLookupSettings.SectionKey);
+        return new QrzLookupSettings();
+    }
+
     private static AppSettings WithSection(AppSettings settings, QrzLookupSettings section) =>
         settings.WithSection(QrzLookupSettings.SectionKey, section, QrzLookupSettingsJsonContext.Default.QrzLookupSettings);
 
@@ -434,6 +450,9 @@ public sealed partial class QrzCredentialService : IDisposable
 
     private static partial class Log
     {
+        [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable QrzLookup settings section kept as QrzLookup.unreadable (replaced an earlier copy: {ReplacedEarlier}) before saving the QRZ password state")]
+        public static partial void SectionSetAside(ILogger logger, bool replacedEarlier, Exception? ex);
+
         [LoggerMessage(Level = LogLevel.Information, Message = "QRZ password stored in {Backend}")]
         public static partial void Stored(ILogger logger, string backend);
 

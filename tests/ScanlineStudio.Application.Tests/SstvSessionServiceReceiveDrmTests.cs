@@ -367,6 +367,19 @@ public sealed class SstvSessionServiceReceiveDrmTests
     }
 
     [Fact]
+    public async Task SetDrmReceiveEnabled_UnreadableSavedSection_IsKeptAsideAndRewritten()
+    {
+        var h = Create();
+        var raw = System.Text.Json.JsonDocument.Parse("\"broken\"").RootElement.Clone();
+        h.Settings.Settings.Sections[DrmRxSettings.SectionKey] = raw;
+
+        await h.Service.SetDrmReceiveEnabledAsync(false);
+
+        Assert.Equal(raw.GetRawText(), h.Settings.Settings.Sections[DrmRxSettings.SectionKey + ".unreadable"].GetRawText());
+        Assert.False(await h.Service.GetDrmReceiveEnabledAsync());
+    }
+
+    [Fact]
     public async Task SetDrmReceiveEnabled_LiveAppliesWhenTheGateIsFree_AndPersists()
     {
         var h = Create();
