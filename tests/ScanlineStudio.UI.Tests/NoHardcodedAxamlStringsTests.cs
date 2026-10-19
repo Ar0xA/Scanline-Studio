@@ -39,6 +39,55 @@ public sealed partial class NoHardcodedAxamlStringsTests
             + string.Join('\n', violations));
     }
 
+    // Positional form ({loc:Translate Some.Key}); any prefix, the full class name and Key= are read too.
+    [GeneratedRegex("\\{\\w+:Translate(?:Extension)?\\s+(?:Key=)?([^,}\\s]+)")]
+    private static partial Regex TranslateKeyRegex();
+
+    [GeneratedRegex("\\w+:Translate(?:Extension)?\\b")]
+    private static partial Regex AnyTranslateUseRegex();
+
+    [GeneratedRegex("<!--.*?-->", RegexOptions.Singleline)]
+    private static partial Regex XmlCommentRegex();
+
+    [Fact]
+    public void EveryAxamlTranslateKey_ExistsInTheEnglishStringTable()
+    {
+        var uiSourceDirectory = FindUiSourceDirectory();
+        var englishPath = Path.Combine(uiSourceDirectory, "..", "..", "assets", "locale", "en.json");
+        using var english = System.Text.Json.JsonDocument.Parse(File.ReadAllText(englishPath, System.Text.Encoding.UTF8));
+        // An empty value renders the raw key at runtime, same as a missing one.
+        var keys = english.RootElement.EnumerateObject()
+            .Where(p => p.Value.ValueKind == System.Text.Json.JsonValueKind.String && !string.IsNullOrWhiteSpace(p.Value.GetString()))
+            .Select(p => p.Name).ToHashSet(StringComparer.Ordinal);
+        var missing = new List<string>();
+        var unparsed = new List<string>();
+        var checkedCount = 0;
+
+        foreach (var file in Directory.GetFiles(uiSourceDirectory, "*.axaml", SearchOption.AllDirectories))
+        {
+            var text = XmlCommentRegex().Replace(File.ReadAllText(file), string.Empty);
+            var relative = Path.GetRelativePath(uiSourceDirectory, file);
+            var uses = TranslateKeyRegex().Matches(text);
+            if (uses.Count != AnyTranslateUseRegex().Count(text))
+            {
+                unparsed.Add(relative);
+            }
+
+            foreach (Match use in uses)
+            {
+                checkedCount++;
+                if (!keys.Contains(use.Groups[1].Value))
+                {
+                    missing.Add($"{relative}: {use.Groups[1].Value}");
+                }
+            }
+        }
+
+        Assert.True(checkedCount > 500, $"Only {checkedCount} {{loc:Translate}} uses found; the scan is broken.");
+        Assert.True(unparsed.Count == 0, "loc:Translate uses in a form this test cannot read:\n" + string.Join('\n', unparsed));
+        Assert.True(missing.Count == 0, $"{missing.Count} {{loc:Translate}} key(s) missing or empty in assets/locale/en.json:\n" + string.Join('\n', missing));
+    }
+
     private static string FindUiSourceDirectory()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
