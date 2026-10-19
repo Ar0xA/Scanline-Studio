@@ -22,7 +22,8 @@ namespace ScanlineStudio.Application;
 /// <see cref="QrzCredentialServiceOptions.PromptCallTimeout"/>. Every settings.json change is a
 /// compare-and-clear inside <see cref="ISettingsStore.UpdateAsync"/>, so a value changed by anyone else in
 /// between is never cleared. An unreadable section is never compared or cleared: a write sets it aside
-/// verbatim as <c>QrzLookup.unreadable</c> and starts from defaults.</summary>
+/// as <c>QrzLookup.unreadable</c> and starts from defaults. Every user password write (set, clear, plaintext)
+/// also removes any "Password" property from that copy: the user's explicit value replaces it.</summary>
 public sealed partial class QrzCredentialService : IDisposable
 {
     public const string CredentialKey = "qrz-lookup-password";
@@ -147,10 +148,22 @@ public sealed partial class QrzCredentialService : IDisposable
             await _gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                var section = await LoadSectionAsync(ct).ConfigureAwait(false);
+                var settings = await _settingsStore.LoadAsync(ct).ConfigureAwait(false);
+                if (!settings.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var read, out _))
+                {
+                    Log.MigrationSkippedUnreadable(_logger);
+                    return;
+                }
+
+                var section = read ?? new QrzLookupSettings();
                 var plaintext = section.Password;
                 if (string.IsNullOrEmpty(plaintext))
                 {
+                    if (read is not null && section.PasswordInCredentialStore is null)
+                    {
+                        await RepairCredentialStoreFlagAsync(store, ct).ConfigureAwait(false);
+                    }
+
                     return;
                 }
 
@@ -176,8 +189,9 @@ public sealed partial class QrzCredentialService : IDisposable
                 var cleared = false;
                 await _settingsStore.UpdateAsync(current =>
                 {
-                    var now = GetSection(current);
-                    if (!string.Equals(now.Password, plaintext, StringComparison.Ordinal))
+                    // A section that turned unreadable since the load is never cleared (see the class doc).
+                    if (!current.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var now, out _)
+                        || now is null || !string.Equals(now.Password, plaintext, StringComparison.Ordinal))
                     {
                         return current;
                     }
@@ -206,6 +220,77 @@ public sealed partial class QrzCredentialService : IDisposable
         }
     }
 
+    /// <summary>A section rebuilt from defaults (Options Save or a preset over an unreadable one) lost the
+    /// "in the keyring" flag. Only a null flag is repaired: false means the user deleted the password.
+    /// Caller holds <see cref="_gate"/>.</summary>
+    private async Task RepairCredentialStoreFlagAsync(ICredentialStore store, CancellationToken ct)
+    {
+        // A false Exists can also be a backend error, so it only skips the repair.
+        if (!await BoundedAsync(store.ExistsAsync(Key, ct), allowPrompt: false, false, "exists", ct).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var repaired = false;
+        await _settingsStore.UpdateAsync(current =>
+        {
+            if (!current.TryReadSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings, out var now, out _)
+                || now is null || !string.IsNullOrEmpty(now.Password) || now.PasswordInCredentialStore is not null)
+            {
+                return current;
+            }
+
+            repaired = true;
+            return WithSection(current, now with { PasswordInCredentialStore = true });
+        }, ct).ConfigureAwait(false);
+
+        if (repaired)
+        {
+            Log.CredentialStoreFlagRepaired(_logger, store.BackendName);
+        }
+    }
+
+    /// <summary><paramref name="settings"/> with every "Password" property removed from a
+    /// <c>QrzLookup.unreadable</c> object (the key is removed if nothing else is left); the same instance
+    /// when there is nothing to remove.</summary>
+    private AppSettings WithoutAsidePassword(AppSettings settings)
+    {
+        const string asideKey = QrzLookupSettings.SectionKey + AppSettingsSectionExtensions.UnreadableSuffix;
+        if (!settings.Sections.TryGetValue(asideKey, out var aside)
+            || aside.ValueKind != System.Text.Json.JsonValueKind.Object
+            || !aside.EnumerateObject().Any(p => p.NameEquals(nameof(QrzLookupSettings.Password))))
+        {
+            return settings;
+        }
+
+        var sections = new Dictionary<string, System.Text.Json.JsonElement>(settings.Sections);
+        var kept = aside.EnumerateObject().Where(p => !p.NameEquals(nameof(QrzLookupSettings.Password))).ToList();
+        if (kept.Count == 0)
+        {
+            sections.Remove(asideKey);
+        }
+        else
+        {
+            var buffer = new System.Buffers.ArrayBufferWriter<byte>();
+            using (var writer = new System.Text.Json.Utf8JsonWriter(buffer))
+            {
+                writer.WriteStartObject();
+                foreach (var property in kept)
+                {
+                    property.WriteTo(writer);
+                }
+
+                writer.WriteEndObject();
+            }
+
+            using var document = System.Text.Json.JsonDocument.Parse(buffer.WrittenMemory);
+            sections[asideKey] = document.RootElement.Clone();
+        }
+
+        Log.AsidePasswordRemoved(_logger);
+        return settings with { Sections = sections };
+    }
+
     private static CredentialWrite TimedOutWrite { get; } = CredentialWrite.Unavailable(CredentialReasons.TimedOut);
 
     // A timed-out keyring write/delete can still complete later and overwrite a newer save, so no new
@@ -229,9 +314,9 @@ public sealed partial class QrzCredentialService : IDisposable
             await _settingsStore.UpdateAsync(current =>
             {
                 var now = ReadForWrite(current, out var baseSettings);
-                return string.Equals(now.Password, value, StringComparison.Ordinal)
+                return WithoutAsidePassword(string.Equals(now.Password, value, StringComparison.Ordinal)
                     ? current
-                    : WithSection(baseSettings, now with { Password = value });
+                    : WithSection(baseSettings, now with { Password = value }));
             }, ct).ConfigureAwait(false);
         }
         finally
@@ -313,7 +398,7 @@ public sealed partial class QrzCredentialService : IDisposable
                 Password = clearPlaintext ? null : now.Password,
                 PasswordInCredentialStore = true,
             };
-            return updated == now ? current : WithSection(baseSettings, updated);
+            return WithoutAsidePassword(updated == now ? current : WithSection(baseSettings, updated));
         }, ct).ConfigureAwait(false);
 
         Log.Stored(_logger, store.BackendName);
@@ -382,7 +467,7 @@ public sealed partial class QrzCredentialService : IDisposable
                 Password = clearPlaintext ? null : now.Password,
                 PasswordInCredentialStore = false,
             };
-            return updated == now ? current : WithSection(baseSettings, updated);
+            return WithoutAsidePassword(updated == now ? current : WithSection(baseSettings, updated));
         }, ct).ConfigureAwait(false);
 
         Log.Deleted(_logger, store.BackendName);
@@ -423,9 +508,6 @@ public sealed partial class QrzCredentialService : IDisposable
         _ => QrzPasswordWriteOutcome.KeyringFailed,
     };
 
-    private async Task<QrzLookupSettings> LoadSectionAsync(CancellationToken ct) =>
-        GetSection(await _settingsStore.LoadAsync(ct).ConfigureAwait(false));
-
     /// <summary>For the read paths only: an unreadable section yields defaults (logged), so a keyring
     /// password is still found and a locked keyring is still reported as locked.</summary>
     private async Task<QrzLookupSettings> LoadSectionForReadAsync(CancellationToken ct)
@@ -439,9 +521,6 @@ public sealed partial class QrzCredentialService : IDisposable
         Log.SectionUnreadableOnRead(_logger, error);
         return new QrzLookupSettings();
     }
-
-    private static QrzLookupSettings GetSection(AppSettings settings) =>
-        settings.GetSection(QrzLookupSettings.SectionKey, QrzLookupSettingsJsonContext.Default.QrzLookupSettings) ?? new QrzLookupSettings();
 
     /// <summary>The section a password write starts from. An unreadable one yields defaults and
     /// <paramref name="baseSettings"/> has it set aside, so the write keeps the raw text.</summary>
@@ -467,6 +546,15 @@ public sealed partial class QrzCredentialService : IDisposable
     {
         [LoggerMessage(Level = LogLevel.Warning, Message = "Unreadable QrzLookup settings section kept as QrzLookup.unreadable (replaced an earlier copy: {ReplacedEarlier}) before saving the QRZ password state")]
         public static partial void SectionSetAside(ILogger logger, bool replacedEarlier, Exception? ex);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "QrzLookup settings section is unreadable; QRZ password migration skipped")]
+        public static partial void MigrationSkippedUnreadable(ILogger logger);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "QRZ password is in {Backend} but its settings flag was missing; flag restored")]
+        public static partial void CredentialStoreFlagRepaired(ILogger logger, string backend);
+
+        [LoggerMessage(Level = LogLevel.Information, Message = "Old QRZ password removed from QrzLookup.unreadable after a new password write")]
+        public static partial void AsidePasswordRemoved(ILogger logger);
 
         [LoggerMessage(Level = LogLevel.Information, Message = "QRZ password stored in {Backend}")]
         public static partial void Stored(ILogger logger, string backend);

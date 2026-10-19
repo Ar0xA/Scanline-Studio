@@ -504,9 +504,8 @@ User data, safety and error paths:
   failed in 2 of 3 full Application.Tests runs on 2026-10-19 and passes 5/5 standalone: a timing dependency under load.
   `TrySaveReceptionAudioAsync_CalledTwiceForTheSameReception_SecondCallReturnsFalse` in the same class also failed once
   under full-suite load (2026-10-19); treat the whole class as suspect.
-- **CQ-09-F2-FOLLOWUPS (b).** OPEN, minor — a plaintext password inside `QrzLookup.unreadable` is never moved to the
-  keyring (help says to delete the entry). Startup migration still logs MigrationFailed while `QrzLookup` is unreadable.
-  Related, pre-existing: Options Save and a preset over an unreadable `QrzLookup` reset `PasswordInCredentialStore`.
+- **QRZUPLOAD-ASIDE.** OPEN, minor — `QrzUpload.unreadable` can keep a plaintext upload ApiKey and nothing wipes it
+  (the QrzLookup password copy is wiped on the next password write since CQ-09-F2-FOLLOWUPS (b)).
 - **CQ-11-F14-FOLLOWUPS.** OPEN, minor. If CI is re-enabled: `ci.yml` checkout still persists credentials and has no
   `permissions: contents: read`. Release workflows paste `${{ github.event.inputs.tag }}` straight into `run:` scripts
   (write-access users only; pass it through `env:`). No dependabot config keeps the pinned action SHAs current.
@@ -630,6 +629,12 @@ Listed with evidence in the area reports. Pick them up only when already working
   AdifUdp/legacy GridTracker key, the dialog's own 4 sections, RadioSafety (load and save) and DrmRx (load only).
   Presets drop every `.unreadable` key (it may hold the QRZ password). Help en+de. 17 new tests, 6 mutations caught.
   Plan: `docs/plans/cq-09-settings-store-plan.md` steps 3-7. Auditor: 1 plan review + 1 code review, go.
+- **CQ-09-F2-FOLLOWUPS (b).** DONE 2026-10-19 — user-chosen "wipe on next save": every user QRZ password write (set,
+  clear, plaintext) removes all "Password" properties from `QrzLookup.unreadable` (key removed if nothing else is left);
+  no automatic recovery (an auto-salvage plan got a no-go: it could resurrect a deleted password). Startup migration
+  skips an unreadable section with one Information line instead of a Warning, and restores a missing (null, never
+  false) "in keyring" flag when the keyring really holds the password. 13 new tests, 7 mutations caught. Auditor:
+  1 plan review (no-go, redesigned) + 1 code review, go.
 - **CQ-09-F2-FOLLOWUPS (a)/(d).** DONE 2026-10-19 — (a) QRZ password reads treat an unreadable `QrzLookup` section
   as defaults (Warning logged) and still read the keyring, so Options no longer shows a false "keyring locked" with a
   useless Unlock; a really locked keyring still shows it. (d) A malformed `QrzLookup`/`QrzUpload` section inside a

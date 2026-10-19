@@ -599,4 +599,151 @@ public sealed class QrzCredentialServiceTests
         Assert.Equal(BrokenSection.GetRawText(), settings.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText());
         Assert.Null(AsideText(settings));
     }
+
+    private static System.Text.Json.JsonElement Json(string text) => System.Text.Json.JsonDocument.Parse(text).RootElement.Clone();
+
+    private static FakeSettingsStore WithAside(FakeSettingsStore store, string asideJson)
+    {
+        store.Settings.Sections[QrzLookupSettings.SectionKey + ".unreadable"] = Json(asideJson);
+        return store;
+    }
+
+    [Fact]
+    public async Task WriteAsync_Plaintext_RemovesTheOldPasswordFromTheAsideCopy_KeepsTheRest()
+    {
+        var settings = WithAside(StoreWith(new QrzLookupSettings { Username = "N0CALL" }), """{"Username":"OLD","Password":"old","Enabled":"yes"}""");
+
+        await Create(settings, new SettingsFileCredentialStore()).WriteAsync("new", replacedPassword: null);
+
+        Assert.Equal("new", Section(settings).Password);
+        Assert.Equal("""{"Username":"OLD","Enabled":"yes"}""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task WriteAsync_KeyringSet_RemovesTheAsideCopy_WhenThePasswordWasAllItHeld()
+    {
+        var settings = WithAside(StoreWith(new QrzLookupSettings { Username = "N0CALL" }), """{"Password":"old"}""");
+        var store = new FakeCredentialStore();
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await Create(settings, store).WriteAsync("new", replacedPassword: null));
+
+        Assert.Equal("new", store.Items[Key]);
+        Assert.Null(AsideText(settings));
+    }
+
+    [Fact]
+    public async Task WriteAsync_KeyringDelete_RemovesEveryPasswordFromTheAsideCopy()
+    {
+        var settings = WithAside(StoreWith(new QrzLookupSettings { Username = "N0CALL", PasswordInCredentialStore = true }), """{"Password":"a","Username":"OLD","Password":"b"}""");
+        var store = new FakeCredentialStore();
+        store.Items[Key] = "current";
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await Create(settings, store).WriteAsync(null, replacedPassword: "current"));
+
+        Assert.False(store.Items.ContainsKey(Key));
+        Assert.Equal("""{"Username":"OLD"}""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task WriteAsync_UnreadableObjectSection_SetsItAsideWithoutItsPassword()
+    {
+        var settings = new FakeSettingsStore { Settings = new AppSettings { Sections = new() { [QrzLookupSettings.SectionKey] = Json("""{"Enabled":"yes","Password":"old"}""") } } };
+
+        await Create(settings, new SettingsFileCredentialStore()).WriteAsync("new", replacedPassword: null);
+
+        Assert.Equal("new", Section(settings).Password);
+        Assert.Equal("""{"Enabled":"yes"}""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task WriteAsync_KeyringSet_UnreadableObjectSection_SetsItAsideWithoutItsPassword()
+    {
+        var settings = new FakeSettingsStore { Settings = new AppSettings { Sections = new() { [QrzLookupSettings.SectionKey] = Json("""{"Enabled":"yes","Password":"old"}""") } } };
+        var store = new FakeCredentialStore();
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await Create(settings, store).WriteAsync("new", replacedPassword: null));
+
+        Assert.Equal("new", store.Items[Key]);
+        Assert.Equal("""{"Enabled":"yes"}""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task WriteAsync_KeyringDelete_UnreadableObjectSection_SetsItAsideWithoutItsPassword()
+    {
+        var settings = new FakeSettingsStore { Settings = new AppSettings { Sections = new() { [QrzLookupSettings.SectionKey] = Json("""{"Enabled":"yes","Password":"old"}""") } } };
+        var store = new FakeCredentialStore();
+        store.Items[Key] = "current";
+
+        Assert.Equal(QrzPasswordWriteOutcome.Saved, await Create(settings, store).WriteAsync(null, replacedPassword: "current"));
+
+        Assert.False(store.Items.ContainsKey(Key));
+        Assert.Equal("""{"Enabled":"yes"}""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_NoQrzSection_DoesNotAskTheKeyring()
+    {
+        var store = new FakeCredentialStore();
+
+        await Create(new FakeSettingsStore(), store).MigrateAsync();
+
+        Assert.Empty(store.Calls);
+    }
+
+    [Fact]
+    public async Task WriteAsync_AsideCopyWithoutAPassword_IsLeftAsIs()
+    {
+        var settings = WithAside(StoreWith(new QrzLookupSettings()), """{ "Enabled" : "yes" }""");
+
+        await Create(settings, new SettingsFileCredentialStore()).WriteAsync("new", replacedPassword: null);
+
+        Assert.Equal("""{ "Enabled" : "yes" }""", AsideText(settings));
+    }
+
+    [Fact]
+    public async Task MigrateAsync_UnreadableSection_LogsOneInformationLine_NoWarning_AndChangesNothing()
+    {
+        var settings = BrokenStore();
+        var store = new FakeCredentialStore();
+        var logger = new SstvSessionServicePttSafetyTests.RecordingLogger<QrzCredentialService>();
+        var service = new QrzCredentialService(settings, CredentialStoreResolver.ForStore(store), logger);
+
+        await service.MigrateAsync();
+
+        Assert.DoesNotContain(logger.Entries, e => e.Level >= Microsoft.Extensions.Logging.LogLevel.Warning);
+        Assert.Contains(logger.Entries, e => e.Message.Contains("QRZ password migration skipped", StringComparison.Ordinal));
+        Assert.Equal(BrokenSection.GetRawText(), settings.Settings.Sections[QrzLookupSettings.SectionKey].GetRawText());
+        Assert.Empty(store.Calls.Where(c => c.Operation != "exists"));
+    }
+
+    [Theory]
+    [InlineData(null, true, true)]
+    [InlineData(null, false, null)]
+    [InlineData(false, true, false)]
+    public async Task MigrateAsync_RestoresAMissingKeyringFlag_OnlyWhenTheKeyringHoldsThePassword(bool? flag, bool inKeyring, bool? expected)
+    {
+        var settings = StoreWith(new QrzLookupSettings { Username = "N0CALL", PasswordInCredentialStore = flag });
+        var store = new FakeCredentialStore();
+        if (inKeyring)
+        {
+            store.Items[Key] = "pw";
+        }
+
+        await Create(settings, store).MigrateAsync();
+
+        Assert.Equal(expected, Section(settings).PasswordInCredentialStore);
+        Assert.Equal("N0CALL", Section(settings).Username);
+    }
+
+    [Fact]
+    public async Task MigrateAsync_LeavesTheAsideCopyAlone()
+    {
+        var settings = WithAside(StoreWith(new QrzLookupSettings { Password = "pw" }), """{"Password":"old"}""");
+        var store = new FakeCredentialStore();
+
+        await Create(settings, store).MigrateAsync();
+
+        Assert.Equal("pw", store.Items[Key]);
+        Assert.Equal("""{"Password":"old"}""", AsideText(settings));
+    }
 }
